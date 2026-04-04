@@ -16,6 +16,7 @@ from bot.ui.panel import (
     build_tower_embed,
     build_tower_floor_embed,
 )
+from bot.services.artifact_service import RenameArtifactResult
 from bot.ui.ranking import build_leaderboard_embed
 
 if TYPE_CHECKING:
@@ -210,7 +211,33 @@ async def build_reinforce_message(bot: XianBot, owner_user_id: int, display_name
         snapshot = await _sync_snapshot(bot, session, character)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return build_reinforce_embed(snapshot, result), None, broadcasts
+    return build_reinforce_embed(snapshot, result), ReinforceView(owner_user_id), broadcasts
+
+
+async def rename_artifact_message(bot: XianBot, owner_user_id: int, display_name: str, new_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.artifact_service.rename_artifact(character.artifact, new_name)
+        if result.success:
+            character.last_highlight_text = f"方才为本命法宝赐名「{result.name_after}」。"
+        snapshot = await _sync_snapshot(bot, session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 本命赐名",
+        description=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+    )
+    embed.add_field(
+        name="当前本命",
+        value=(
+            f"法宝：**{snapshot.artifact_name}**\n"
+            f"是否已改名：`{'是' if character.artifact.artifact_rename_used else '否'}`"
+        ),
+        inline=False,
+    )
+    return embed, ReinforceView(owner_user_id), broadcasts
 
 
 async def build_reincarnation_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -368,6 +395,35 @@ class TowerRunView(OwnerLockedView):
 
         async def callback(interaction: discord.Interaction) -> None:
             await interaction.response.edit_message(content="已退出本次通天塔界面。", embed=None, view=None)
+
+        button.callback = callback
+        self.add_item(button)
+
+
+class ReinforceRenameModal(discord.ui.Modal, title="为本命法宝赐名"):
+    artifact_name = discord.ui.TextInput(label="新名字", placeholder="请输入 2~12 个字符", max_length=12)
+
+    def __init__(self, owner_user_id: int) -> None:
+        super().__init__()
+        self.owner_user_id = owner_user_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await rename_artifact_message(bot, interaction.user.id, interaction.user.display_name, str(self.artifact_name))
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
+
+
+class ReinforceView(OwnerLockedView):
+    def __init__(self, owner_user_id: int) -> None:
+        super().__init__(owner_user_id)
+        self._add_rename_button()
+
+    def _add_rename_button(self) -> None:
+        button = discord.ui.Button(label="改名本命", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            await interaction.response.send_modal(ReinforceRenameModal(self.owner_user_id))
 
         button.callback = callback
         self.add_item(button)

@@ -8,6 +8,18 @@ from bot.utils.time_utils import now_shanghai
 
 
 @pytest.mark.asyncio
+async def test_character_creation_broadcasts_fate_and_artifact(session_factory, services) -> None:
+    async with session_factory() as session:
+        result = await services.character.get_or_create_character(session, 1001, "青崖")
+        await session.commit()
+        assert result.created is True
+        assert result.broadcast_needed is True
+        assert result.broadcast_text is not None
+        assert "命格" in result.broadcast_text
+        assert "本命法宝" in result.broadcast_text
+
+
+@pytest.mark.asyncio
 async def test_character_creation_assigns_fate_artifact_and_rank(session_factory, services) -> None:
     async with session_factory() as session:
         result = await services.character.get_or_create_character(session, 1001, "青崖")
@@ -77,6 +89,20 @@ async def test_ladder_challenge_swaps_rank_on_victory(session_factory, services)
         assert result.battle.challenger_won is True
         assert challenger.current_ladder_rank == 1
         assert defender.current_ladder_rank == 2
+
+
+@pytest.mark.asyncio
+async def test_title_bonus_applies_small_global_bonus(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 4001, "玄霄")
+        character = creation.character
+        stage = services.character.get_stage(character)
+        base_atk, base_def, base_agi = stage.base_atk, stage.base_def, stage.base_agi
+        character.title = "独断万古"
+        stats = services.character.calculate_total_stats(character)
+        assert stats.atk == int(base_atk * 1.025)
+        assert stats.defense == int(base_def * 1.025)
+        assert stats.agility == int(base_agi * 1.025)
 
 
 @pytest.mark.asyncio
