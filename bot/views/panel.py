@@ -33,6 +33,8 @@ def _build_idle_notice(settlement: IdleSettlement | None) -> str | None:
         parts.append(f"修为 +{settlement.gained_cultivation}")
     if settlement.recovered_qi > 0:
         parts.append(f"气机 +{settlement.recovered_qi}")
+    if settlement.gained_soul > 0:
+        parts.append(f"器魂 +{settlement.gained_soul}")
     if not parts:
         return None
     return " · ".join(parts)

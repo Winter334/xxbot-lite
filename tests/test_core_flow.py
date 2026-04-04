@@ -33,6 +33,7 @@ async def test_idle_settlement_caps_at_stage_max_and_recovers_qi(session_factory
         await session.commit()
 
         assert settlement.recovered_qi == 5
+        assert settlement.gained_soul >= 0
         assert character.current_qi == character.qi_max
         assert character.cultivation == services.character.get_stage(character).cultivation_max
 

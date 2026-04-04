@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+import random
 
 from bot.data.realms import get_stage, get_stage_for_floor
 from bot.models.character import Character
@@ -15,21 +16,25 @@ class IdleSettlement:
     settled_cycles: int
     settled_minutes: int
     recovered_qi: int
+    gained_soul: int
 
 
 class IdleService:
     idle_cycle_minutes = 10
     idle_cap_hours = 24
     qi_recover_minutes = 20
+    soul_drop_chance_per_cycle = 0.04
 
-    def __init__(self, fate_service: FateService) -> None:
+    def __init__(self, fate_service: FateService, rng: random.Random | None = None) -> None:
         self.fate_service = fate_service
+        self.rng = rng or random.Random()
 
     def settle(self, character: Character, *, now=None) -> IdleSettlement:
         current_time = ensure_shanghai(now or now_shanghai())
         recovered_qi = self._recover_qi(character, current_time)
         gained_cultivation, cycles, minutes = self._settle_idle(character, current_time)
-        return IdleSettlement(gained_cultivation, cycles, minutes, recovered_qi)
+        gained_soul = self._roll_idle_soul(character, cycles)
+        return IdleSettlement(gained_cultivation, cycles, minutes, recovered_qi, gained_soul)
 
     def current_idle_minutes(self, character: Character, *, now=None) -> int:
         current_time = ensure_shanghai(now or now_shanghai())
@@ -73,3 +78,14 @@ class IdleService:
         character.cultivation += actual
         character.last_idle_at = current_time
         return actual, cycles, cycles * self.idle_cycle_minutes
+
+    def _roll_idle_soul(self, character: Character, cycles: int) -> int:
+        if cycles <= 0 or character.artifact is None:
+            return 0
+        gained = 0
+        for _ in range(cycles):
+            if self.rng.random() < self.soul_drop_chance_per_cycle:
+                gained += 1
+        if gained > 0:
+            character.artifact.soul_shards += gained
+        return gained
