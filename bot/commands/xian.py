@@ -42,7 +42,12 @@ class XianCommands(commands.Cog):
     async def panel(self, interaction: discord.Interaction) -> None:
         await self._send_with_broadcasts(
             interaction,
-            await build_panel_message(self.bot, interaction.user.id, interaction.user.display_name),
+            await build_panel_message(
+                self.bot,
+                interaction.user.id,
+                interaction.user.display_name,
+                avatar_url=interaction.user.display_avatar.url,
+            ),
         )
 
     @app_commands.command(name="登塔", description="消耗 1 点气机，尝试冲击通天塔新高。")
@@ -86,6 +91,7 @@ class XianCommands(commands.Cog):
                 interaction.user.id,
                 interaction.user.display_name,
                 target_user_id=user.id,
+                target_avatar_url=user.display_avatar.url,
             ),
         )
 
