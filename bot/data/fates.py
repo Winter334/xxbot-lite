@@ -39,15 +39,25 @@ class FateDefinition:
     def rarity_name(self) -> str:
         return RARITY_NAMES[self.rarity]
 
+    @property
+    def per_stat_basis_points(self) -> int:
+        stat_count = max(1, len(self.affected_stats))
+        return self.value_basis_points // stat_count
+
+    @property
+    def per_stat_percent(self) -> float:
+        return self.per_stat_basis_points / 10_000
+
     def effect_summary(self) -> str:
-        percent = f"{self.percent * 100:.0f}%"
         if self.category == "combat":
             labels = {"atk": "杀伐", "def": "护体", "agi": "身法"}
             affected = " + ".join(labels[key] for key in self.affected_stats)
+            percent = f"{self.per_stat_percent * 100:g}%"
             return f"{affected} +{percent}"
+        percent = f"{self.percent * 100:g}%"
         if self.category == "cultivation":
             return f"挂机修为 +{percent}"
-        return f"首通额外器魂判定 +{percent}"
+        return f"首通额外掉落率 +{percent}"
 
 
 FATE_DEFINITIONS = (

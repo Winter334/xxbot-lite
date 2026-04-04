@@ -23,7 +23,7 @@ class FateService:
         fate = self.get_fate(fate_key)
         if fate.category != "combat" or stat_key not in fate.affected_stats:
             return 1.0
-        return 1.0 + fate.percent
+        return 1.0 + fate.per_stat_percent
 
     def idle_multiplier(self, fate_key: str) -> float:
         fate = self.get_fate(fate_key)

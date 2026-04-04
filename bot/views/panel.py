@@ -215,8 +215,10 @@ class LeaderboardView(OwnerLockedView):
         self._add_back_button()
         self._add_category_button("ladder", "论道", category == "ladder")
         self._add_category_button("power", "战力", category == "power")
+        self._add_category_button("realm_power", "同境", category == "realm_power")
         self._add_category_button("tower", "通天塔", category == "tower")
         self._add_category_button("artifact", "法宝", category == "artifact")
+        self._add_category_button("realm", "境界", category == "realm")
         if category == "ladder":
             for target in challenge_targets[:5]:
                 self._add_challenge_button(target.rank, target.display_name)
