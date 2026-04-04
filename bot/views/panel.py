@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 import discord
 
+from bot.services.idle_service import IdleSettlement
 from bot.ui.panel import (
     build_breakthrough_embed,
     build_ladder_battle_embed,
@@ -24,14 +25,25 @@ def _info_embed(title: str, description: str) -> discord.Embed:
     return discord.Embed(title=title, description=description, color=discord.Color.orange())
 
 
+def _build_idle_notice(settlement: IdleSettlement | None) -> str | None:
+    if settlement is None:
+        return None
+    parts: list[str] = []
+    if settlement.gained_cultivation > 0:
+        parts.append(f"修为 +{settlement.gained_cultivation}")
+    if settlement.recovered_qi > 0:
+        parts.append(f"气机 +{settlement.recovered_qi}")
+    if not parts:
+        return None
+    return " · ".join(parts)
+
+
 async def _send_broadcasts(bot: XianBot, broadcasts: list[str]) -> None:
     for content in broadcasts:
         await bot.broadcast_service.broadcast(bot, content)
 
 
-async def _sync_snapshot(bot: XianBot, session, character, *, settle_idle: bool) -> tuple:
-    if settle_idle:
-        bot.idle_service.settle(character)
+async def _sync_snapshot(bot: XianBot, session, character) -> tuple:
     bot.ladder_service.reset_daily_attempts_if_needed(character)
     bot.character_service.refresh_combat_power(character)
     title, honor_tags = await bot.ranking_service.get_titles(session, character)
@@ -49,10 +61,11 @@ async def _load_active_character(bot: XianBot, user_id: int, display_name: str):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, user_id, display_name)
         character = creation.character
-        snapshot = await _sync_snapshot(bot, session, character, settle_idle=True)
+        settlement = bot.idle_service.settle(character)
+        snapshot = await _sync_snapshot(bot, session, character)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return character.id, snapshot, broadcasts
+    return character.id, snapshot, broadcasts, settlement
 
 
 async def build_panel_message(
@@ -69,12 +82,12 @@ async def build_panel_message(
             character = await bot.character_service.get_character_by_discord_id(session, target_user_id)
             if character is None:
                 return _info_embed("未见道友", "此人尚未踏入仙途。"), None, []
-            snapshot = await _sync_snapshot(bot, session, character, settle_idle=False)
+            snapshot = await _sync_snapshot(bot, session, character)
             await session.commit()
         return build_panel_embed(snapshot, avatar_url=target_avatar_url), None, []
 
-    _, snapshot, broadcasts = await _load_active_character(bot, owner_user_id, display_name)
-    return build_panel_embed(snapshot, avatar_url=avatar_url), PanelView(owner_user_id), broadcasts
+    _, snapshot, broadcasts, settlement = await _load_active_character(bot, owner_user_id, display_name)
+    return build_panel_embed(snapshot, avatar_url=avatar_url, idle_notice=_build_idle_notice(settlement)), PanelView(owner_user_id), broadcasts
 
 
 async def build_leaderboard_message(
@@ -87,7 +100,7 @@ async def build_leaderboard_message(
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         viewer = creation.character
-        viewer_snapshot = await _sync_snapshot(bot, session, viewer, settle_idle=True)
+        viewer_snapshot = await _sync_snapshot(bot, session, viewer)
         leaderboard = await bot.ranking_service.build_leaderboard(session, category, viewer)
         targets = await bot.ladder_service.get_challenge_targets(session, viewer) if category == "ladder" else []
         await session.commit()
@@ -113,14 +126,14 @@ async def _load_tower_run(bot: XianBot, owner_user_id: int, display_name: str):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         character = creation.character
-        await _sync_snapshot(bot, session, character, settle_idle=True)
+        settlement = bot.idle_service.settle(character)
         result = bot.tower_service.run_tower(character)
-        snapshot = await _sync_snapshot(bot, session, character, settle_idle=False)
+        snapshot = await _sync_snapshot(bot, session, character)
         broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
         if result.highest_floor_after > result.highest_floor_before and result.highest_floor_after % 25 == 0:
             broadcasts.append(f"【塔影留名】{snapshot.player_name} 已踏破通天塔第 {result.highest_floor_after} 层。")
         await session.commit()
-    return snapshot, result, broadcasts
+    return snapshot, result, broadcasts, _build_idle_notice(settlement)
 
 
 async def run_private_tower_sequence(
@@ -131,10 +144,10 @@ async def run_private_tower_sequence(
     display_name: str,
     edit_existing: bool = False,
 ) -> None:
-    snapshot, result, broadcasts = await _load_tower_run(bot, owner_user_id, display_name)
+    snapshot, result, broadcasts, idle_notice = await _load_tower_run(bot, owner_user_id, display_name)
 
     if not result.floors:
-        embed = build_tower_embed(snapshot, result)
+        embed = build_tower_embed(snapshot, result, idle_notice=idle_notice)
         view = TowerRunView(owner_user_id, can_retry=False)
         if edit_existing:
             await interaction.response.defer()
@@ -144,7 +157,7 @@ async def run_private_tower_sequence(
         await _send_broadcasts(bot, broadcasts)
         return
 
-    preview_embed = build_tower_floor_embed(snapshot, result.floors[0], preview=True)
+    preview_embed = build_tower_floor_embed(snapshot, result.floors[0], preview=True, idle_notice=idle_notice)
     if edit_existing:
         await interaction.response.defer()
         await interaction.edit_original_response(embed=preview_embed, view=None)
@@ -154,7 +167,13 @@ async def run_private_tower_sequence(
     await asyncio.sleep(1.5)
     for index, floor_result in enumerate(result.floors):
         is_last = index == len(result.floors) - 1
-        resolved_embed = build_tower_floor_embed(snapshot, floor_result, preview=False, run_result=result if is_last else None)
+        resolved_embed = build_tower_floor_embed(
+            snapshot,
+            floor_result,
+            preview=False,
+            run_result=result if is_last else None,
+            idle_notice=idle_notice if is_last else None,
+        )
         resolved_view = TowerRunView(owner_user_id, can_retry=result.qi_after > 0) if is_last else None
         await interaction.edit_original_response(embed=resolved_embed, view=resolved_view)
         if not is_last:
@@ -170,24 +189,23 @@ async def build_breakthrough_message(bot: XianBot, owner_user_id: int, display_n
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         character = creation.character
-        await _sync_snapshot(bot, session, character, settle_idle=True)
+        settlement = bot.idle_service.settle(character)
         result = bot.breakthrough_service.attempt_breakthrough(character)
-        snapshot = await _sync_snapshot(bot, session, character, settle_idle=False)
+        snapshot = await _sync_snapshot(bot, session, character)
         broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
         if result.success and result.reached_new_realm:
             broadcasts.append(f"【大境将成】{snapshot.player_name} 已踏入 {snapshot.realm_display}。")
         await session.commit()
-    return build_breakthrough_embed(snapshot, result), None, broadcasts
+    return build_breakthrough_embed(snapshot, result, idle_notice=_build_idle_notice(settlement)), None, broadcasts
 
 
 async def build_reinforce_message(bot: XianBot, owner_user_id: int, display_name: str):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         character = creation.character
-        await _sync_snapshot(bot, session, character, settle_idle=True)
         result = bot.artifact_service.reinforce(character.artifact, bot.character_service.get_stage(character))
         bot.character_service.refresh_combat_power(character)
-        snapshot = await _sync_snapshot(bot, session, character, settle_idle=False)
+        snapshot = await _sync_snapshot(bot, session, character)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     return build_reinforce_embed(snapshot, result), None, broadcasts
@@ -197,12 +215,11 @@ async def build_reincarnation_message(bot: XianBot, owner_user_id: int, display_
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         character = creation.character
-        await _sync_snapshot(bot, session, character, settle_idle=True)
         result = await bot.character_service.reincarnate(session, character)
         broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
         if result.success:
             await bot.ladder_service.move_to_bottom(session, character)
-        snapshot = await _sync_snapshot(bot, session, character, settle_idle=False)
+        snapshot = await _sync_snapshot(bot, session, character)
         if result.broadcast_text:
             broadcasts.append(result.broadcast_text)
         await session.commit()
@@ -213,11 +230,10 @@ async def build_challenge_message(bot: XianBot, owner_user_id: int, display_name
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         challenger = creation.character
-        await _sync_snapshot(bot, session, challenger, settle_idle=True)
         result = await bot.ladder_service.challenge(session, challenger, target_rank)
         defender = await bot.character_service.get_character_by_rank(session, result.defender_rank_after or target_rank)
-        challenger_snapshot = await _sync_snapshot(bot, session, challenger, settle_idle=False)
-        defender_snapshot = await _sync_snapshot(bot, session, defender, settle_idle=False) if defender is not None else challenger_snapshot
+        challenger_snapshot = await _sync_snapshot(bot, session, challenger)
+        defender_snapshot = await _sync_snapshot(bot, session, defender) if defender is not None else challenger_snapshot
         targets = await bot.ladder_service.get_challenge_targets(session, challenger)
         broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
         if result.reached_top_rank:
@@ -268,7 +284,7 @@ class PanelView(OwnerLockedView):
         await interaction.response.send_message(embed=embed, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
-    @discord.ui.button(label="榜单", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="论道", style=discord.ButtonStyle.secondary)
     async def ranking_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_leaderboard_message(bot, interaction.user.id, interaction.user.display_name)
