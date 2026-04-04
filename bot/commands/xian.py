@@ -27,14 +27,23 @@ LEADERBOARD_CHOICES = [
     app_commands.Choice(name="境界榜", value="realm"),
 ]
 
+PUBLIC_PANEL_DELETE_AFTER = 10 * 60
+
 
 class XianCommands(commands.Cog):
     def __init__(self, bot: XianBot) -> None:
         self.bot = bot
 
-    async def _send_with_broadcasts(self, interaction: discord.Interaction, payload, *, ephemeral: bool = False) -> None:
+    async def _send_with_broadcasts(
+        self,
+        interaction: discord.Interaction,
+        payload,
+        *,
+        ephemeral: bool = False,
+        delete_after: float | None = None,
+    ) -> None:
         embed, view, broadcasts = payload
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=ephemeral)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=ephemeral, delete_after=delete_after)
         for content in broadcasts:
             await self.bot.broadcast_service.broadcast(self.bot, content)
 
@@ -48,6 +57,7 @@ class XianCommands(commands.Cog):
                 interaction.user.display_name,
                 avatar_url=interaction.user.display_avatar.url,
             ),
+            delete_after=PUBLIC_PANEL_DELETE_AFTER,
         )
 
     @app_commands.command(name="登塔", description="消耗 1 点气机，尝试冲击通天塔新高。")
@@ -93,6 +103,7 @@ class XianCommands(commands.Cog):
                 target_user_id=user.id,
                 target_avatar_url=user.display_avatar.url,
             ),
+            delete_after=PUBLIC_PANEL_DELETE_AFTER,
         )
 
     @app_commands.command(name="轮回", description="舍弃当前主线进度，轮回重修。")
