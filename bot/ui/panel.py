@@ -10,7 +10,7 @@ from bot.services.tower_service import TowerFloorResult, TowerRunResult
 from bot.utils.formatters import RARITY_BADGES, RARITY_COLORS, format_big_number, format_duration_minutes, format_progress, format_qi
 
 
-def build_panel_embed(snapshot: CharacterSnapshot) -> discord.Embed:
+def build_panel_embed(snapshot: CharacterSnapshot, *, avatar_url: str | None = None) -> discord.Embed:
     progress = format_progress(snapshot.cultivation, snapshot.cultivation_max)
     percent = int((snapshot.cultivation / snapshot.cultivation_max) * 100) if snapshot.cultivation_max else 0
     honor_line = "、".join(snapshot.honor_tags) if snapshot.honor_tags else "尚无额外荣誉"
@@ -52,6 +52,8 @@ def build_panel_embed(snapshot: CharacterSnapshot) -> discord.Embed:
         ),
         inline=False,
     )
+    if avatar_url:
+        embed.set_thumbnail(url=avatar_url)
     embed.set_footer(text=snapshot.last_highlight_text)
     return embed
 

@@ -60,7 +60,9 @@ async def build_panel_message(
     owner_user_id: int,
     display_name: str,
     *,
+    avatar_url: str | None = None,
     target_user_id: int | None = None,
+    target_avatar_url: str | None = None,
 ) -> tuple[discord.Embed, discord.ui.View | None, list[str]]:
     if target_user_id is not None and target_user_id != owner_user_id:
         async with bot.session_factory() as session:
@@ -69,10 +71,10 @@ async def build_panel_message(
                 return _info_embed("未见道友", "此人尚未踏入仙途。"), None, []
             snapshot = await _sync_snapshot(bot, session, character, settle_idle=False)
             await session.commit()
-        return build_panel_embed(snapshot), None, []
+        return build_panel_embed(snapshot, avatar_url=target_avatar_url), None, []
 
     _, snapshot, broadcasts = await _load_active_character(bot, owner_user_id, display_name)
-    return build_panel_embed(snapshot), PanelView(owner_user_id), broadcasts
+    return build_panel_embed(snapshot, avatar_url=avatar_url), PanelView(owner_user_id), broadcasts
 
 
 async def build_leaderboard_message(
