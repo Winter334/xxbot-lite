@@ -10,7 +10,12 @@ from bot.services.tower_service import TowerFloorResult, TowerRunResult
 from bot.utils.formatters import RARITY_BADGES, RARITY_COLORS, format_big_number, format_duration_minutes, format_progress, format_qi
 
 
-def build_panel_embed(snapshot: CharacterSnapshot, *, avatar_url: str | None = None) -> discord.Embed:
+def build_panel_embed(
+    snapshot: CharacterSnapshot,
+    *,
+    avatar_url: str | None = None,
+    idle_notice: str | None = None,
+) -> discord.Embed:
     progress = format_progress(snapshot.cultivation, snapshot.cultivation_max, width=8)
     percent = int((snapshot.cultivation / snapshot.cultivation_max) * 100) if snapshot.cultivation_max else 0
     honor_line = " · ".join(f"`{tag}`" for tag in snapshot.honor_tags) if snapshot.honor_tags else "暂无额外荣誉"
@@ -62,6 +67,8 @@ def build_panel_embed(snapshot: CharacterSnapshot, *, avatar_url: str | None = N
         ),
         inline=False,
     )
+    if idle_notice:
+        embed.add_field(name="💤 挂机补算", value=idle_notice, inline=False)
     embed.add_field(name="✨ 近况", value=snapshot.last_highlight_text, inline=False)
     if avatar_url:
         embed.set_thumbnail(url=avatar_url)
@@ -74,6 +81,7 @@ def build_tower_floor_embed(
     *,
     preview: bool,
     run_result: TowerRunResult | None = None,
+    idle_notice: str | None = None,
 ) -> discord.Embed:
     title_suffix = " · 守关" if floor_result.is_boss else ""
     color = discord.Color.blurple() if preview else (discord.Color.green() if floor_result.victory else discord.Color.orange())
@@ -110,6 +118,8 @@ def build_tower_floor_embed(
     embed.add_field(name="🧍 你", value=player_status, inline=True)
     embed.add_field(name="📜 战报", value=report_text, inline=False)
     embed.add_field(name="🎁 奖励", value=reward_text, inline=False)
+    if idle_notice and (preview or run_result is not None):
+        embed.add_field(name="💤 挂机补算", value=idle_notice, inline=False)
 
     if run_result is not None:
         embed.add_field(
@@ -125,7 +135,7 @@ def build_tower_floor_embed(
     return embed
 
 
-def build_tower_embed(snapshot: CharacterSnapshot, result: TowerRunResult) -> discord.Embed:
+def build_tower_embed(snapshot: CharacterSnapshot, result: TowerRunResult, *, idle_notice: str | None = None) -> discord.Embed:
     embed = discord.Embed(
         title=f"{snapshot.player_name} · 通天塔战报",
         description=(
@@ -145,10 +155,12 @@ def build_tower_embed(snapshot: CharacterSnapshot, result: TowerRunResult) -> di
             lines.append(f"第 {floor_result.floor} 层 {suffix} {status} | {floor_result.enemy_name} | {reward_text}")
         embed.add_field(name="层数结算", value="\n".join(lines[:5]), inline=False)
         embed.add_field(name="战斗截取", value=_battle_excerpt(result.floors[-1].battle, limit=4, mode="tower"), inline=False)
+    if idle_notice:
+        embed.add_field(name="💤 挂机补算", value=idle_notice, inline=False)
     return embed
 
 
-def build_breakthrough_embed(snapshot: CharacterSnapshot, result: BreakthroughResult) -> discord.Embed:
+def build_breakthrough_embed(snapshot: CharacterSnapshot, result: BreakthroughResult, *, idle_notice: str | None = None) -> discord.Embed:
     color = discord.Color.green() if result.success else discord.Color.orange()
     embed = discord.Embed(title=f"{snapshot.player_name} · 突破", description=result.message, color=color)
     embed.add_field(
@@ -160,6 +172,8 @@ def build_breakthrough_embed(snapshot: CharacterSnapshot, result: BreakthroughRe
         ),
         inline=False,
     )
+    if idle_notice:
+        embed.add_field(name="💤 挂机补算", value=idle_notice, inline=False)
     if result.required_floor is not None:
         embed.set_footer(text=f"当前突破门槛守关层：第 {result.required_floor} 层")
     return embed

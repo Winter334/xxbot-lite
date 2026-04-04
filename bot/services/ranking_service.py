@@ -122,12 +122,14 @@ class RankingService:
             title = "横压同代"
         elif 11 <= character.current_ladder_rank <= 50:
             title = "凶威盖世"
-        else:
-            power_top = max(characters, key=lambda char: self.character_service.calculate_total_stats(char).combat_power, default=None)
-            tower_top = max(characters, key=lambda char: char.historical_highest_floor, default=None)
-            artifact_top = max(characters, key=lambda char: self.artifact_service.artifact_power(char.artifact), default=None)
-            same_realm = [char for char in characters if char.realm_key == character.realm_key]
-            realm_top = max(same_realm, key=lambda char: self.character_service.calculate_total_stats(char).combat_power, default=None)
+
+        power_top = max(characters, key=lambda char: self.character_service.calculate_total_stats(char).combat_power, default=None)
+        tower_top = max(characters, key=lambda char: char.historical_highest_floor, default=None)
+        artifact_top = max(characters, key=lambda char: self.artifact_service.artifact_power(char.artifact), default=None)
+        same_realm = [char for char in characters if char.realm_key == character.realm_key]
+        realm_top = max(same_realm, key=lambda char: self.character_service.calculate_total_stats(char).combat_power, default=None)
+
+        if title == "未立尊号":
             if power_top and power_top.id == character.id:
                 title = "盖世无双"
             elif tower_top and tower_top.id == character.id:
@@ -138,6 +140,15 @@ class RankingService:
                 title = f"{self.character_service.get_stage(character).realm_name}第一人"
 
         honor_tags: list[str] = []
+        if power_top and power_top.id == character.id:
+            honor_tags.append("盖世无双")
+        if tower_top and tower_top.id == character.id:
+            honor_tags.append("踏碎天关")
+        if artifact_top and artifact_top.id == character.id:
+            honor_tags.append("本命通神")
+        if realm_top and realm_top.id == character.id:
+            honor_tags.append(f"{self.character_service.get_stage(character).realm_name}第一人")
+
         if character.best_ladder_rank == 1:
             honor_tags.append("曾踏绝巅")
         elif 2 <= character.best_ladder_rank <= 3:
@@ -146,4 +157,9 @@ class RankingService:
             honor_tags.append("曾入天榜")
         if character.reincarnation_count > 0:
             honor_tags.append(f"轮回 {character.reincarnation_count} 次")
-        return title, tuple(honor_tags[:3])
+
+        deduped: list[str] = []
+        for tag in honor_tags:
+            if tag != title and tag not in deduped:
+                deduped.append(tag)
+        return title, tuple(deduped[:5])
