@@ -11,6 +11,12 @@ dependencies = [
   "sqlalchemy>=2.0.40",
 ]
 
+[tool.setuptools]
+packages = ["bot"]
+
+[tool.setuptools.package-data]
+bot = ["py.typed"]
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3.5",
