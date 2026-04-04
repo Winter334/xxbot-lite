@@ -323,12 +323,12 @@ class LeaderboardView(OwnerLockedView):
     def __init__(self, owner_user_id: int, category: str, challenge_targets: list) -> None:
         super().__init__(owner_user_id)
         self._add_back_button()
-        self._add_category_button("ladder", "论道", category == "ladder")
-        self._add_category_button("power", "战力", category == "power")
-        self._add_category_button("realm_power", "同境", category == "realm_power")
-        self._add_category_button("tower", "通天塔", category == "tower")
-        self._add_category_button("artifact", "法宝", category == "artifact")
-        self._add_category_button("realm", "境界", category == "realm")
+        self._add_category_button("ladder", "论道", category == "ladder", row=0)
+        self._add_category_button("power", "战力", category == "power", row=0)
+        self._add_category_button("realm_power", "同境", category == "realm_power", row=0)
+        self._add_category_button("tower", "通天塔", category == "tower", row=0)
+        self._add_category_button("artifact", "法宝", category == "artifact", row=1)
+        self._add_category_button("realm", "境界", category == "realm", row=1)
         if category == "ladder":
             for target in challenge_targets[:5]:
                 self._add_challenge_button(target.rank, target.display_name)
@@ -343,9 +343,9 @@ class LeaderboardView(OwnerLockedView):
         button.callback = callback
         self.add_item(button)
 
-    def _add_category_button(self, category: str, label: str, active: bool) -> None:
+    def _add_category_button(self, category: str, label: str, active: bool, *, row: int) -> None:
         style = discord.ButtonStyle.primary if active else discord.ButtonStyle.secondary
-        button = discord.ui.Button(label=label, row=0, style=style)
+        button = discord.ui.Button(label=label, row=row, style=style)
 
         async def callback(interaction: discord.Interaction, category_name: str = category) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
@@ -358,7 +358,7 @@ class LeaderboardView(OwnerLockedView):
         self.add_item(button)
 
     def _add_challenge_button(self, rank: int, display_name: str) -> None:
-        button = discord.ui.Button(label=f"挑战#{rank} {display_name[:4]}", row=1, style=discord.ButtonStyle.danger)
+        button = discord.ui.Button(label=f"挑战#{rank} {display_name[:4]}", row=2, style=discord.ButtonStyle.danger)
 
         async def callback(interaction: discord.Interaction, target_rank: int = rank) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
