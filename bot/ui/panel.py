@@ -13,48 +13,49 @@ from bot.utils.formatters import RARITY_BADGES, RARITY_COLORS, format_big_number
 def build_panel_embed(snapshot: CharacterSnapshot, *, avatar_url: str | None = None) -> discord.Embed:
     progress = format_progress(snapshot.cultivation, snapshot.cultivation_max)
     percent = int((snapshot.cultivation / snapshot.cultivation_max) * 100) if snapshot.cultivation_max else 0
-    honor_line = "、".join(snapshot.honor_tags) if snapshot.honor_tags else "尚无额外荣誉"
+    honor_line = " · ".join(f"`{tag}`" for tag in snapshot.honor_tags) if snapshot.honor_tags else "暂无额外荣誉"
+
     embed = discord.Embed(
-        title=f"{snapshot.player_name} · {snapshot.realm_display}",
+        title=f"【{snapshot.realm_display}】{snapshot.player_name}",
         description=(
-            f"命格：`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}\n"
-            f"称号：**{snapshot.title}**\n"
-            f"荣誉：{honor_line}"
+            f"👑 **{snapshot.title}**\n"
+            f"🔮 命格：`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}\n"
+            f"🏷 荣誉：{honor_line}"
         ),
         color=RARITY_COLORS[snapshot.fate_rarity],
     )
     embed.add_field(
-        name="牌面",
+        name="⚔️ 牌面",
         value=(
-            f"论道名次：`#{snapshot.current_ladder_rank}`\n"
+            f"当前论道：`#{snapshot.current_ladder_rank}`\n"
             f"历史最高：`#{snapshot.best_ladder_rank}`\n"
             f"最高塔层：`{snapshot.historical_highest_floor}` 层"
         ),
         inline=True,
     )
     embed.add_field(
-        name="修行",
+        name="🌿 修行",
         value=(
             f"修为：`{format_big_number(snapshot.cultivation)} / {format_big_number(snapshot.cultivation_max)}`\n"
-            f"{progress} {percent}%\n"
+            f"进度：{progress} `{percent}%`\n"
             f"气机：`{format_qi(snapshot.qi_current, snapshot.qi_max)} {snapshot.qi_current}/{snapshot.qi_max}`\n"
             f"闭关：第 `{max(snapshot.highest_floor, 1)}` 层 · {format_duration_minutes(snapshot.idle_minutes)}"
         ),
         inline=True,
     )
     embed.add_field(
-        name="战纹",
+        name="🗡️ 战纹",
         value=(
-            f"本命：**{snapshot.artifact_name}** `+{snapshot.artifact_level}`\n"
+            f"本命法宝：**{snapshot.artifact_name}** `+{snapshot.artifact_level}`\n"
             f"器魂：`{snapshot.soul_shards}`\n"
-            f"杀伐 / 护体 / 身法：`{format_big_number(snapshot.total_atk)}` / `{format_big_number(snapshot.total_def)}` / `{format_big_number(snapshot.total_agi)}`\n"
-            f"总战力：`{format_big_number(snapshot.combat_power)}`"
+            f"总战力：`{format_big_number(snapshot.combat_power)}`\n"
+            f"杀伐 / 护体 / 身法：`{format_big_number(snapshot.total_atk)}` / `{format_big_number(snapshot.total_def)}` / `{format_big_number(snapshot.total_agi)}`"
         ),
         inline=False,
     )
+    embed.add_field(name="✨ 近况", value=snapshot.last_highlight_text, inline=False)
     if avatar_url:
         embed.set_thumbnail(url=avatar_url)
-    embed.set_footer(text=snapshot.last_highlight_text)
     return embed
 
 
