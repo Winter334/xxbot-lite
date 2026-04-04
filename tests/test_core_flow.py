@@ -51,6 +51,19 @@ async def test_idle_settlement_caps_at_stage_max_and_recovers_qi(session_factory
 
 
 @pytest.mark.asyncio
+async def test_idle_early_realm_has_accelerated_progress(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1004, "松岚")
+        character = creation.character
+        now = now_shanghai()
+        character.last_idle_at = now - timedelta(minutes=60)
+        settlement = services.idle.settle(character, now=now)
+        await session.commit()
+
+        assert settlement.gained_cultivation == 30
+
+
+@pytest.mark.asyncio
 async def test_tower_and_breakthrough_progress(session_factory, services) -> None:
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 1003, "白槐")

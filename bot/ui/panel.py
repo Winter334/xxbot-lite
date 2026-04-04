@@ -179,6 +179,34 @@ def build_breakthrough_embed(snapshot: CharacterSnapshot, result: BreakthroughRe
     return embed
 
 
+def build_artifact_embed(snapshot: CharacterSnapshot) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 本命法宝",
+        description=f"**{snapshot.artifact_name}** `+{snapshot.artifact_level}`",
+        color=discord.Color.dark_gold(),
+    )
+    embed.add_field(
+        name="🧰 法宝详情",
+        value=(
+            f"器魂：`{snapshot.soul_shards}`\n"
+            f"总成长：`{format_big_number(snapshot.artifact_power)}`\n"
+            f"当前主称号：**{snapshot.title}**"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🗡 成长分布",
+        value=(
+            f"⚔️ 杀伐：`{format_big_number(snapshot.total_atk)}`\n"
+            f"🛡 护体：`{format_big_number(snapshot.total_def)}`\n"
+            f"💨 身法：`{format_big_number(snapshot.total_agi)}`"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="可在此继续强化本命，或为其赐名。")
+    return embed
+
+
 def build_reinforce_embed(snapshot: CharacterSnapshot, result: ReinforceResult) -> discord.Embed:
     color = discord.Color.green() if result.success else discord.Color.orange()
     embed = discord.Embed(title=f"{snapshot.player_name} · 锻宝", description=result.message, color=color)
