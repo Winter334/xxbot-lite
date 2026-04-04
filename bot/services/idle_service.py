@@ -29,6 +29,15 @@ class IdleService:
         self.fate_service = fate_service
         self.rng = rng or random.Random()
 
+    def _idle_speed_multiplier(self, current_stage) -> int:
+        if current_stage.realm_index == 1:
+            return 5
+        if current_stage.realm_index == 2 and current_stage.stage_index <= 2:
+            return 4
+        if current_stage.realm_index == 2:
+            return 2
+        return 1
+
     def settle(self, character: Character, *, now=None) -> IdleSettlement:
         current_time = ensure_shanghai(now or now_shanghai())
         recovered_qi = self._recover_qi(character, current_time)
@@ -72,7 +81,7 @@ class IdleService:
         floor_stage = get_stage_for_floor(max(character.highest_floor, 1))
         current_stage = get_stage(character.realm_key, character.stage_key)
         per_cycle = max(1, int(floor_stage.cultivation_max * 0.01))
-        multiplier = self.fate_service.idle_multiplier(character.fate_key)
+        multiplier = self.fate_service.idle_multiplier(character.fate_key) * self._idle_speed_multiplier(current_stage)
         gained = int(per_cycle * cycles * multiplier)
         actual = min(gained, max(0, current_stage.cultivation_max - character.cultivation))
         character.cultivation += actual

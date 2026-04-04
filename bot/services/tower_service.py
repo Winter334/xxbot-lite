@@ -86,9 +86,13 @@ class TowerService:
                 reward_soul = 3 if is_boss else 1
                 character.artifact.soul_shards += reward_soul
                 total_soul += reward_soul
+                current_stage = self.character_service.get_stage(character)
+                if floor <= 50:
+                    extra_ratio = 0.05 if is_boss else 0.01
+                    reward_cultivation += min(int(current_stage.cultivation_max * extra_ratio), max(0, current_stage.cultivation_max - character.cultivation))
                 if is_boss:
-                    current_stage = self.character_service.get_stage(character)
-                    reward_cultivation = min(int(current_stage.cultivation_max * 0.02), max(0, current_stage.cultivation_max - character.cultivation))
+                    reward_cultivation += min(int(current_stage.cultivation_max * 0.02), max(0, current_stage.cultivation_max - character.cultivation - reward_cultivation))
+                if reward_cultivation > 0:
                     character.cultivation += reward_cultivation
                     total_cultivation += reward_cultivation
                 if self._roll_bonus_drop(character.fate_key):

@@ -7,6 +7,7 @@ import discord
 
 from bot.services.idle_service import IdleSettlement
 from bot.ui.panel import (
+    build_artifact_embed,
     build_breakthrough_embed,
     build_ladder_battle_embed,
     build_ladder_round_embed,
@@ -202,6 +203,16 @@ async def build_breakthrough_message(bot: XianBot, owner_user_id: int, display_n
     return build_breakthrough_embed(snapshot, result, idle_notice=_build_idle_notice(settlement)), None, broadcasts
 
 
+async def build_artifact_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        snapshot = await _sync_snapshot(bot, session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return build_artifact_embed(snapshot), ReinforceView(owner_user_id), broadcasts
+
+
 async def build_reinforce_message(bot: XianBot, owner_user_id: int, display_name: str):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
@@ -343,8 +354,8 @@ class PanelView(OwnerLockedView):
     @discord.ui.button(label="锻宝", style=discord.ButtonStyle.secondary)
     async def reinforce_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
-        embed, _, broadcasts = await build_reinforce_message(bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        embed, view, broadcasts = await build_artifact_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="论道", style=discord.ButtonStyle.secondary)
@@ -417,7 +428,20 @@ class ReinforceRenameModal(discord.ui.Modal, title="为本命法宝赐名"):
 class ReinforceView(OwnerLockedView):
     def __init__(self, owner_user_id: int) -> None:
         super().__init__(owner_user_id)
+        self._add_reinforce_button()
         self._add_rename_button()
+
+    def _add_reinforce_button(self) -> None:
+        button = discord.ui.Button(label="强化本命", row=0, style=discord.ButtonStyle.primary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_reinforce_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
 
     def _add_rename_button(self) -> None:
         button = discord.ui.Button(label="改名本命", row=0, style=discord.ButtonStyle.secondary)
