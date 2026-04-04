@@ -16,6 +16,17 @@ from bot.services.fate_service import FateService
 from bot.utils.time_utils import now_shanghai, today_shanghai
 
 
+TITLE_BONUS_MAP = {
+    "独断万古": 0.025,
+    "万战称尊": 0.02,
+    "横压同代": 0.015,
+    "凶威盖世": 0.01,
+    "盖世无双": 0.015,
+    "踏碎天关": 0.015,
+    "本命通神": 0.012,
+}
+
+
 @dataclass(slots=True)
 class TotalStats:
     atk: int
@@ -160,16 +171,24 @@ class CharacterService:
         session.add(player)
         await session.flush()
 
-        broadcast_text = None
+        broadcast_text = f"【初入仙途】{display_name} 踏入仙途，觉醒命格「{fate.name}」，本命法宝「{character.artifact.name}」。"
         if fate.broadcast_on_obtain:
-            broadcast_text = f"【天命出世】{display_name} 初踏仙途，竟得传说命格「{fate.name}」。"
-        return CreationResult(character, True, fate.broadcast_on_obtain, broadcast_text)
+            broadcast_text = f"【天命出世】{display_name} 初踏仙途，觉醒传说命格「{fate.name}」，本命法宝「{character.artifact.name}」。"
+        return CreationResult(character, True, True, broadcast_text)
 
     def get_stage(self, character: Character) -> RealmStage:
         return get_stage(character.realm_key, character.stage_key)
 
     def get_next_stage(self, character: Character) -> RealmStage | None:
         return get_next_stage(self.get_stage(character))
+
+    def _title_multiplier(self, character: Character) -> float:
+        if character.title in TITLE_BONUS_MAP:
+            return TITLE_BONUS_MAP[character.title]
+        stage = self.get_stage(character)
+        if character.title == f"{stage.realm_name}第一人":
+            return 0.01
+        return 0.0
 
     def calculate_total_stats(self, character: Character) -> TotalStats:
         stage = self.get_stage(character)
@@ -180,6 +199,11 @@ class CharacterService:
         atk = int(atk * self.fate_service.combat_multiplier(character.fate_key, "atk"))
         defense = int(defense * self.fate_service.combat_multiplier(character.fate_key, "def"))
         agility = int(agility * self.fate_service.combat_multiplier(character.fate_key, "agi"))
+        title_multiplier = self._title_multiplier(character)
+        if title_multiplier > 0:
+            atk = int(atk * (1 + title_multiplier))
+            defense = int(defense * (1 + title_multiplier))
+            agility = int(agility * (1 + title_multiplier))
         combat_power = int(atk * 1.35 + defense * 1.5 + agility * 1.15)
         return TotalStats(atk, defense, agility, combat_power)
 

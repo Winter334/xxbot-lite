@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import random
+import re
 
 from bot.data.artifacts import ARTIFACT_NAMES
 from bot.data.realms import RealmStage
@@ -19,6 +20,14 @@ class ReinforceResult:
     gained_atk: int = 0
     gained_def: int = 0
     gained_agi: int = 0
+
+
+@dataclass(slots=True)
+class RenameArtifactResult:
+    success: bool
+    message: str
+    name_before: str
+    name_after: str
 
 
 class ArtifactService:
@@ -92,3 +101,14 @@ class ArtifactService:
             growth[1],
             growth[2],
         )
+
+    def rename_artifact(self, artifact: Artifact, new_name: str) -> RenameArtifactResult:
+        name_before = artifact.name
+        cleaned = re.sub(r"\s+", "", new_name).strip()
+        if artifact.artifact_rename_used:
+            return RenameArtifactResult(False, "此生本命改名机缘已尽。", name_before, name_before)
+        if len(cleaned) < 2 or len(cleaned) > 12:
+            return RenameArtifactResult(False, "本命法宝之名需在 2 到 12 个字符之间。", name_before, name_before)
+        artifact.name = cleaned
+        artifact.artifact_rename_used = True
+        return RenameArtifactResult(True, f"本命法宝自此更名为「{cleaned}」。", name_before, cleaned)
