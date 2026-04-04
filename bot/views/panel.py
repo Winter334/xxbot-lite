@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 import discord
@@ -20,6 +21,11 @@ if TYPE_CHECKING:
 
 def _info_embed(title: str, description: str) -> discord.Embed:
     return discord.Embed(title=title, description=description, color=discord.Color.orange())
+
+
+async def _send_broadcasts(bot: XianBot, broadcasts: list[str]) -> None:
+    for content in broadcasts:
+        await bot.broadcast_service.broadcast(bot, content)
 
 
 async def _sync_snapshot(bot: XianBot, session, character, *, settle_idle: bool) -> tuple:
@@ -97,7 +103,64 @@ async def build_tower_message(bot: XianBot, owner_user_id: int, display_name: st
         if result.highest_floor_after > result.highest_floor_before and result.highest_floor_after % 25 == 0:
             broadcasts.append(f"【塔影留名】{snapshot.player_name} 已踏破通天塔第 {result.highest_floor_after} 层。")
         await session.commit()
-    return build_tower_embed(snapshot, result), PanelView(owner_user_id), broadcasts
+    return build_tower_embed(snapshot, result), TowerRunView(owner_user_id, can_retry=result.qi_after > 0), broadcasts
+
+
+async def _load_tower_run(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        await _sync_snapshot(bot, session, character, settle_idle=True)
+        result = bot.tower_service.run_tower(character)
+        snapshot = await _sync_snapshot(bot, session, character, settle_idle=False)
+        broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+        if result.highest_floor_after > result.highest_floor_before and result.highest_floor_after % 25 == 0:
+            broadcasts.append(f"【塔影留名】{snapshot.player_name} 已踏破通天塔第 {result.highest_floor_after} 层。")
+        await session.commit()
+    return snapshot, result, broadcasts
+
+
+async def run_private_tower_sequence(
+    bot: XianBot,
+    interaction: discord.Interaction,
+    *,
+    owner_user_id: int,
+    display_name: str,
+    edit_existing: bool = False,
+) -> None:
+    snapshot, result, broadcasts = await _load_tower_run(bot, owner_user_id, display_name)
+
+    if not result.floors:
+        embed = build_tower_embed(snapshot, result)
+        view = TowerRunView(owner_user_id, can_retry=False)
+        if edit_existing:
+            await interaction.response.defer()
+            await interaction.edit_original_response(embed=embed, view=view)
+        else:
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
+        return
+
+    preview_embed = build_tower_floor_embed(snapshot, result.floors[0], preview=True)
+    if edit_existing:
+        await interaction.response.defer()
+        await interaction.edit_original_response(embed=preview_embed, view=None)
+    else:
+        await interaction.response.send_message(embed=preview_embed, ephemeral=True)
+
+    await asyncio.sleep(1.5)
+    for index, floor_result in enumerate(result.floors):
+        is_last = index == len(result.floors) - 1
+        resolved_embed = build_tower_floor_embed(snapshot, floor_result, preview=False, run_result=result if is_last else None)
+        resolved_view = TowerRunView(owner_user_id, can_retry=result.qi_after > 0) if is_last else None
+        await interaction.edit_original_response(embed=resolved_embed, view=resolved_view)
+        if not is_last:
+            await asyncio.sleep(1.8)
+            next_preview = build_tower_floor_embed(snapshot, result.floors[index + 1], preview=True)
+            await interaction.edit_original_response(embed=next_preview, view=None)
+            await asyncio.sleep(1.5)
+
+    await _send_broadcasts(bot, broadcasts)
 
 
 async def build_breakthrough_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -111,7 +174,7 @@ async def build_breakthrough_message(bot: XianBot, owner_user_id: int, display_n
         if result.success and result.reached_new_realm:
             broadcasts.append(f"【大境将成】{snapshot.player_name} 已踏入 {snapshot.realm_display}。")
         await session.commit()
-    return build_breakthrough_embed(snapshot, result), PanelView(owner_user_id), broadcasts
+    return build_breakthrough_embed(snapshot, result), None, broadcasts
 
 
 async def build_reinforce_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -124,7 +187,7 @@ async def build_reinforce_message(bot: XianBot, owner_user_id: int, display_name
         snapshot = await _sync_snapshot(bot, session, character, settle_idle=False)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return build_reinforce_embed(snapshot, result), PanelView(owner_user_id), broadcasts
+    return build_reinforce_embed(snapshot, result), None, broadcasts
 
 
 async def build_reincarnation_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -140,7 +203,7 @@ async def build_reincarnation_message(bot: XianBot, owner_user_id: int, display_
         if result.broadcast_text:
             broadcasts.append(result.broadcast_text)
         await session.commit()
-    return build_reincarnation_embed(snapshot, result.message), PanelView(owner_user_id), broadcasts
+    return build_reincarnation_embed(snapshot, result.message), None, broadcasts
 
 
 async def build_challenge_message(bot: XianBot, owner_user_id: int, display_name: str, target_rank: int):
@@ -186,27 +249,73 @@ class PanelView(OwnerLockedView):
     @discord.ui.button(label="登塔", style=discord.ButtonStyle.primary)
     async def tower_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
-        await self._apply(interaction, lambda: build_tower_message(bot, interaction.user.id, interaction.user.display_name))
+        await run_private_tower_sequence(bot, interaction, owner_user_id=interaction.user.id, display_name=interaction.user.display_name)
 
     @discord.ui.button(label="突破", style=discord.ButtonStyle.success)
     async def breakthrough_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
-        await self._apply(interaction, lambda: build_breakthrough_message(bot, interaction.user.id, interaction.user.display_name))
+        embed, _, broadcasts = await build_breakthrough_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="锻宝", style=discord.ButtonStyle.secondary)
     async def reinforce_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
-        await self._apply(interaction, lambda: build_reinforce_message(bot, interaction.user.id, interaction.user.display_name))
+        embed, _, broadcasts = await build_reinforce_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="榜单", style=discord.ButtonStyle.secondary)
     async def ranking_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
-        await self._apply(interaction, lambda: build_leaderboard_message(bot, interaction.user.id, interaction.user.display_name))
+        embed, view, broadcasts = await build_leaderboard_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="轮回", style=discord.ButtonStyle.danger)
     async def reincarnate_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
-        await self._apply(interaction, lambda: build_reincarnation_message(bot, interaction.user.id, interaction.user.display_name))
+        embed, _, broadcasts = await build_reincarnation_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
+
+
+class TowerRunView(OwnerLockedView):
+    def __init__(self, owner_user_id: int, *, can_retry: bool) -> None:
+        super().__init__(owner_user_id)
+        self.can_retry = can_retry
+        self._add_retry_button()
+        self._add_exit_button()
+
+    def _add_retry_button(self) -> None:
+        button = discord.ui.Button(
+            label="再次挑战",
+            row=0,
+            style=discord.ButtonStyle.primary,
+            disabled=not self.can_retry,
+        )
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            await run_private_tower_sequence(
+                bot,
+                interaction,
+                owner_user_id=interaction.user.id,
+                display_name=interaction.user.display_name,
+                edit_existing=True,
+            )
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_exit_button(self) -> None:
+        button = discord.ui.Button(label="退出", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            await interaction.response.edit_message(content="已退出本次通天塔界面。", embed=None, view=None)
+
+        button.callback = callback
+        self.add_item(button)
 
 
 class LeaderboardView(OwnerLockedView):
