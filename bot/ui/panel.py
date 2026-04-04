@@ -226,6 +226,92 @@ def build_reincarnation_embed(snapshot: CharacterSnapshot, message: str) -> disc
     return embed
 
 
+def _ladder_hp_after_round(
+    challenger: CharacterSnapshot,
+    defender: CharacterSnapshot,
+    battle,
+    round_no: int,
+) -> tuple[int, int]:
+    challenger_hp = battle.challenger_max_hp
+    defender_hp = battle.defender_max_hp
+    for action in battle.logs:
+        if action.round_no > round_no:
+            break
+        if action.target_name == challenger.player_name:
+            challenger_hp = action.target_hp_after
+        elif action.target_name == defender.player_name:
+            defender_hp = action.target_hp_after
+    return challenger_hp, defender_hp
+
+
+def _ladder_round_report(battle, round_no: int) -> str:
+    lines = []
+    for action in battle.logs:
+        if action.round_no != round_no:
+            continue
+        if action.dodged:
+            lines.append(f"{action.actor_name} 一击落空，被 {action.target_name} 避开。")
+            continue
+        critical = "暴击" if action.critical else "命中"
+        lines.append(f"{action.actor_name} {critical} {action.target_name}，造成 {format_big_number(action.damage)} 点伤害。")
+    return "\n".join(lines) if lines else "这一回合杀机未成。"
+
+
+def build_ladder_round_embed(
+    challenger: CharacterSnapshot,
+    defender: CharacterSnapshot,
+    result: LadderChallengeResult,
+    *,
+    preview: bool,
+    round_no: int | None = None,
+    final: bool = False,
+) -> discord.Embed:
+    battle = result.battle
+    color = discord.Color.blurple() if preview else (discord.Color.green() if result.battle and result.battle.challenger_won else discord.Color.orange())
+    embed = discord.Embed(
+        title=f"论道 · 挑战第 {result.defender_rank_before} 席",
+        description=f"{challenger.player_name} 向 {defender.player_name} 发起论道。",
+        color=color,
+    )
+
+    if preview or battle is None or round_no is None:
+        challenger_hp = challenger.total_def * 10
+        defender_hp = defender.total_def * 10
+        report_text = "双方灵机相引，尚未真正出手。"
+    else:
+        challenger_hp, defender_hp = _ladder_hp_after_round(challenger, defender, battle, round_no)
+        report_text = _ladder_round_report(battle, round_no)
+
+    challenger_state = (
+        f"**{challenger.player_name}** · {challenger.realm_display}\n"
+        f"称号：**{challenger.title}**\n"
+        + ("💀 已败退" if challenger_hp <= 0 else f"♥ 血量：`{format_big_number(challenger_hp)} / {format_big_number(battle.challenger_max_hp if battle else challenger.total_def * 10)}`")
+    )
+    defender_state = (
+        f"**{defender.player_name}** · {defender.realm_display}\n"
+        f"称号：**{defender.title}**\n"
+        + ("💀 已落败" if defender_hp <= 0 else f"♥ 血量：`{format_big_number(defender_hp)} / {format_big_number(battle.defender_max_hp if battle else defender.total_def * 10)}`")
+    )
+    embed.add_field(name="🧍 你", value=challenger_state, inline=True)
+    embed.add_field(name="🗿 对手", value=defender_state, inline=True)
+    if preview:
+        embed.add_field(name="📜 战报", value=report_text, inline=False)
+    else:
+        embed.add_field(name=f"📜 第 {round_no} 回合", value=report_text, inline=False)
+    if final:
+        embed.add_field(
+            name="✨ 论果",
+            value=(
+                f"你：`#{result.challenger_rank_before} -> #{result.challenger_rank_after}`\n"
+                f"对手：`#{result.defender_rank_before} -> #{result.defender_rank_after}`\n"
+                f"剩余挑战：`{result.remaining_attempts}` 次\n"
+                f"结果：{result.message}"
+            ),
+            inline=False,
+        )
+    return embed
+
+
 def build_ladder_battle_embed(
     challenger: CharacterSnapshot,
     defender: CharacterSnapshot,

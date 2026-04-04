@@ -9,6 +9,7 @@ from bot.services.idle_service import IdleSettlement
 from bot.ui.panel import (
     build_breakthrough_embed,
     build_ladder_battle_embed,
+    build_ladder_round_embed,
     build_panel_embed,
     build_reincarnation_embed,
     build_reinforce_embed,
@@ -227,6 +228,36 @@ async def build_reincarnation_message(bot: XianBot, owner_user_id: int, display_
     return build_reincarnation_embed(snapshot, result.message), None, broadcasts
 
 
+async def run_private_ladder_sequence(
+    bot: XianBot,
+    interaction: discord.Interaction,
+    *,
+    owner_user_id: int,
+    display_name: str,
+    target_rank: int,
+) -> None:
+    embed, view, broadcasts = await build_challenge_message(bot, owner_user_id, display_name, target_rank)
+    result = view.result
+    challenger = view.challenger_snapshot
+    defender = view.defender_snapshot
+
+    preview_embed = build_ladder_round_embed(challenger, defender, result, preview=True)
+    await interaction.response.send_message(embed=preview_embed, ephemeral=True)
+    battle = result.battle
+    if battle is None:
+        await interaction.edit_original_response(embed=embed, view=view)
+        await _send_broadcasts(bot, broadcasts)
+        return
+
+    for round_no in range(1, battle.rounds + 1):
+        await asyncio.sleep(1.3)
+        final = round_no == battle.rounds
+        round_embed = build_ladder_round_embed(challenger, defender, result, preview=False, round_no=round_no, final=final)
+        await interaction.edit_original_response(embed=round_embed, view=view if final else None)
+
+    await _send_broadcasts(bot, broadcasts)
+
+
 async def build_challenge_message(bot: XianBot, owner_user_id: int, display_name: str, target_rank: int):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
@@ -240,7 +271,11 @@ async def build_challenge_message(bot: XianBot, owner_user_id: int, display_name
         if result.reached_top_rank:
             broadcasts.append(f"【论道绝巅】{challenger_snapshot.player_name} 已登临论道榜首。")
         await session.commit()
-    return build_ladder_battle_embed(challenger_snapshot, defender_snapshot, result), LeaderboardView(owner_user_id, "ladder", targets), broadcasts
+    return (
+        build_ladder_battle_embed(challenger_snapshot, defender_snapshot, result),
+        LeaderboardView(owner_user_id, "ladder", targets, result=result, challenger_snapshot=challenger_snapshot, defender_snapshot=defender_snapshot),
+        broadcasts,
+    )
 
 
 class OwnerLockedView(discord.ui.View):
@@ -339,8 +374,20 @@ class TowerRunView(OwnerLockedView):
 
 
 class LeaderboardView(OwnerLockedView):
-    def __init__(self, owner_user_id: int, category: str, challenge_targets: list) -> None:
+    def __init__(
+        self,
+        owner_user_id: int,
+        category: str,
+        challenge_targets: list,
+        *,
+        result=None,
+        challenger_snapshot=None,
+        defender_snapshot=None,
+    ) -> None:
         super().__init__(owner_user_id)
+        self.result = result
+        self.challenger_snapshot = challenger_snapshot
+        self.defender_snapshot = defender_snapshot
         self._add_category_button("ladder", "论道", category == "ladder", row=0)
         self._add_category_button("power", "战力", category == "power", row=0)
         self._add_category_button("realm_power", "同境", category == "realm_power", row=0)
@@ -370,9 +417,12 @@ class LeaderboardView(OwnerLockedView):
 
         async def callback(interaction: discord.Interaction, target_rank: int = rank) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
-            await self._apply(
+            await run_private_ladder_sequence(
+                bot,
                 interaction,
-                lambda: build_challenge_message(bot, interaction.user.id, interaction.user.display_name, target_rank),
+                owner_user_id=interaction.user.id,
+                display_name=interaction.user.display_name,
+                target_rank=target_rank,
             )
 
         button.callback = callback
