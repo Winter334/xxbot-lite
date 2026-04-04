@@ -12,6 +12,7 @@ from bot.ui.panel import (
     build_reincarnation_embed,
     build_reinforce_embed,
     build_tower_embed,
+    build_tower_floor_embed,
 )
 from bot.ui.ranking import build_leaderboard_embed
 
