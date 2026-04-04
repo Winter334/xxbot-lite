@@ -36,6 +36,10 @@ class BattleResult:
     rounds: int
     reached_round_limit: bool
     logs: list[ActionLog]
+    challenger_max_hp: int
+    defender_max_hp: int
+    challenger_hp_after: int
+    defender_hp_after: int
 
 
 class CombatService:
@@ -61,9 +65,31 @@ class CombatService:
                 if hp[target.name] <= 0:
                     winner = actor.name
                     loser = target.name
-                    return BattleResult(winner == challenger.name, winner, loser, round_no, False, logs)
+                    return BattleResult(
+                        winner == challenger.name,
+                        winner,
+                        loser,
+                        round_no,
+                        False,
+                        logs,
+                        challenger.max_hp,
+                        defender.max_hp,
+                        hp[challenger.name],
+                        hp[defender.name],
+                    )
 
-        return BattleResult(False, defender.name, challenger.name, self.max_rounds, True, logs)
+        return BattleResult(
+            False,
+            defender.name,
+            challenger.name,
+            self.max_rounds,
+            True,
+            logs,
+            challenger.max_hp,
+            defender.max_hp,
+            hp[challenger.name],
+            hp[defender.name],
+        )
 
     def _determine_order(
         self,

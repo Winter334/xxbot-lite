@@ -11,7 +11,7 @@ from bot.views.panel import (
     build_leaderboard_message,
     build_panel_message,
     build_reincarnation_message,
-    build_tower_message,
+    run_private_tower_sequence,
 )
 
 if TYPE_CHECKING:
@@ -32,9 +32,9 @@ class XianCommands(commands.Cog):
     def __init__(self, bot: XianBot) -> None:
         self.bot = bot
 
-    async def _send_with_broadcasts(self, interaction: discord.Interaction, payload) -> None:
+    async def _send_with_broadcasts(self, interaction: discord.Interaction, payload, *, ephemeral: bool = False) -> None:
         embed, view, broadcasts = payload
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=ephemeral)
         for content in broadcasts:
             await self.bot.broadcast_service.broadcast(self.bot, content)
 
@@ -47,16 +47,14 @@ class XianCommands(commands.Cog):
 
     @app_commands.command(name="登塔", description="消耗 1 点气机，尝试冲击通天塔新高。")
     async def tower(self, interaction: discord.Interaction) -> None:
-        await self._send_with_broadcasts(
-            interaction,
-            await build_tower_message(self.bot, interaction.user.id, interaction.user.display_name),
-        )
+        await run_private_tower_sequence(self.bot, interaction, owner_user_id=interaction.user.id, display_name=interaction.user.display_name)
 
     @app_commands.command(name="突破", description="尝试突破当前境界。")
     async def breakthrough(self, interaction: discord.Interaction) -> None:
         await self._send_with_broadcasts(
             interaction,
             await build_breakthrough_message(self.bot, interaction.user.id, interaction.user.display_name),
+            ephemeral=True,
         )
 
     @app_commands.command(name="榜单", description="查看一期榜单。")
@@ -75,6 +73,7 @@ class XianCommands(commands.Cog):
                 interaction.user.display_name,
                 category=category.value if category else "ladder",
             ),
+            ephemeral=True,
         )
 
     @app_commands.command(name="面板", description="查看其他修士的公开面板。")
@@ -95,6 +94,7 @@ class XianCommands(commands.Cog):
         await self._send_with_broadcasts(
             interaction,
             await build_reincarnation_message(self.bot, interaction.user.id, interaction.user.display_name),
+            ephemeral=True,
         )
 
 

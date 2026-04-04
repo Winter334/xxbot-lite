@@ -6,7 +6,7 @@ from bot.services.artifact_service import ReinforceResult
 from bot.services.breakthrough_service import BreakthroughResult
 from bot.services.character_service import CharacterSnapshot
 from bot.services.ladder_service import LadderChallengeResult
-from bot.services.tower_service import TowerRunResult
+from bot.services.tower_service import TowerFloorResult, TowerRunResult
 from bot.utils.formatters import RARITY_BADGES, RARITY_COLORS, format_big_number, format_duration_minutes, format_progress, format_qi
 
 
@@ -56,6 +56,63 @@ def build_panel_embed(snapshot: CharacterSnapshot) -> discord.Embed:
     return embed
 
 
+def build_tower_floor_embed(
+    snapshot: CharacterSnapshot,
+    floor_result: TowerFloorResult,
+    *,
+    preview: bool,
+    run_result: TowerRunResult | None = None,
+) -> discord.Embed:
+    title_suffix = " · 守关" if floor_result.is_boss else ""
+    color = discord.Color.blurple() if preview else (discord.Color.green() if floor_result.victory else discord.Color.orange())
+    embed = discord.Embed(
+        title=f"通天塔 · 第 {floor_result.floor} 层{title_suffix}",
+        description=f"{snapshot.player_name} 凝神而立，直面 {floor_result.enemy_name}。",
+        color=color,
+    )
+
+    player_max_hp = floor_result.battle.challenger_max_hp
+    enemy_max_hp = floor_result.battle.defender_max_hp
+    if preview:
+        enemy_status = f"**{floor_result.enemy_name}**\n♥ 血量：`{format_big_number(enemy_max_hp)} / {format_big_number(enemy_max_hp)}`"
+        player_status = f"**{snapshot.player_name}**\n♥ 血量：`{format_big_number(player_max_hp)} / {format_big_number(player_max_hp)}`"
+        report_text = "未开战，气机流转，杀机未发。"
+        reward_text = "胜出后方可结算。"
+    else:
+        enemy_after = floor_result.battle.defender_hp_after
+        player_after = floor_result.battle.challenger_hp_after
+        enemy_status = (
+            f"**{floor_result.enemy_name}**\n💀 已倒下"
+            if enemy_after <= 0
+            else f"**{floor_result.enemy_name}**\n♥ 血量：`{format_big_number(enemy_after)} / {format_big_number(enemy_max_hp)}`"
+        )
+        player_status = (
+            f"**{snapshot.player_name}**\n💀 已败退"
+            if player_after <= 0
+            else f"**{snapshot.player_name}**\n♥ 血量：`{format_big_number(player_after)} / {format_big_number(player_max_hp)}`"
+        )
+        report_text = _battle_excerpt(floor_result.battle, limit=8, mode="tower")
+        reward_text = _tower_reward_text(floor_result)
+
+    embed.add_field(name="🗿 守塔者", value=enemy_status, inline=True)
+    embed.add_field(name="🧍 你", value=player_status, inline=True)
+    embed.add_field(name="📜 战报", value=report_text, inline=False)
+    embed.add_field(name="🎁 奖励", value=reward_text, inline=False)
+
+    if run_result is not None:
+        embed.add_field(
+            name="✨ 本轮小结",
+            value=(
+                f"气机：`{run_result.qi_before} -> {run_result.qi_after}`\n"
+                f"新高：`{run_result.highest_floor_before} -> {run_result.highest_floor_after}`\n"
+                f"总计：器魂 `+{run_result.total_soul}` · 修为 `+{format_big_number(run_result.total_cultivation)}`"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text=run_result.message)
+    return embed
+
+
 def build_tower_embed(snapshot: CharacterSnapshot, result: TowerRunResult) -> discord.Embed:
     embed = discord.Embed(
         title=f"{snapshot.player_name} · 通天塔战报",
@@ -72,17 +129,10 @@ def build_tower_embed(snapshot: CharacterSnapshot, result: TowerRunResult) -> di
         for floor_result in result.floors:
             suffix = "守关" if floor_result.is_boss else "层战"
             status = "胜" if floor_result.victory else "败"
-            reward = []
-            if floor_result.reward_soul:
-                reward.append(f"器魂+{floor_result.reward_soul}")
-            if floor_result.reward_cultivation:
-                reward.append(f"修为+{format_big_number(floor_result.reward_cultivation)}")
-            if floor_result.bonus_drop_triggered:
-                reward.append("额外器魂+1")
-            reward_text = " · ".join(reward) if reward else "无额外收获"
+            reward_text = _tower_reward_text(floor_result)
             lines.append(f"第 {floor_result.floor} 层 {suffix} {status} | {floor_result.enemy_name} | {reward_text}")
         embed.add_field(name="层数结算", value="\n".join(lines[:5]), inline=False)
-        embed.add_field(name="战斗截取", value=_battle_excerpt(result.floors[-1].battle, limit=4), inline=False)
+        embed.add_field(name="战斗截取", value=_battle_excerpt(result.floors[-1].battle, limit=4, mode="tower"), inline=False)
     return embed
 
 
@@ -171,7 +221,18 @@ def build_ladder_battle_embed(
     return embed
 
 
-def _battle_excerpt(battle, limit: int) -> str:
+def _tower_reward_text(floor_result: TowerFloorResult) -> str:
+    reward = []
+    if floor_result.reward_soul:
+        reward.append(f"器魂+{floor_result.reward_soul}")
+    if floor_result.reward_cultivation:
+        reward.append(f"修为+{format_big_number(floor_result.reward_cultivation)}")
+    if floor_result.bonus_drop_triggered:
+        reward.append("额外掉落触发")
+    return " · ".join(reward) if reward else "无额外收获"
+
+
+def _battle_excerpt(battle, limit: int, *, mode: str = "ladder") -> str:
     lines = []
     for action in battle.logs[-limit:]:
         if action.dodged:
@@ -180,5 +241,5 @@ def _battle_excerpt(battle, limit: int) -> str:
         critical = "暴击" if action.critical else "命中"
         lines.append(f"第 {action.round_no} 回合 | {action.actor_name} {critical} {action.target_name}，造成 {format_big_number(action.damage)} 点伤害，余血 {format_big_number(action.target_hp_after)}。")
     if battle.reached_round_limit:
-        lines.append("十合战罢，挑战方未能夺位。")
+        lines.append("十合战罢，挑战方未能夺位。" if mode == "ladder" else "十合战罢，此层未能踏破。")
     return "\n".join(lines) if lines else "此战过于短促，未留战痕。"
