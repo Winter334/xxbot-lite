@@ -61,11 +61,10 @@ async def _load_active_character(bot: XianBot, user_id: int, display_name: str):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, user_id, display_name)
         character = creation.character
-        settlement = bot.idle_service.settle(character)
         snapshot = await _sync_snapshot(bot, session, character)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return character.id, snapshot, broadcasts, settlement
+    return character.id, snapshot, broadcasts
 
 
 async def build_panel_message(
@@ -86,8 +85,8 @@ async def build_panel_message(
             await session.commit()
         return build_panel_embed(snapshot, avatar_url=target_avatar_url), None, []
 
-    _, snapshot, broadcasts, settlement = await _load_active_character(bot, owner_user_id, display_name)
-    return build_panel_embed(snapshot, avatar_url=avatar_url, idle_notice=_build_idle_notice(settlement)), PanelView(owner_user_id), broadcasts
+    _, snapshot, broadcasts = await _load_active_character(bot, owner_user_id, display_name)
+    return build_panel_embed(snapshot, avatar_url=avatar_url), PanelView(owner_user_id), broadcasts
 
 
 async def build_leaderboard_message(
