@@ -10,7 +10,7 @@ from bot.views.panel import (
     build_breakthrough_message,
     build_leaderboard_message,
     build_panel_message,
-    build_reincarnation_message,
+    build_reincarnation_confirm_message,
     run_private_tower_sequence,
 )
 
@@ -110,7 +110,7 @@ class XianCommands(commands.Cog):
     async def reincarnate(self, interaction: discord.Interaction) -> None:
         await self._send_with_broadcasts(
             interaction,
-            await build_reincarnation_message(self.bot, interaction.user.id, interaction.user.display_name),
+            await build_reincarnation_confirm_message(self.bot, interaction.user.id, interaction.user.display_name),
             ephemeral=True,
         )
 

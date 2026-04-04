@@ -230,6 +230,35 @@ def build_reinforce_embed(snapshot: CharacterSnapshot, result: ReinforceResult) 
     return embed
 
 
+def build_reincarnation_confirm_embed(snapshot: CharacterSnapshot) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 轮回警示",
+        description="轮回重修会重置当前主线进度，但可重新抽取命格。此举适合在想赌更强命格时使用。",
+        color=discord.Color.red(),
+    )
+    embed.add_field(
+        name="将会失去",
+        value=(
+            f"当前境界：`{snapshot.realm_display}`\n"
+            f"当前修为：`{format_big_number(snapshot.cultivation)}`\n"
+            f"当前塔层：`{snapshot.highest_floor}`\n"
+            f"当前本命强化：`+{snapshot.artifact_level}`"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="仍会保留",
+        value=(
+            f"历史最高塔层：`{snapshot.historical_highest_floor}`\n"
+            f"历史最高论道：`#{snapshot.best_ladder_rank}`\n"
+            f"轮回次数：`{snapshot.reincarnation_count}`"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="请确认是否真的要舍弃当前主线进度。")
+    return embed
+
+
 def build_reincarnation_embed(snapshot: CharacterSnapshot, message: str) -> discord.Embed:
     embed = discord.Embed(
         title=f"{snapshot.player_name} · 轮回重修",
