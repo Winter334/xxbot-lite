@@ -11,7 +11,7 @@ from bot.utils.formatters import RARITY_BADGES, RARITY_COLORS, format_big_number
 
 
 def build_panel_embed(snapshot: CharacterSnapshot, *, avatar_url: str | None = None) -> discord.Embed:
-    progress = format_progress(snapshot.cultivation, snapshot.cultivation_max)
+    progress = format_progress(snapshot.cultivation, snapshot.cultivation_max, width=8)
     percent = int((snapshot.cultivation / snapshot.cultivation_max) * 100) if snapshot.cultivation_max else 0
     honor_line = " · ".join(f"`{tag}`" for tag in snapshot.honor_tags) if snapshot.honor_tags else "暂无额外荣誉"
 
@@ -19,37 +19,46 @@ def build_panel_embed(snapshot: CharacterSnapshot, *, avatar_url: str | None = N
         title=f"【{snapshot.realm_display}】{snapshot.player_name}",
         description=(
             f"👑 **{snapshot.title}**\n"
+            f"⚡ 总战力：**{format_big_number(snapshot.combat_power)}**\n"
             f"🔮 命格：`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}\n"
             f"🏷 荣誉：{honor_line}"
         ),
         color=RARITY_COLORS[snapshot.fate_rarity],
     )
     embed.add_field(
-        name="⚔️ 牌面",
+        name="📍 牌面",
         value=(
             f"当前论道：`#{snapshot.current_ladder_rank}`\n"
             f"历史最高：`#{snapshot.best_ladder_rank}`\n"
-            f"最高塔层：`{snapshot.historical_highest_floor}` 层"
+            f"最高塔层：`{snapshot.historical_highest_floor}` 层\n"
+            f"轮回次数：`{snapshot.reincarnation_count}`"
         ),
         inline=True,
     )
     embed.add_field(
-        name="🌿 修行",
+        name="🗡 三维",
         value=(
-            f"修为：`{format_big_number(snapshot.cultivation)} / {format_big_number(snapshot.cultivation_max)}`\n"
-            f"进度：{progress} `{percent}%`\n"
-            f"气机：`{format_qi(snapshot.qi_current, snapshot.qi_max)} {snapshot.qi_current}/{snapshot.qi_max}`\n"
+            f"⚔️ 杀伐：`{format_big_number(snapshot.total_atk)}`\n"
+            f"🛡 护体：`{format_big_number(snapshot.total_def)}`\n"
+            f"💨 身法：`{format_big_number(snapshot.total_agi)}`"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="🧰 本命",
+        value=(
+            f"法宝：**{snapshot.artifact_name}** `+{snapshot.artifact_level}`\n"
+            f"器魂：`{snapshot.soul_shards}`\n"
             f"闭关：第 `{max(snapshot.highest_floor, 1)}` 层 · {format_duration_minutes(snapshot.idle_minutes)}"
         ),
-        inline=True,
+        inline=False,
     )
     embed.add_field(
-        name="🗡️ 战纹",
+        name="📈 修为进境",
         value=(
-            f"本命法宝：**{snapshot.artifact_name}** `+{snapshot.artifact_level}`\n"
-            f"器魂：`{snapshot.soul_shards}`\n"
-            f"总战力：`{format_big_number(snapshot.combat_power)}`\n"
-            f"杀伐 / 护体 / 身法：`{format_big_number(snapshot.total_atk)}` / `{format_big_number(snapshot.total_def)}` / `{format_big_number(snapshot.total_agi)}`"
+            f"修为：`{format_big_number(snapshot.cultivation)} / {format_big_number(snapshot.cultivation_max)}`\n"
+            f"{progress} `{percent}%`\n"
+            f"气机：`{format_qi(snapshot.qi_current, snapshot.qi_max)} {snapshot.qi_current}/{snapshot.qi_max}`"
         ),
         inline=False,
     )
