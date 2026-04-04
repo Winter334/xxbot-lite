@@ -322,7 +322,6 @@ class TowerRunView(OwnerLockedView):
 class LeaderboardView(OwnerLockedView):
     def __init__(self, owner_user_id: int, category: str, challenge_targets: list) -> None:
         super().__init__(owner_user_id)
-        self._add_back_button()
         self._add_category_button("ladder", "论道", category == "ladder", row=0)
         self._add_category_button("power", "战力", category == "power", row=0)
         self._add_category_button("realm_power", "同境", category == "realm_power", row=0)
@@ -332,16 +331,6 @@ class LeaderboardView(OwnerLockedView):
         if category == "ladder":
             for target in challenge_targets[:5]:
                 self._add_challenge_button(target.rank, target.display_name)
-
-    def _add_back_button(self) -> None:
-        button = discord.ui.Button(label="返回", row=0, style=discord.ButtonStyle.secondary)
-
-        async def callback(interaction: discord.Interaction) -> None:
-            bot: XianBot = interaction.client  # type: ignore[assignment]
-            await self._apply(interaction, lambda: build_panel_message(bot, interaction.user.id, interaction.user.display_name))
-
-        button.callback = callback
-        self.add_item(button)
 
     def _add_category_button(self, category: str, label: str, active: bool, *, row: int) -> None:
         style = discord.ButtonStyle.primary if active else discord.ButtonStyle.secondary
