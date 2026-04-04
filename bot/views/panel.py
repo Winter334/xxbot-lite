@@ -12,6 +12,7 @@ from bot.ui.panel import (
     build_ladder_battle_embed,
     build_ladder_round_embed,
     build_panel_embed,
+    build_reincarnation_confirm_embed,
     build_reincarnation_embed,
     build_reinforce_embed,
     build_tower_embed,
@@ -251,6 +252,16 @@ async def rename_artifact_message(bot: XianBot, owner_user_id: int, display_name
     return embed, ReinforceView(owner_user_id), broadcasts
 
 
+async def build_reincarnation_confirm_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        snapshot = await _sync_snapshot(bot, session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return build_reincarnation_confirm_embed(snapshot), ReincarnationConfirmView(owner_user_id), broadcasts
+
+
 async def build_reincarnation_message(bot: XianBot, owner_user_id: int, display_name: str):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
@@ -368,9 +379,37 @@ class PanelView(OwnerLockedView):
     @discord.ui.button(label="轮回", style=discord.ButtonStyle.danger)
     async def reincarnate_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
-        embed, _, broadcasts = await build_reincarnation_message(bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        embed, view, broadcasts = await build_reincarnation_confirm_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
+
+
+class ReincarnationConfirmView(OwnerLockedView):
+    def __init__(self, owner_user_id: int) -> None:
+        super().__init__(owner_user_id)
+        self._add_confirm_button()
+        self._add_cancel_button()
+
+    def _add_confirm_button(self) -> None:
+        button = discord.ui.Button(label="确认轮回", row=0, style=discord.ButtonStyle.danger)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, _, broadcasts = await build_reincarnation_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=None)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_cancel_button(self) -> None:
+        button = discord.ui.Button(label="取消", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            await interaction.response.edit_message(content="已取消本次轮回。", embed=None, view=None)
+
+        button.callback = callback
+        self.add_item(button)
 
 
 class TowerRunView(OwnerLockedView):
