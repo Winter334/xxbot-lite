@@ -76,3 +76,30 @@ async def test_ladder_challenge_swaps_rank_on_victory(session_factory, services)
         assert result.battle.challenger_won is True
         assert challenger.current_ladder_rank == 1
         assert defender.current_ladder_rank == 2
+
+
+@pytest.mark.asyncio
+async def test_combat_fate_uses_split_bonus_per_stat(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 3001, "玄陵")
+        character = creation.character
+
+        character.fate_key = "longhubingqu"  # 稀有双属性，总档位 6%，应分摊为每项 3%
+        stats = services.character.calculate_total_stats(character)
+        stage = services.character.get_stage(character)
+
+        assert stats.atk == int(stage.base_atk * 1.03)
+        assert stats.defense == int(stage.base_def * 1.03)
+        assert stats.agility == stage.base_agi
+
+
+@pytest.mark.asyncio
+async def test_fate_effect_summary_matches_split_bonus_display(session_factory, services) -> None:
+    fate = services.fate.get_fate("hunyuanwugou")
+    assert fate.effect_summary() == "杀伐 + 护体 + 身法 +4%"
+
+
+@pytest.mark.asyncio
+async def test_fortune_fate_summary_uses_bonus_drop_wording(session_factory, services) -> None:
+    fate = services.fate.get_fate("ziweichuizhao")
+    assert fate.effect_summary() == "首通额外掉落率 +12%"
