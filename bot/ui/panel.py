@@ -1,0 +1,184 @@
+from __future__ import annotations
+
+import discord
+
+from bot.services.artifact_service import ReinforceResult
+from bot.services.breakthrough_service import BreakthroughResult
+from bot.services.character_service import CharacterSnapshot
+from bot.services.ladder_service import LadderChallengeResult
+from bot.services.tower_service import TowerRunResult
+from bot.utils.formatters import RARITY_BADGES, RARITY_COLORS, format_big_number, format_duration_minutes, format_progress, format_qi
+
+
+def build_panel_embed(snapshot: CharacterSnapshot) -> discord.Embed:
+    progress = format_progress(snapshot.cultivation, snapshot.cultivation_max)
+    percent = int((snapshot.cultivation / snapshot.cultivation_max) * 100) if snapshot.cultivation_max else 0
+    honor_line = "、".join(snapshot.honor_tags) if snapshot.honor_tags else "尚无额外荣誉"
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · {snapshot.realm_display}",
+        description=(
+            f"命格：`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}\n"
+            f"称号：**{snapshot.title}**\n"
+            f"荣誉：{honor_line}"
+        ),
+        color=RARITY_COLORS[snapshot.fate_rarity],
+    )
+    embed.add_field(
+        name="牌面",
+        value=(
+            f"论道名次：`#{snapshot.current_ladder_rank}`\n"
+            f"历史最高：`#{snapshot.best_ladder_rank}`\n"
+            f"最高塔层：`{snapshot.historical_highest_floor}` 层"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="修行",
+        value=(
+            f"修为：`{format_big_number(snapshot.cultivation)} / {format_big_number(snapshot.cultivation_max)}`\n"
+            f"{progress} {percent}%\n"
+            f"气机：`{format_qi(snapshot.qi_current, snapshot.qi_max)} {snapshot.qi_current}/{snapshot.qi_max}`\n"
+            f"闭关：第 `{max(snapshot.highest_floor, 1)}` 层 · {format_duration_minutes(snapshot.idle_minutes)}"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="战纹",
+        value=(
+            f"本命：**{snapshot.artifact_name}** `+{snapshot.artifact_level}`\n"
+            f"器魂：`{snapshot.soul_shards}`\n"
+            f"杀伐 / 护体 / 身法：`{format_big_number(snapshot.total_atk)}` / `{format_big_number(snapshot.total_def)}` / `{format_big_number(snapshot.total_agi)}`\n"
+            f"总战力：`{format_big_number(snapshot.combat_power)}`"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text=snapshot.last_highlight_text)
+    return embed
+
+
+def build_tower_embed(snapshot: CharacterSnapshot, result: TowerRunResult) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 通天塔战报",
+        description=(
+            f"{result.message}\n"
+            f"气机：`{result.qi_before} -> {result.qi_after}`\n"
+            f"新高：`{result.highest_floor_before} -> {result.highest_floor_after}`\n"
+            f"本轮获得器魂：`{result.total_soul}` · 修为：`{format_big_number(result.total_cultivation)}`"
+        ),
+        color=discord.Color.blurple(),
+    )
+    if result.floors:
+        lines = []
+        for floor_result in result.floors:
+            suffix = "守关" if floor_result.is_boss else "层战"
+            status = "胜" if floor_result.victory else "败"
+            reward = []
+            if floor_result.reward_soul:
+                reward.append(f"器魂+{floor_result.reward_soul}")
+            if floor_result.reward_cultivation:
+                reward.append(f"修为+{format_big_number(floor_result.reward_cultivation)}")
+            if floor_result.bonus_drop_triggered:
+                reward.append("额外器魂+1")
+            reward_text = " · ".join(reward) if reward else "无额外收获"
+            lines.append(f"第 {floor_result.floor} 层 {suffix} {status} | {floor_result.enemy_name} | {reward_text}")
+        embed.add_field(name="层数结算", value="\n".join(lines[:5]), inline=False)
+        embed.add_field(name="战斗截取", value=_battle_excerpt(result.floors[-1].battle, limit=4), inline=False)
+    return embed
+
+
+def build_breakthrough_embed(snapshot: CharacterSnapshot, result: BreakthroughResult) -> discord.Embed:
+    color = discord.Color.green() if result.success else discord.Color.orange()
+    embed = discord.Embed(title=f"{snapshot.player_name} · 突破", description=result.message, color=color)
+    embed.add_field(
+        name="当前状态",
+        value=(
+            f"境界：`{snapshot.realm_display}`\n"
+            f"修为：`{format_big_number(snapshot.cultivation)} / {format_big_number(snapshot.cultivation_max)}`\n"
+            f"最高塔层：`{snapshot.highest_floor}`"
+        ),
+        inline=False,
+    )
+    if result.required_floor is not None:
+        embed.set_footer(text=f"当前突破门槛守关层：第 {result.required_floor} 层")
+    return embed
+
+
+def build_reinforce_embed(snapshot: CharacterSnapshot, result: ReinforceResult) -> discord.Embed:
+    color = discord.Color.green() if result.success else discord.Color.orange()
+    embed = discord.Embed(title=f"{snapshot.player_name} · 锻宝", description=result.message, color=color)
+    rate = f"{int(result.success_rate * 100)}%" if result.success_rate else "0%"
+    embed.add_field(
+        name="本次锻宝",
+        value=(
+            f"法宝：**{snapshot.artifact_name}**\n"
+            f"强化：`+{result.level_before} -> +{result.level_after}`\n"
+            f"器魂消耗：`{result.soul_cost}`\n"
+            f"成功率：`{rate}`"
+        ),
+        inline=False,
+    )
+    if result.success:
+        embed.add_field(
+            name="成长落点",
+            value=f"杀伐 +`{result.gained_atk}` · 护体 +`{result.gained_def}` · 身法 +`{result.gained_agi}`",
+            inline=False,
+        )
+    return embed
+
+
+def build_reincarnation_embed(snapshot: CharacterSnapshot, message: str) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 轮回重修",
+        description=message,
+        color=RARITY_COLORS[snapshot.fate_rarity],
+    )
+    embed.add_field(
+        name="新命数",
+        value=f"`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}",
+        inline=False,
+    )
+    embed.add_field(
+        name="重修后",
+        value=(
+            f"境界：`{snapshot.realm_display}`\n"
+            f"塔层：`{snapshot.highest_floor}`\n"
+            f"论道：`#{snapshot.current_ladder_rank}`\n"
+            f"轮回次数：`{snapshot.reincarnation_count}`"
+        ),
+        inline=False,
+    )
+    return embed
+
+
+def build_ladder_battle_embed(
+    challenger: CharacterSnapshot,
+    defender: CharacterSnapshot,
+    result: LadderChallengeResult,
+) -> discord.Embed:
+    color = discord.Color.green() if result.battle and result.battle.challenger_won else discord.Color.orange()
+    embed = discord.Embed(title=f"{challenger.player_name} · 论道", description=result.message, color=color)
+    embed.add_field(
+        name="双方牌面",
+        value=(
+            f"你：`#{result.challenger_rank_before} -> #{result.challenger_rank_after}` · {challenger.realm_display} · 战力 {format_big_number(challenger.combat_power)}\n"
+            f"对手：`#{result.defender_rank_before} -> #{result.defender_rank_after}` · {defender.player_name} · {defender.realm_display} · 战力 {format_big_number(defender.combat_power)}"
+        ),
+        inline=False,
+    )
+    if result.battle is not None:
+        embed.add_field(name="战报截取", value=_battle_excerpt(result.battle, limit=6), inline=False)
+        embed.set_footer(text=f"今日剩余论道次数：{result.remaining_attempts}")
+    return embed
+
+
+def _battle_excerpt(battle, limit: int) -> str:
+    lines = []
+    for action in battle.logs[-limit:]:
+        if action.dodged:
+            lines.append(f"第 {action.round_no} 回合 | {action.actor_name} 一击落空，被 {action.target_name} 避开。")
+            continue
+        critical = "暴击" if action.critical else "命中"
+        lines.append(f"第 {action.round_no} 回合 | {action.actor_name} {critical} {action.target_name}，造成 {format_big_number(action.damage)} 点伤害，余血 {format_big_number(action.target_hp_after)}。")
+    if battle.reached_round_limit:
+        lines.append("十合战罢，挑战方未能夺位。")
+    return "\n".join(lines) if lines else "此战过于短促，未留战痕。"

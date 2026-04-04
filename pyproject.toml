@@ -1,0 +1,26 @@
+[project]
+name = "xxbot"
+version = "0.1.0"
+description = "Discord 修仙 Bot 一期最小可玩闭环"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.16.0",
+  "aiosqlite>=0.21.0",
+  "discord.py>=2.5.2",
+  "sqlalchemy>=2.0.40",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.5",
+  "pytest-asyncio>=1.0.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
