@@ -5,15 +5,18 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 import discord
 
-from bot.ui.panel import (
+from bot.ui.artifact import (
+    build_artifact_action_embed,
     build_artifact_embed,
+    build_reinforce_embed,
+)
+from bot.ui.panel import (
     build_breakthrough_embed,
     build_ladder_battle_embed,
     build_ladder_round_embed,
     build_panel_embed,
     build_reincarnation_confirm_embed,
     build_reincarnation_embed,
-    build_reinforce_embed,
     build_retreat_embed,
     build_retreat_settlement_embed,
     build_tower_embed,
@@ -184,10 +187,12 @@ async def build_artifact_message(bot: XianBot, owner_user_id: int, display_name:
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         character = creation.character
+        bot.artifact_service.ensure_affix_slots(character.artifact)
         snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.artifact_service.build_panel_state(character.artifact)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return build_artifact_embed(snapshot), ReinforceView(owner_user_id), broadcasts
+    return build_artifact_embed(snapshot, panel_state), ReinforceView(owner_user_id, panel_state), broadcasts
 
 
 async def build_reinforce_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -197,9 +202,57 @@ async def build_reinforce_message(bot: XianBot, owner_user_id: int, display_name
         result = bot.artifact_service.reinforce(character.artifact, bot.character_service.get_stage(character))
         bot.character_service.refresh_combat_power(character)
         snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.artifact_service.build_panel_state(character.artifact)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return build_reinforce_embed(snapshot, result), ReinforceView(owner_user_id), broadcasts
+    return build_reinforce_embed(snapshot, panel_state, result), ReinforceView(owner_user_id, panel_state), broadcasts
+
+
+async def build_refine_affix_message(bot: XianBot, owner_user_id: int, display_name: str, slot: int):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.artifact_service.refine_affix(character.artifact, slot)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.artifact_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines: list[str] = [f"槽位：槽{slot}", f"器魂：`{result.soul_before} -> {result.soul_after}`"]
+    if result.success and result.pending_entry is not None:
+        action_lines.append(f"待选词条：**{bot.artifact_service.affix_name(result.pending_entry)}**")
+        action_lines.append(bot.artifact_service.describe_affix(result.pending_entry))
+    embed = build_artifact_action_embed(
+        snapshot,
+        panel_state,
+        title=f"{snapshot.player_name} · 洗炼槽{slot}",
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="本次洗炼",
+        action_lines=action_lines,
+    )
+    return embed, ReinforceView(owner_user_id, panel_state), broadcasts
+
+
+async def build_save_affixes_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.artifact_service.save_pending_affixes(character.artifact)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.artifact_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines = [f"写入槽位：{'、'.join(f'槽{slot}' for slot in result.applied_slots) if result.applied_slots else '无'}"]
+    embed = build_artifact_action_embed(
+        snapshot,
+        panel_state,
+        title=f"{snapshot.player_name} · 保存待选",
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="保存结果",
+        action_lines=action_lines,
+    )
+    return embed, ReinforceView(owner_user_id, panel_state), broadcasts
 
 
 async def build_retreat_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -247,22 +300,23 @@ async def rename_artifact_message(bot: XianBot, owner_user_id: int, display_name
         if result.success:
             character.last_highlight_text = f"方才为本命法宝赐名「{result.name_after}」。"
         snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.artifact_service.build_panel_state(character.artifact)
+        renamed_used = character.artifact.artifact_rename_used
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    embed = discord.Embed(
+    embed = build_artifact_action_embed(
+        snapshot,
+        panel_state,
         title=f"{snapshot.player_name} · 本命赐名",
-        description=result.message,
+        message=result.message,
         color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="当前本命",
+        action_lines=[
+            f"法宝：**{snapshot.artifact_name}**",
+            f"是否已改名：`{'是' if renamed_used else '否'}`",
+        ],
     )
-    embed.add_field(
-        name="当前本命",
-        value=(
-            f"法宝：**{snapshot.artifact_name}**\n"
-            f"是否已改名：`{'是' if character.artifact.artifact_rename_used else '否'}`"
-        ),
-        inline=False,
-    )
-    return embed, ReinforceView(owner_user_id), broadcasts
+    return embed, ReinforceView(owner_user_id, panel_state), broadcasts
 
 
 async def build_reincarnation_confirm_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -363,7 +417,7 @@ class PanelView(OwnerLockedView):
     def __init__(self, owner_user_id: int) -> None:
         super().__init__(owner_user_id)
 
-    @discord.ui.button(label="刷新", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="刷新", style=discord.ButtonStyle.secondary, row=0)
     async def refresh_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         await self._apply(
@@ -376,40 +430,40 @@ class PanelView(OwnerLockedView):
             ),
         )
 
-    @discord.ui.button(label="登塔", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="登塔", style=discord.ButtonStyle.primary, row=0)
     async def tower_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         await run_private_tower_sequence(bot, interaction, owner_user_id=interaction.user.id, display_name=interaction.user.display_name)
 
-    @discord.ui.button(label="突破", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="突破", style=discord.ButtonStyle.success, row=0)
     async def breakthrough_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, _, broadcasts = await build_breakthrough_message(bot, interaction.user.id, interaction.user.display_name)
         await interaction.response.send_message(embed=embed, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
-    @discord.ui.button(label="修炼", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="修炼", style=discord.ButtonStyle.secondary, row=0)
     async def retreat_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_retreat_message(bot, interaction.user.id, interaction.user.display_name)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
-    @discord.ui.button(label="锻宝", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="锻宝", style=discord.ButtonStyle.secondary, row=0)
     async def reinforce_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_artifact_message(bot, interaction.user.id, interaction.user.display_name)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
-    @discord.ui.button(label="论道", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="论道", style=discord.ButtonStyle.secondary, row=1)
     async def ranking_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_leaderboard_message(bot, interaction.user.id, interaction.user.display_name)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
-    @discord.ui.button(label="轮回", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="轮回", style=discord.ButtonStyle.danger, row=1)
     async def reincarnate_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_reincarnation_confirm_message(bot, interaction.user.id, interaction.user.display_name)
@@ -498,10 +552,19 @@ class ReinforceRenameModal(discord.ui.Modal, title="为本命法宝赐名"):
 
 
 class ReinforceView(OwnerLockedView):
-    def __init__(self, owner_user_id: int) -> None:
+    def __init__(self, owner_user_id: int, panel_state) -> None:
         super().__init__(owner_user_id)
         self._add_reinforce_button()
         self._add_rename_button()
+        self._add_save_button(disabled=not panel_state.has_pending)
+        pending_slots = {slot.slot for slot in panel_state.pending_slots if slot.affix_id}
+        for slot_view in panel_state.current_slots:
+            self._add_refine_button(
+                slot=slot_view.slot,
+                unlock_level=slot_view.unlock_level,
+                unlocked=slot_view.unlocked,
+                highlighted=slot_view.slot in pending_slots,
+            )
 
     def _add_reinforce_button(self) -> None:
         button = discord.ui.Button(label="强化本命", row=0, style=discord.ButtonStyle.primary)
@@ -520,6 +583,32 @@ class ReinforceView(OwnerLockedView):
 
         async def callback(interaction: discord.Interaction) -> None:
             await interaction.response.send_modal(ReinforceRenameModal(self.owner_user_id))
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_save_button(self, *, disabled: bool) -> None:
+        button = discord.ui.Button(label="保存待选", row=0, style=discord.ButtonStyle.success, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_save_affixes_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_refine_button(self, *, slot: int, unlock_level: int, unlocked: bool, highlighted: bool) -> None:
+        label = f"槽{slot}" if unlocked else f"槽{slot}（+{unlock_level}解锁）"
+        style = discord.ButtonStyle.primary if highlighted and unlocked else discord.ButtonStyle.secondary
+        button = discord.ui.Button(label=label, row=1, style=style, disabled=not unlocked)
+
+        async def callback(interaction: discord.Interaction, slot_no: int = slot) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_refine_affix_message(bot, interaction.user.id, interaction.user.display_name, slot_no)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
 
         button.callback = callback
         self.add_item(button)

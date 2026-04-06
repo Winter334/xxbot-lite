@@ -359,16 +359,22 @@ def _ladder_hp_after_round(
     return challenger_hp, defender_hp
 
 
+def _format_battle_log_line(action, *, include_round: bool) -> str:
+    prefix = f"第 {action.round_no} 回合 | " if include_round else ""
+    if action.text:
+        return f"{prefix}{action.text}"
+    if action.dodged:
+        return f"{prefix}{action.actor_name} 一击落空，被 {action.target_name} 避开。"
+    critical = "暴击" if action.critical else "命中"
+    return f"{prefix}{action.actor_name} {critical} {action.target_name}，造成 {format_big_number(action.damage)} 点伤害。"
+
+
 def _ladder_round_report(battle, round_no: int) -> str:
     lines = []
     for action in battle.logs:
         if action.round_no != round_no:
             continue
-        if action.dodged:
-            lines.append(f"{action.actor_name} 一击落空，被 {action.target_name} 避开。")
-            continue
-        critical = "暴击" if action.critical else "命中"
-        lines.append(f"{action.actor_name} {critical} {action.target_name}，造成 {format_big_number(action.damage)} 点伤害。")
+        lines.append(_format_battle_log_line(action, include_round=False))
     return "\n".join(lines) if lines else "这一回合杀机未成。"
 
 
@@ -462,11 +468,10 @@ def _tower_reward_text(floor_result: TowerFloorResult) -> str:
 def _battle_excerpt(battle, limit: int, *, mode: str = "ladder") -> str:
     lines = []
     for action in battle.logs[-limit:]:
-        if action.dodged:
-            lines.append(f"第 {action.round_no} 回合 | {action.actor_name} 一击落空，被 {action.target_name} 避开。")
-            continue
-        critical = "暴击" if action.critical else "命中"
-        lines.append(f"第 {action.round_no} 回合 | {action.actor_name} {critical} {action.target_name}，造成 {format_big_number(action.damage)} 点伤害，余血 {format_big_number(action.target_hp_after)}。")
+        line = _format_battle_log_line(action, include_round=True)
+        if not action.dodged:
+            line = f"{line[:-1]}，余血 {format_big_number(action.target_hp_after)}。"
+        lines.append(line)
     if battle.reached_round_limit:
         lines.append("十合战罢，挑战方未能夺位。" if mode == "ladder" else "十合战罢，此层未能踏破。")
     return "\n".join(lines) if lines else "此战过于短促，未留战痕。"
