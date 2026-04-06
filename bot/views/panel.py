@@ -113,20 +113,6 @@ async def build_leaderboard_message(
     return build_leaderboard_embed(leaderboard, viewer_snapshot), LeaderboardView(owner_user_id, category, targets), broadcasts
 
 
-async def build_tower_message(bot: XianBot, owner_user_id: int, display_name: str):
-    async with bot.session_factory() as session:
-        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
-        character = creation.character
-        await _sync_snapshot(bot, session, character, settle_idle=True)
-        result = bot.tower_service.run_tower(character)
-        snapshot = await _sync_snapshot(bot, session, character, settle_idle=False)
-        broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-        if result.highest_floor_after > result.highest_floor_before and result.highest_floor_after % 25 == 0:
-            broadcasts.append(f"【塔影留名】{snapshot.player_name} 已踏破通天塔第 {result.highest_floor_after} 层。")
-        await session.commit()
-    return build_tower_embed(snapshot, result), TowerRunView(owner_user_id, can_retry=result.qi_after > 0), broadcasts
-
-
 async def _load_tower_run(bot: XianBot, owner_user_id: int, display_name: str):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
