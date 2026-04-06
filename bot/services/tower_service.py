@@ -9,7 +9,6 @@ from bot.models.character import Character
 from bot.services.character_service import CharacterService
 from bot.services.combat_service import BattleResult, CombatService
 from bot.services.fate_service import FateService
-from bot.utils.time_utils import now_shanghai
 
 
 @dataclass(slots=True)
@@ -54,10 +53,11 @@ class TowerService:
         self.rng = rng or random.Random()
 
     def run_tower(self, character: Character, *, now=None) -> TowerRunResult:
+        if character.is_retreating:
+            return TowerRunResult(False, "你仍在闭关参悟中，需先出关，方可再闯通天塔。", [], character.current_qi, character.current_qi, character.highest_floor, character.highest_floor, 0, 0)
         if character.current_qi <= 0:
             return TowerRunResult(False, "气机已尽，暂时无力再闯通天塔。", [], character.current_qi, character.current_qi, character.highest_floor, character.highest_floor, 0, 0)
 
-        current_time = now or now_shanghai()
         highest_floor_before = character.highest_floor
         qi_before = character.current_qi
         character.current_qi -= 1
@@ -104,7 +104,6 @@ class TowerService:
                 break
 
         if character.highest_floor > highest_floor_before:
-            character.last_idle_at = current_time
             character.last_highlight_text = f"方才踏上通天塔第 {character.highest_floor} 层。"
         self.character_service.refresh_combat_power(character)
         return TowerRunResult(

@@ -40,8 +40,9 @@ async def test_idle_settlement_caps_at_stage_max_and_recovers_qi(session_factory
         now = now_shanghai()
         character.current_qi = 1
         character.last_qi_recovered_at = now - timedelta(hours=2)
+        services.character.start_retreat(character)
         character.last_idle_at = now - timedelta(hours=25)
-        settlement = services.idle.settle(character, now=now)
+        settlement = services.idle.settle_retreat(character, now=now)
         await session.commit()
 
         assert settlement.recovered_qi == 5
@@ -56,11 +57,49 @@ async def test_idle_early_realm_has_accelerated_progress(session_factory, servic
         creation = await services.character.get_or_create_character(session, 1004, "松岚")
         character = creation.character
         now = now_shanghai()
+        services.character.start_retreat(character)
         character.last_idle_at = now - timedelta(minutes=60)
-        settlement = services.idle.settle(character, now=now)
+        settlement = services.idle.settle_retreat(character, now=now)
         await session.commit()
 
         assert settlement.gained_cultivation == 30
+
+
+@pytest.mark.asyncio
+async def test_manual_retreat_blocks_tower_until_exit(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1005, "流云")
+        character = creation.character
+        start = services.character.start_retreat(character)
+        tower_result = services.tower.run_tower(character)
+        settlement = services.idle.settle_retreat(character, now=now_shanghai() + timedelta(minutes=30))
+        stop = services.character.stop_retreat(character, settlement)
+        await session.commit()
+
+        assert start.success is True
+        assert tower_result.success is False
+        assert "出关" in tower_result.message
+        assert stop.success is True
+        assert character.is_retreating is False
+        assert settlement.gained_cultivation > 0
+
+
+@pytest.mark.asyncio
+async def test_not_retreating_only_recovers_qi_without_cultivation(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1006, "星阙")
+        character = creation.character
+        now = now_shanghai()
+        character.current_qi = 2
+        character.last_qi_recovered_at = now - timedelta(minutes=60)
+        character.last_idle_at = now - timedelta(hours=8)
+        settlement = services.idle.settle_retreat(character, now=now)
+        await session.commit()
+
+        assert settlement.recovered_qi > 0
+        assert settlement.gained_cultivation == 0
+        assert settlement.gained_soul == 0
+        assert character.is_retreating is False
 
 
 @pytest.mark.asyncio

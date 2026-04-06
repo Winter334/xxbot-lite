@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 import discord
 
-from bot.services.idle_service import IdleSettlement
 from bot.ui.panel import (
     build_artifact_embed,
     build_breakthrough_embed,
@@ -15,10 +14,11 @@ from bot.ui.panel import (
     build_reincarnation_confirm_embed,
     build_reincarnation_embed,
     build_reinforce_embed,
+    build_retreat_embed,
+    build_retreat_settlement_embed,
     build_tower_embed,
     build_tower_floor_embed,
 )
-from bot.services.artifact_service import RenameArtifactResult
 from bot.ui.ranking import build_leaderboard_embed
 
 if TYPE_CHECKING:
@@ -29,19 +29,8 @@ def _info_embed(title: str, description: str) -> discord.Embed:
     return discord.Embed(title=title, description=description, color=discord.Color.orange())
 
 
-def _build_idle_notice(settlement: IdleSettlement | None) -> str | None:
-    if settlement is None:
-        return None
-    parts: list[str] = []
-    if settlement.gained_cultivation > 0:
-        parts.append(f"修为 +{settlement.gained_cultivation}")
-    if settlement.recovered_qi > 0:
-        parts.append(f"气机 +{settlement.recovered_qi}")
-    if settlement.gained_soul > 0:
-        parts.append(f"器魂 +{settlement.gained_soul}")
-    if not parts:
-        return None
-    return " · ".join(parts)
+async def _refresh_resources(bot: XianBot, character) -> int:
+    return bot.idle_service.recover_qi(character)
 
 
 async def _send_broadcasts(bot: XianBot, broadcasts: list[str]) -> None:
@@ -51,6 +40,7 @@ async def _send_broadcasts(bot: XianBot, broadcasts: list[str]) -> None:
 
 async def _sync_snapshot(bot: XianBot, session, character) -> tuple:
     bot.ladder_service.reset_daily_attempts_if_needed(character)
+    await _refresh_resources(bot, character)
     bot.character_service.refresh_combat_power(character)
     title, honor_tags = await bot.ranking_service.get_titles(session, character)
     character.title = title
@@ -117,14 +107,14 @@ async def _load_tower_run(bot: XianBot, owner_user_id: int, display_name: str):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         character = creation.character
-        settlement = bot.idle_service.settle(character)
+        await _refresh_resources(bot, character)
         result = bot.tower_service.run_tower(character)
         snapshot = await _sync_snapshot(bot, session, character)
         broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
         if result.highest_floor_after > result.highest_floor_before and result.highest_floor_after % 25 == 0:
             broadcasts.append(f"【塔影留名】{snapshot.player_name} 已踏破通天塔第 {result.highest_floor_after} 层。")
         await session.commit()
-    return snapshot, result, broadcasts, _build_idle_notice(settlement)
+    return snapshot, result, broadcasts, None
 
 
 async def run_private_tower_sequence(
@@ -138,8 +128,8 @@ async def run_private_tower_sequence(
     snapshot, result, broadcasts, idle_notice = await _load_tower_run(bot, owner_user_id, display_name)
 
     if not result.floors:
-        embed = build_tower_embed(snapshot, result, idle_notice=idle_notice)
-        view = TowerRunView(owner_user_id, can_retry=False)
+        embed = _info_embed("闭关未止", result.message) if snapshot.is_retreating and not result.success else build_tower_embed(snapshot, result, idle_notice=idle_notice)
+        view = None if snapshot.is_retreating and not result.success else TowerRunView(owner_user_id, can_retry=False)
         if edit_existing:
             await interaction.response.defer()
             await interaction.edit_original_response(embed=embed, view=view)
@@ -180,14 +170,14 @@ async def build_breakthrough_message(bot: XianBot, owner_user_id: int, display_n
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         character = creation.character
-        settlement = bot.idle_service.settle(character)
+        await _refresh_resources(bot, character)
         result = bot.breakthrough_service.attempt_breakthrough(character)
         snapshot = await _sync_snapshot(bot, session, character)
         broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
         if result.success and result.reached_new_realm:
             broadcasts.append(f"【大境将成】{snapshot.player_name} 已踏入 {snapshot.realm_display}。")
         await session.commit()
-    return build_breakthrough_embed(snapshot, result, idle_notice=_build_idle_notice(settlement)), None, broadcasts
+    return build_breakthrough_embed(snapshot, result, idle_notice=None), None, broadcasts
 
 
 async def build_artifact_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -210,6 +200,43 @@ async def build_reinforce_message(bot: XianBot, owner_user_id: int, display_name
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     return build_reinforce_embed(snapshot, result), ReinforceView(owner_user_id), broadcasts
+
+
+async def build_retreat_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        await _refresh_resources(bot, character)
+        snapshot = await _sync_snapshot(bot, session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return build_retreat_embed(snapshot), RetreatView(owner_user_id, is_retreating=snapshot.is_retreating), broadcasts
+
+
+async def start_retreat_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        await _refresh_resources(bot, character)
+        result = bot.character_service.start_retreat(character)
+        snapshot = await _sync_snapshot(bot, session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = build_retreat_embed(snapshot)
+    embed.description = result.message
+    return embed, RetreatView(owner_user_id, is_retreating=snapshot.is_retreating), broadcasts
+
+
+async def stop_retreat_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        settlement = bot.idle_service.settle_retreat(character)
+        result = bot.character_service.stop_retreat(character, settlement)
+        snapshot = await _sync_snapshot(bot, session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return build_retreat_settlement_embed(snapshot, settlement, result.message), RetreatView(owner_user_id, is_retreating=snapshot.is_retreating), broadcasts
 
 
 async def rename_artifact_message(bot: XianBot, owner_user_id: int, display_name: str, new_name: str):
@@ -348,6 +375,13 @@ class PanelView(OwnerLockedView):
         await interaction.response.send_message(embed=embed, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
+    @discord.ui.button(label="修炼", style=discord.ButtonStyle.secondary)
+    async def retreat_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await build_retreat_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
+
     @discord.ui.button(label="锻宝", style=discord.ButtonStyle.secondary)
     async def reinforce_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
@@ -473,6 +507,37 @@ class ReinforceView(OwnerLockedView):
 
         async def callback(interaction: discord.Interaction) -> None:
             await interaction.response.send_modal(ReinforceRenameModal(self.owner_user_id))
+
+        button.callback = callback
+        self.add_item(button)
+
+
+class RetreatView(OwnerLockedView):
+    def __init__(self, owner_user_id: int, *, is_retreating: bool) -> None:
+        super().__init__(owner_user_id)
+        self._add_start_button(disabled=is_retreating)
+        self._add_stop_button(disabled=not is_retreating)
+
+    def _add_start_button(self, *, disabled: bool) -> None:
+        button = discord.ui.Button(label="开始闭关", row=0, style=discord.ButtonStyle.primary, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await start_retreat_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_stop_button(self, *, disabled: bool) -> None:
+        button = discord.ui.Button(label="出关结算", row=0, style=discord.ButtonStyle.success, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await stop_retreat_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
 
         button.callback = callback
         self.add_item(button)

@@ -5,6 +5,7 @@ import discord
 from bot.services.artifact_service import ReinforceResult
 from bot.services.breakthrough_service import BreakthroughResult
 from bot.services.character_service import CharacterSnapshot
+from bot.services.idle_service import IdleSettlement
 from bot.services.ladder_service import LadderChallengeResult
 from bot.services.tower_service import TowerFloorResult, TowerRunResult
 from bot.utils.formatters import RARITY_BADGES, RARITY_COLORS, format_big_number, format_duration_minutes, format_progress, format_qi
@@ -54,7 +55,7 @@ def build_panel_embed(
         value=(
             f"法宝：**{snapshot.artifact_name}** `+{snapshot.artifact_level}`\n"
             f"器魂：`{snapshot.soul_shards}`\n"
-            f"闭关：第 `{max(snapshot.highest_floor, 1)}` 层 · {format_duration_minutes(snapshot.idle_minutes)}"
+            f"修炼状态：`{'闭关中' if snapshot.is_retreating else '未闭关'}` · 时长 {format_duration_minutes(snapshot.idle_minutes)}"
         ),
         inline=False,
     )
@@ -68,7 +69,7 @@ def build_panel_embed(
         inline=False,
     )
     if idle_notice:
-        embed.add_field(name="💤 挂机补算", value=idle_notice, inline=False)
+        embed.add_field(name="💤 出关所得", value=idle_notice, inline=False)
     embed.add_field(name="✨ 近况", value=snapshot.last_highlight_text, inline=False)
     if avatar_url:
         embed.set_thumbnail(url=avatar_url)
@@ -119,7 +120,7 @@ def build_tower_floor_embed(
     embed.add_field(name="📜 战报", value=report_text, inline=False)
     embed.add_field(name="🎁 奖励", value=reward_text, inline=False)
     if idle_notice and (preview or run_result is not None):
-        embed.add_field(name="💤 挂机补算", value=idle_notice, inline=False)
+        embed.add_field(name="💤 出关所得", value=idle_notice, inline=False)
 
     if run_result is not None:
         embed.add_field(
@@ -156,7 +157,7 @@ def build_tower_embed(snapshot: CharacterSnapshot, result: TowerRunResult, *, id
         embed.add_field(name="层数结算", value="\n".join(lines[:5]), inline=False)
         embed.add_field(name="战斗截取", value=_battle_excerpt(result.floors[-1].battle, limit=4, mode="tower"), inline=False)
     if idle_notice:
-        embed.add_field(name="💤 挂机补算", value=idle_notice, inline=False)
+        embed.add_field(name="💤 出关所得", value=idle_notice, inline=False)
     return embed
 
 
@@ -173,9 +174,66 @@ def build_breakthrough_embed(snapshot: CharacterSnapshot, result: BreakthroughRe
         inline=False,
     )
     if idle_notice:
-        embed.add_field(name="💤 挂机补算", value=idle_notice, inline=False)
+        embed.add_field(name="💤 出关所得", value=idle_notice, inline=False)
     if result.required_floor is not None:
         embed.set_footer(text=f"当前突破门槛守关层：第 {result.required_floor} 层")
+    return embed
+
+
+def build_retreat_embed(snapshot: CharacterSnapshot) -> discord.Embed:
+    status = "闭关中" if snapshot.is_retreating else "未闭关"
+    description = "闭关期间可论道、看榜、锻宝，但不可登塔。" if snapshot.is_retreating else "可在此入洞府闭关，出关时统一结算修为与器魂。"
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 洞府修炼",
+        description=description,
+        color=discord.Color.teal() if snapshot.is_retreating else discord.Color.blurple(),
+    )
+    embed.add_field(
+        name="当前状态",
+        value=(
+            f"状态：`{status}`\n"
+            f"累计时长：`{format_duration_minutes(snapshot.idle_minutes)}`\n"
+            f"收益封顶：`24 小时`"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="闭关说明",
+        value=(
+            "- 闭关中无法登塔\n"
+            "- 可正常论道、看榜、锻宝\n"
+            "- 气机会照常自行恢复"
+        ),
+        inline=False,
+    )
+    return embed
+
+
+def build_retreat_settlement_embed(snapshot: CharacterSnapshot, settlement: IdleSettlement, message: str) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 出关",
+        description=message,
+        color=discord.Color.green(),
+    )
+    embed.add_field(
+        name="本次闭关",
+        value=(
+            f"时长：`{format_duration_minutes(settlement.settled_minutes)}`\n"
+            f"修为：`+{format_big_number(settlement.gained_cultivation)}`\n"
+            f"器魂：`+{settlement.gained_soul}`\n"
+            f"气机恢复：`+{settlement.recovered_qi}`"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="当前状态",
+        value=(
+            f"境界：`{snapshot.realm_display}`\n"
+            f"修为：`{format_big_number(snapshot.cultivation)} / {format_big_number(snapshot.cultivation_max)}`\n"
+            f"气机：`{format_qi(snapshot.qi_current, snapshot.qi_max)} {snapshot.qi_current}/{snapshot.qi_max}`"
+        ),
+        inline=False,
+    )
     return embed
 
 

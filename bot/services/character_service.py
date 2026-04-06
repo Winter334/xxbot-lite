@@ -13,6 +13,7 @@ from bot.models.ladder_record import LadderRecord
 from bot.models.player import Player
 from bot.services.artifact_service import ArtifactService
 from bot.services.fate_service import FateService
+from bot.services.idle_service import IdleSettlement
 from bot.utils.time_utils import now_shanghai, today_shanghai
 
 
@@ -65,6 +66,7 @@ class CharacterSnapshot:
     best_ladder_rank: int
     daily_pvp_attempts_left: int
     idle_minutes: int
+    is_retreating: bool
 
 
 @dataclass(slots=True)
@@ -82,6 +84,13 @@ class ReincarnationResult:
     character: Character
     broadcast_needed: bool
     broadcast_text: str | None
+
+
+@dataclass(slots=True)
+class RetreatActionResult:
+    success: bool
+    message: str
+    settlement: IdleSettlement | None = None
 
 
 class CharacterService:
@@ -150,6 +159,7 @@ class CharacterService:
             historical_highest_floor=0,
             current_qi=6,
             qi_max=6,
+            is_retreating=False,
             last_idle_at=now,
             last_qi_recovered_at=now,
             fate_key=fate.key,
@@ -253,10 +263,35 @@ class CharacterService:
             best_ladder_rank=character.best_ladder_rank,
             daily_pvp_attempts_left=max(0, 5 - character.daily_pvp_attempts_used),
             idle_minutes=idle_minutes,
+            is_retreating=character.is_retreating,
         )
 
     def can_reincarnate_today(self, character: Character) -> bool:
         return character.last_reincarnated_on != today_shanghai()
+
+    def start_retreat(self, character: Character) -> RetreatActionResult:
+        if character.is_retreating:
+            return RetreatActionResult(False, "你已在洞府闭关中，无需再次入定。")
+        now = now_shanghai()
+        character.is_retreating = True
+        character.last_idle_at = now
+        character.last_highlight_text = "方才入洞府闭关，静候灵气归体。"
+        return RetreatActionResult(True, "你已封闭洞府，开始闭关修炼。")
+
+    def stop_retreat(self, character: Character, settlement: IdleSettlement) -> RetreatActionResult:
+        if not character.is_retreating:
+            return RetreatActionResult(False, "你当前并未闭关，无需强行出关。", settlement)
+        character.is_retreating = False
+        if settlement.gained_cultivation > 0 or settlement.gained_soul > 0:
+            pieces: list[str] = []
+            if settlement.gained_cultivation > 0:
+                pieces.append(f"修为增长 {settlement.gained_cultivation}")
+            if settlement.gained_soul > 0:
+                pieces.append(f"器魂凝成 {settlement.gained_soul}")
+            character.last_highlight_text = f"方才出关，{'，'.join(pieces)}。"
+        else:
+            character.last_highlight_text = "方才出关，却觉灵气未满一周天。"
+        return RetreatActionResult(True, "你已出关，此番闭关所得已尽数归体。", settlement)
 
     async def reincarnate(self, session: AsyncSession, character: Character) -> ReincarnationResult:
         if not self.can_reincarnate_today(character):
@@ -272,6 +307,7 @@ class CharacterService:
         character.cultivation = 0
         character.highest_floor = 0
         character.current_qi = character.qi_max
+        character.is_retreating = False
         character.last_idle_at = now
         character.last_qi_recovered_at = now
         character.fate_key = new_fate.key
