@@ -90,6 +90,7 @@ class LadderService:
             agility=challenger_snapshot.total_agi,
             title=challenger_snapshot.title,
             fate_name=challenger_snapshot.fate_name,
+            affixes=self.character_service.artifact_service.get_active_affixes(challenger.artifact),
         )
         defender_fighter = self.combat_service.create_combatant(
             name=defender_snapshot.player_name,
@@ -98,8 +99,9 @@ class LadderService:
             agility=defender_snapshot.total_agi,
             title=defender_snapshot.title,
             fate_name=defender_snapshot.fate_name,
+            affixes=self.character_service.artifact_service.get_active_affixes(defender.artifact),
         )
-        battle = self.combat_service.run_battle(challenger_fighter, defender_fighter)
+        battle = self.combat_service.run_battle(challenger_fighter, defender_fighter, scene_tags=("scene_ladder",))
 
         challenger.daily_pvp_attempts_used += 1
         challenger.last_pvp_reset_on = today_shanghai()

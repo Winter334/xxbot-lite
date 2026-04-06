@@ -27,17 +27,24 @@ def create_engine_and_session_factory(database_url: str) -> tuple[AsyncEngine, a
 
 async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
-        def _needs_retreat_column(sync_connection) -> bool:
+        def _collect_missing_columns(sync_connection) -> tuple[bool, bool, bool]:
             inspector = inspect(sync_connection)
             table_names = inspector.get_table_names()
-            if "characters" not in table_names:
-                return False
-            columns = {column["name"] for column in inspector.get_columns("characters")}
-            return "is_retreating" not in columns
+            character_columns = {column["name"] for column in inspector.get_columns("characters")} if "characters" in table_names else set()
+            artifact_columns = {column["name"] for column in inspector.get_columns("artifacts")} if "artifacts" in table_names else set()
+            return (
+                "is_retreating" not in character_columns,
+                "affix_slots_json" not in artifact_columns,
+                "affix_pending_json" not in artifact_columns,
+            )
 
-        needs_retreat_column = await connection.run_sync(_needs_retreat_column)
+        needs_retreat_column, needs_affix_slots, needs_affix_pending = await connection.run_sync(_collect_missing_columns)
         if needs_retreat_column:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN is_retreating BOOLEAN NOT NULL DEFAULT 0"))
+        if needs_affix_slots:
+            await connection.execute(text("ALTER TABLE artifacts ADD COLUMN affix_slots_json TEXT NOT NULL DEFAULT '[]'"))
+        if needs_affix_pending:
+            await connection.execute(text("ALTER TABLE artifacts ADD COLUMN affix_pending_json TEXT NOT NULL DEFAULT '[]'"))
 
 
 async def init_models(engine: AsyncEngine) -> None:

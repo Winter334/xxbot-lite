@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bot.models.base import IdentityMixin, Base, TimestampMixin
@@ -17,5 +17,7 @@ class Artifact(Base, IdentityMixin, TimestampMixin):
     def_bonus: Mapped[int] = mapped_column(BigInteger, default=0)
     agi_bonus: Mapped[int] = mapped_column(BigInteger, default=0)
     soul_shards: Mapped[int] = mapped_column(BigInteger, default=0)
+    affix_slots_json: Mapped[str] = mapped_column(Text, default="[]")
+    affix_pending_json: Mapped[str] = mapped_column(Text, default="[]")
 
     character = relationship("Character", back_populates="artifact")

@@ -175,6 +175,8 @@ class CharacterService:
             def_bonus=0,
             agi_bonus=0,
             soul_shards=0,
+            affix_slots_json="[]",
+            affix_pending_json="[]",
         )
         character.ladder_record = LadderRecord(rank=initial_rank, wins=0, losses=0, streak=0)
         self.refresh_combat_power(character)
@@ -232,6 +234,8 @@ class CharacterService:
     ) -> CharacterSnapshot:
         stage = self.get_stage(character)
         artifact = character.artifact
+        if artifact is not None:
+            self.artifact_service.ensure_affix_slots(artifact)
         stats = self.calculate_total_stats(character)
         fate = self.fate_service.get_fate(character.fate_key)
         return CharacterSnapshot(
@@ -322,6 +326,7 @@ class CharacterService:
             character.artifact.def_bonus = 0
             character.artifact.agi_bonus = 0
             character.artifact.soul_shards = 0
+            self.artifact_service.reset_affixes(character.artifact)
         self.refresh_combat_power(character)
 
         broadcast_text = None

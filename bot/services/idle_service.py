@@ -23,7 +23,7 @@ class IdleService:
     idle_cycle_minutes = 10
     idle_cap_hours = 24
     qi_recover_minutes = 20
-    soul_drop_chance_per_cycle = 0.04
+    soul_drop_chance_per_cycle = 0.25
 
     def __init__(self, fate_service: FateService, rng: random.Random | None = None) -> None:
         self.fate_service = fate_service

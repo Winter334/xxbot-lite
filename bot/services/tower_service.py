@@ -75,8 +75,10 @@ class TowerService:
                 agility=snapshot.total_agi,
                 title=snapshot.title,
                 fate_name=snapshot.fate_name,
+                affixes=self.character_service.artifact_service.get_active_affixes(character.artifact),
             )
-            battle = self.combat_service.run_battle(player, enemy)
+            scene_tags = ("scene_tower", "scene_boss") if is_boss else ("scene_tower",)
+            battle = self.combat_service.run_battle(player, enemy, scene_tags=scene_tags)
             reward_soul = 0
             reward_cultivation = 0
             bonus_drop_triggered = False
