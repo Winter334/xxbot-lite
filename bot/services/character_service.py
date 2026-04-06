@@ -73,6 +73,7 @@ class CharacterSnapshot:
     is_traveling: bool
     travel_minutes: int
     travel_duration_minutes: int
+    travel_selected_duration_minutes: int
     travel_atk_pct: int
     travel_def_pct: int
     travel_agi_pct: int
@@ -173,6 +174,7 @@ class CharacterService:
             last_idle_at=now,
             travel_started_at=now,
             travel_duration_minutes=0,
+            travel_selected_duration_minutes=120,
             travel_atk_pct=0,
             travel_def_pct=0,
             travel_agi_pct=0,
@@ -293,6 +295,7 @@ class CharacterService:
             is_traveling=character.is_traveling,
             travel_minutes=travel_minutes,
             travel_duration_minutes=character.travel_duration_minutes,
+            travel_selected_duration_minutes=character.travel_selected_duration_minutes,
             travel_atk_pct=character.travel_atk_pct,
             travel_def_pct=character.travel_def_pct,
             travel_agi_pct=character.travel_agi_pct,
@@ -346,6 +349,7 @@ class CharacterService:
         character.last_idle_at = now
         character.travel_started_at = now
         character.travel_duration_minutes = 0
+        character.travel_selected_duration_minutes = 120
         character.travel_atk_pct = 0
         character.travel_def_pct = 0
         character.travel_agi_pct = 0

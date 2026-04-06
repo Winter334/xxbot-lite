@@ -328,10 +328,23 @@ async def build_travel_message(bot: XianBot, owner_user_id: int, display_name: s
         snapshot = await _sync_snapshot(bot, session, character)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return build_travel_embed(snapshot), TravelView(owner_user_id, is_traveling=snapshot.is_traveling), broadcasts
+    return build_travel_embed(snapshot), TravelView(owner_user_id, snapshot=snapshot), broadcasts
 
 
-async def start_travel_message(bot: XianBot, owner_user_id: int, display_name: str, duration_minutes: int):
+async def cycle_travel_duration_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        next_minutes = bot.travel_service.cycle_selected_duration(character)
+        snapshot = await _sync_snapshot(bot, session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = build_travel_embed(snapshot)
+    embed.description = f"已将本次行程调整为 {next_minutes} 分钟。"
+    return embed, TravelView(owner_user_id, snapshot=snapshot), broadcasts
+
+
+async def start_travel_message(bot: XianBot, owner_user_id: int, display_name: str, duration_minutes: int | None = None):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         character = creation.character
@@ -342,7 +355,7 @@ async def start_travel_message(bot: XianBot, owner_user_id: int, display_name: s
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     embed = build_travel_embed(snapshot)
     embed.description = result.message
-    return embed, TravelView(owner_user_id, is_traveling=snapshot.is_traveling), broadcasts
+    return embed, TravelView(owner_user_id, snapshot=snapshot), broadcasts
 
 
 async def stop_travel_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -355,7 +368,7 @@ async def stop_travel_message(bot: XianBot, owner_user_id: int, display_name: st
         snapshot = await _sync_snapshot(bot, session, character)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return build_travel_settlement_embed(snapshot, settlement), TravelView(owner_user_id, is_traveling=snapshot.is_traveling), broadcasts
+    return build_travel_settlement_embed(snapshot, settlement), TravelView(owner_user_id, snapshot=snapshot), broadcasts
 
 
 async def start_retreat_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -776,20 +789,33 @@ class RetreatView(OwnerLockedView):
 
 
 class TravelView(OwnerLockedView):
-    def __init__(self, owner_user_id: int, *, is_traveling: bool) -> None:
+    def __init__(self, owner_user_id: int, *, snapshot) -> None:
         super().__init__(owner_user_id)
-        for index, duration in enumerate(TRAVEL_DURATION_CHOICES):
-            row = 0 if index < 5 else 1
-            self._add_duration_button(duration, row=row, disabled=is_traveling)
-        self._add_refresh_button(row=1)
-        self._add_stop_button(row=1, disabled=not is_traveling)
+        if snapshot.is_traveling:
+            self._add_refresh_button(row=0)
+            self._add_stop_button(row=0, disabled=False)
+        else:
+            self._add_cycle_button(snapshot.travel_selected_duration_minutes, row=0)
+            self._add_start_button(row=0)
 
-    def _add_duration_button(self, duration: int, *, row: int, disabled: bool) -> None:
-        button = discord.ui.Button(label=f"{duration}\u5206", row=row, style=discord.ButtonStyle.primary, disabled=disabled)
+    def _add_cycle_button(self, current_minutes: int, *, row: int) -> None:
+        button = discord.ui.Button(label=f"切换时长（当前 {current_minutes}分）", row=row, style=discord.ButtonStyle.secondary)
 
-        async def callback(interaction: discord.Interaction, minutes: int = duration) -> None:
+        async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
-            embed, view, broadcasts = await start_travel_message(bot, interaction.user.id, interaction.user.display_name, minutes)
+            embed, view, broadcasts = await cycle_travel_duration_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_start_button(self, *, row: int) -> None:
+        button = discord.ui.Button(label="开始游历", row=row, style=discord.ButtonStyle.primary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await start_travel_message(bot, interaction.user.id, interaction.user.display_name)
             await interaction.response.edit_message(embed=embed, view=view)
             await _send_broadcasts(bot, broadcasts)
 
@@ -797,7 +823,7 @@ class TravelView(OwnerLockedView):
         self.add_item(button)
 
     def _add_refresh_button(self, *, row: int) -> None:
-        button = discord.ui.Button(label="\u5237\u65b0", row=row, style=discord.ButtonStyle.secondary)
+        button = discord.ui.Button(label="刷新", row=row, style=discord.ButtonStyle.secondary)
 
         async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
@@ -809,7 +835,7 @@ class TravelView(OwnerLockedView):
         self.add_item(button)
 
     def _add_stop_button(self, *, row: int, disabled: bool) -> None:
-        button = discord.ui.Button(label="\u5f52\u6765\u7ed3\u7b97", row=row, style=discord.ButtonStyle.success, disabled=disabled)
+        button = discord.ui.Button(label="归来结算", row=row, style=discord.ButtonStyle.success, disabled=disabled)
 
         async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]

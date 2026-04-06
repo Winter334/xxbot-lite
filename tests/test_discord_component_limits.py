@@ -42,7 +42,13 @@ async def test_views_respect_discord_component_limits() -> None:
         ArtifactReinforceView(1),
         ArtifactRefineView(1, panel_state),
         RetreatView(1, is_retreating=False),
-        TravelView(1, is_traveling=False),
+        TravelView(
+            1,
+            snapshot=SimpleNamespace(
+                is_traveling=False,
+                travel_selected_duration_minutes=120,
+            ),
+        ),
         LeaderboardView(1, "power", []),
         LeaderboardView(1, "ladder", challenge_targets),
     ):

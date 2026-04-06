@@ -26,6 +26,7 @@ class Character(Base, IdentityMixin, TimestampMixin):
     last_idle_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     travel_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     travel_duration_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    travel_selected_duration_minutes: Mapped[int] = mapped_column(Integer, default=120)
     travel_atk_pct: Mapped[int] = mapped_column(Integer, default=0)
     travel_def_pct: Mapped[int] = mapped_column(Integer, default=0)
     travel_agi_pct: Mapped[int] = mapped_column(Integer, default=0)
