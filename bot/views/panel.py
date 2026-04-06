@@ -363,6 +363,19 @@ class PanelView(OwnerLockedView):
     def __init__(self, owner_user_id: int) -> None:
         super().__init__(owner_user_id)
 
+    @discord.ui.button(label="刷新", style=discord.ButtonStyle.secondary)
+    async def refresh_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        await self._apply(
+            interaction,
+            lambda: build_panel_message(
+                bot,
+                interaction.user.id,
+                interaction.user.display_name,
+                avatar_url=interaction.user.display_avatar.url,
+            ),
+        )
+
     @discord.ui.button(label="登塔", style=discord.ButtonStyle.primary)
     async def tower_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
