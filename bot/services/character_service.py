@@ -57,6 +57,9 @@ class CharacterSnapshot:
     artifact_name: str
     artifact_level: int
     artifact_power: int
+    artifact_atk_bonus: int
+    artifact_def_bonus: int
+    artifact_agi_bonus: int
     soul_shards: int
     title: str
     honor_tags: tuple[str, ...]
@@ -258,6 +261,9 @@ class CharacterService:
             artifact_name=artifact.name if artifact else "未铸本命",
             artifact_level=(artifact.reinforce_level or 0) if artifact else 0,
             artifact_power=self.artifact_service.artifact_power(artifact) if artifact else 0,
+            artifact_atk_bonus=(artifact.atk_bonus or 0) if artifact else 0,
+            artifact_def_bonus=(artifact.def_bonus or 0) if artifact else 0,
+            artifact_agi_bonus=(artifact.agi_bonus or 0) if artifact else 0,
             soul_shards=(artifact.soul_shards or 0) if artifact else 0,
             title=title or character.title,
             honor_tags=honor_tags,

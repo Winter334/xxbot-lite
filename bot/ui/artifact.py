@@ -2,77 +2,114 @@ from __future__ import annotations
 
 import discord
 
-from bot.services.artifact_service import ArtifactPanelState, ReinforceResult
+from bot.services.artifact_service import AFFIX_SLOT_UNLOCK_LEVELS, ArtifactPanelState, ReinforceResult
 from bot.services.character_service import CharacterSnapshot
 from bot.utils.formatters import format_big_number
 
 
-def build_artifact_embed(snapshot: CharacterSnapshot, panel_state: ArtifactPanelState) -> discord.Embed:
-    return _build_artifact_embed(
-        snapshot,
-        panel_state,
+def build_artifact_overview_embed(
+    snapshot: CharacterSnapshot,
+    panel_state: ArtifactPanelState,
+    *,
+    message: str | None = None,
+    color: discord.Color | None = None,
+) -> discord.Embed:
+    embed = discord.Embed(
         title=f"{snapshot.player_name} · 本命法宝",
-        message=None,
-        color=discord.Color.dark_gold(),
+        description=_artifact_header(snapshot, message),
+        color=color or discord.Color.dark_gold(),
     )
+    _add_overview_fields(embed, snapshot, panel_state)
+    embed.set_footer(text="从下方进入强化、洗炼或改名子面板。")
+    return embed
 
 
-def build_artifact_action_embed(
+def build_reinforce_panel_embed(
     snapshot: CharacterSnapshot,
     panel_state: ArtifactPanelState,
     *,
-    title: str,
-    message: str,
-    color: discord.Color,
-    action_title: str | None = None,
-    action_lines: list[str] | None = None,
+    stage_cap: int,
+    next_level: int,
+    soul_cost: int,
+    success_rate: float,
+    message: str | None = None,
+    color: discord.Color | None = None,
+    result: ReinforceResult | None = None,
 ) -> discord.Embed:
-    return _build_artifact_embed(
-        snapshot,
-        panel_state,
-        title=title,
-        message=message,
-        color=color,
-        action_title=action_title,
-        action_lines=action_lines or [],
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 法宝强化",
+        description=_artifact_header(snapshot, message),
+        color=color or discord.Color.dark_gold(),
     )
+    _add_overview_fields(embed, snapshot, panel_state, include_pending=False)
+    if snapshot.artifact_level >= stage_cap:
+        preview_lines = [
+            f"当前境界上限：`+{stage_cap}`",
+            "本命法宝已到当前境界强化上限。",
+        ]
+    else:
+        preview_lines = [
+            f"下一重：`+{snapshot.artifact_level} -> +{next_level}`",
+            f"器魂消耗：`{soul_cost}`",
+            f"成功率：`{int(success_rate * 100)}%`",
+            f"当前境界上限：`+{stage_cap}`",
+        ]
+        if next_level in AFFIX_SLOT_UNLOCK_LEVELS:
+            preview_lines.append(f"强化到 `+{next_level}` 时会解锁槽{AFFIX_SLOT_UNLOCK_LEVELS.index(next_level) + 1}")
+    embed.add_field(name="强化预览", value="\n".join(preview_lines), inline=False)
+    if result is not None:
+        action_lines = [
+            f"强化：`+{result.level_before} -> +{result.level_after}`",
+            f"器魂消耗：`{result.soul_cost}`",
+            f"成功率：`{int(result.success_rate * 100) if result.success_rate else 0}%`",
+        ]
+        if result.success:
+            action_lines.append(f"成长分配：杀伐 +`{result.gained_atk}` · 护体 +`{result.gained_def}` · 身法 +`{result.gained_agi}`")
+        if result.newly_unlocked_slots:
+            action_lines.append(f"新解锁槽位：{'、'.join(f'槽{slot}' for slot in result.newly_unlocked_slots)}")
+        embed.add_field(name="本次强化", value="\n".join(action_lines), inline=False)
+    embed.set_footer(text="强化子面板会在当前消息内更新；法宝总览面板会保持不动。")
+    return embed
 
 
-def build_reinforce_embed(snapshot: CharacterSnapshot, panel_state: ArtifactPanelState, result: ReinforceResult) -> discord.Embed:
-    action_lines = [
-        f"强化：`+{result.level_before} -> +{result.level_after}`",
-        f"器魂消耗：`{result.soul_cost}`",
-        f"成功率：`{int(result.success_rate * 100) if result.success_rate else 0}%`",
-    ]
-    if result.success:
-        action_lines.append(f"成长分配：杀伐 +`{result.gained_atk}` · 护体 +`{result.gained_def}` · 身法 +`{result.gained_agi}`")
-    if result.newly_unlocked_slots:
-        action_lines.append(f"新解锁槽位：{'、'.join(f'槽{slot}' for slot in result.newly_unlocked_slots)}")
-    return _build_artifact_embed(
-        snapshot,
-        panel_state,
-        title=f"{snapshot.player_name} · 锻宝",
-        message=result.message,
-        color=discord.Color.green() if result.success else discord.Color.orange(),
-        action_title="本次锻宝",
-        action_lines=action_lines,
-    )
-
-
-def _build_artifact_embed(
+def build_refine_panel_embed(
     snapshot: CharacterSnapshot,
     panel_state: ArtifactPanelState,
     *,
-    title: str,
-    message: str | None,
-    color: discord.Color,
+    title: str | None = None,
+    message: str | None = None,
+    color: discord.Color | None = None,
     action_title: str | None = None,
     action_lines: list[str] | None = None,
 ) -> discord.Embed:
-    description = f"**{snapshot.artifact_name}** `+{snapshot.artifact_level}`"
+    embed = discord.Embed(
+        title=title or f"{snapshot.player_name} · 法宝洗炼",
+        description=_artifact_header(snapshot, message),
+        color=color or discord.Color.dark_gold(),
+    )
+    _add_overview_fields(embed, snapshot, panel_state)
+    embed.add_field(name="当前词条", value=_render_affix_column(panel_state.current_slots), inline=True)
+    embed.add_field(name="待选词条", value=_render_affix_column(panel_state.pending_slots), inline=True)
+    if action_title and action_lines:
+        embed.add_field(name=action_title, value="\n".join(action_lines), inline=False)
+    embed.set_footer(text="单次洗炼消耗 2 器魂；待选词条点击“保存待选”后才会写入当前词条。")
+    return embed
+
+
+def _artifact_header(snapshot: CharacterSnapshot, message: str | None) -> str:
+    header = f"**{snapshot.artifact_name}** `+{snapshot.artifact_level}`"
     if message:
-        description = f"{description}\n{message}"
-    embed = discord.Embed(title=title, description=description, color=color)
+        return f"{header}\n{message}"
+    return header
+
+
+def _add_overview_fields(
+    embed: discord.Embed,
+    snapshot: CharacterSnapshot,
+    panel_state: ArtifactPanelState,
+    *,
+    include_pending: bool = True,
+) -> None:
     embed.add_field(
         name="法宝详情",
         value=(
@@ -83,12 +120,31 @@ def _build_artifact_embed(
         ),
         inline=False,
     )
-    embed.add_field(name="当前词条", value=_render_affix_column(panel_state.current_slots), inline=True)
-    embed.add_field(name="待选词条", value=_render_affix_column(panel_state.pending_slots), inline=True)
-    if action_title and action_lines:
-        embed.add_field(name=action_title, value="\n".join(action_lines), inline=False)
-    embed.set_footer(text="单次洗炼消耗 2 器魂；右侧待选点击“保存待选”后才会写入当前词条。")
-    return embed
+    embed.add_field(
+        name="三维加成",
+        value=(
+            f"⚔️ 杀伐：`+{format_big_number(snapshot.artifact_atk_bonus)}`\n"
+            f"🛡 护体：`+{format_big_number(snapshot.artifact_def_bonus)}`\n"
+            f"💨 身法：`+{format_big_number(snapshot.artifact_agi_bonus)}`"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="总三维",
+        value=(
+            f"⚔️ 杀伐：`{format_big_number(snapshot.total_atk)}`\n"
+            f"🛡 护体：`{format_big_number(snapshot.total_def)}`\n"
+            f"💨 身法：`{format_big_number(snapshot.total_agi)}`"
+        ),
+        inline=True,
+    )
+    if include_pending and panel_state.has_pending:
+        embed.add_field(name="待保存槽位", value=_render_pending_summary(panel_state), inline=False)
+
+
+def _render_pending_summary(panel_state: ArtifactPanelState) -> str:
+    lines = [f"槽{slot.slot}：{slot.name}" for slot in panel_state.pending_slots if slot.affix_id]
+    return "\n".join(lines) if lines else "当前没有待保存词条。"
 
 
 def _render_affix_column(slot_views) -> str:

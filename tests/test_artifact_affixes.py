@@ -5,7 +5,7 @@ from collections.abc import Sequence
 import pytest
 
 from bot.data.artifact_affixes import ArtifactAffixEntry
-from bot.ui.artifact import build_artifact_embed
+from bot.ui.artifact import build_artifact_overview_embed, build_refine_panel_embed
 
 
 class ArtifactRoller:
@@ -116,7 +116,7 @@ async def test_refine_pending_persists_and_only_applies_after_save(session_facto
 
 
 @pytest.mark.asyncio
-async def test_artifact_embed_shows_affix_name_and_description(session_factory, services) -> None:
+async def test_refine_embed_shows_affix_name_and_description(session_factory, services) -> None:
     services.artifact.rng = ArtifactRoller(["huichun", "ningshen"], [34, 19])
     async with session_factory() as session:
         character = (await services.character.get_or_create_character(session, 5004, "照夜")).character
@@ -128,7 +128,7 @@ async def test_artifact_embed_shows_affix_name_and_description(session_factory, 
 
         snapshot = services.character.build_snapshot(character)
         panel_state = services.artifact.build_panel_state(artifact)
-        embed = build_artifact_embed(snapshot, panel_state)
+        embed = build_refine_panel_embed(snapshot, panel_state)
 
         current_field = next(field for field in embed.fields if field.name == "当前词条")
         pending_field = next(field for field in embed.fields if field.name == "待选词条")
@@ -137,6 +137,25 @@ async def test_artifact_embed_shows_affix_name_and_description(session_factory, 
         assert "最大生命" in current_field.value
         assert "凝神" in pending_field.value
         assert "杀伐提高 19%" in pending_field.value
+
+
+@pytest.mark.asyncio
+async def test_artifact_overview_shows_bonus_stats(session_factory, services) -> None:
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 5006, "观宝")).character
+        artifact = character.artifact
+        artifact.atk_bonus = 12
+        artifact.def_bonus = 7
+        artifact.agi_bonus = 3
+
+        snapshot = services.character.build_snapshot(character)
+        panel_state = services.artifact.build_panel_state(artifact)
+        embed = build_artifact_overview_embed(snapshot, panel_state)
+
+        bonus_field = next(field for field in embed.fields if field.name == "三维加成")
+        assert "+12" in bonus_field.value
+        assert "+7" in bonus_field.value
+        assert "+3" in bonus_field.value
 
 
 @pytest.mark.asyncio
