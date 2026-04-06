@@ -38,14 +38,22 @@ class IdleService:
             return 2
         return 1
 
-    def settle(self, character: Character, *, now=None) -> IdleSettlement:
+    def recover_qi(self, character: Character, *, now=None) -> int:
+        current_time = ensure_shanghai(now or now_shanghai())
+        return self._recover_qi(character, current_time)
+
+    def settle_retreat(self, character: Character, *, now=None) -> IdleSettlement:
         current_time = ensure_shanghai(now or now_shanghai())
         recovered_qi = self._recover_qi(character, current_time)
+        if not character.is_retreating:
+            return IdleSettlement(0, 0, 0, recovered_qi, 0)
         gained_cultivation, cycles, minutes = self._settle_idle(character, current_time)
         gained_soul = self._roll_idle_soul(character, cycles)
         return IdleSettlement(gained_cultivation, cycles, minutes, recovered_qi, gained_soul)
 
     def current_idle_minutes(self, character: Character, *, now=None) -> int:
+        if not character.is_retreating:
+            return 0
         current_time = ensure_shanghai(now or now_shanghai())
         elapsed = current_time - ensure_shanghai(character.last_idle_at)
         capped = min(elapsed, timedelta(hours=self.idle_cap_hours))

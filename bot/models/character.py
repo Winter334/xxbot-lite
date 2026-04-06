@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bot.models.base import IdentityMixin, Base, TimestampMixin, utcnow
@@ -21,6 +21,7 @@ class Character(Base, IdentityMixin, TimestampMixin):
     historical_highest_floor: Mapped[int] = mapped_column(Integer, default=0)
     current_qi: Mapped[int] = mapped_column(Integer, default=6)
     qi_max: Mapped[int] = mapped_column(Integer, default=6)
+    is_retreating: Mapped[bool] = mapped_column(Boolean, default=False)
     last_idle_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_qi_recovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     fate_key: Mapped[str] = mapped_column(String(64))
