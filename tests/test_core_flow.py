@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import pytest
 
+from bot.ui.panel import build_panel_embed
 from bot.utils.time_utils import now_shanghai
 
 
@@ -82,6 +83,103 @@ async def test_manual_retreat_blocks_tower_until_exit(session_factory, services)
         assert stop.success is True
         assert character.is_retreating is False
         assert settlement.gained_cultivation > 0
+
+
+@pytest.mark.asyncio
+async def test_travel_and_retreat_are_mutually_exclusive(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1010, "游客")
+        character = creation.character
+        travel_start = services.travel.start_travel(character, 60)
+        retreat_start = services.character.start_retreat(character)
+        tower_result = services.tower.run_tower(character)
+        await session.commit()
+
+        assert travel_start.success is True
+        assert retreat_start.success is False
+        assert character.is_traveling is True
+        assert tower_result.success is False
+
+
+@pytest.mark.asyncio
+async def test_travel_settlement_uses_30_minute_cycles_and_caps_at_10(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1011, "远行")
+        character = creation.character
+        now = now_shanghai()
+        services.travel.start_travel(character, 300, now=now)
+        character.travel_started_at = now - timedelta(hours=8)
+        settlement = services.travel.stop_travel(character, now=now)
+        await session.commit()
+
+        assert settlement.success is True
+        assert settlement.settled_events == 10
+        assert settlement.settled_minutes == 300
+        assert character.is_traveling is False
+
+
+@pytest.mark.asyncio
+async def test_travel_permanent_stat_bonus_affects_total_stats(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1012, "留痕")
+        character = creation.character
+        stage = services.character.get_stage(character)
+        character.travel_atk_pct = 10
+        character.travel_def_pct = -10
+        character.travel_agi_pct = 20
+        stats = services.character.calculate_total_stats(character)
+        await session.commit()
+
+        assert stats.atk == int(stage.base_atk * 1.10)
+        assert stats.defense == int(stage.base_def * 0.90)
+        assert stats.agility == int(stage.base_agi * 1.20)
+
+
+@pytest.mark.asyncio
+async def test_travel_negative_event_can_apply(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1013, "逢厄")
+        character = creation.character
+        services.travel.start_travel(character, 30)
+        character.travel_started_at = now_shanghai() - timedelta(minutes=30)
+        found_negative = False
+        for _ in range(20):
+            character.is_traveling = True
+            character.travel_duration_minutes = 30
+            character.travel_started_at = now_shanghai() - timedelta(minutes=30)
+            settlement = services.travel.stop_travel(character)
+            if any(
+                log.soul_delta < 0
+                or log.cultivation_delta < 0
+                or log.atk_pct_delta < 0
+                or log.def_pct_delta < 0
+                or log.agi_pct_delta < 0
+                for log in settlement.logs
+            ):
+                found_negative = True
+                break
+        await session.commit()
+
+        assert found_negative is True
+
+
+@pytest.mark.asyncio
+async def test_panel_embed_shows_travel_marks(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1014, "留名")
+        character = creation.character
+        character.travel_atk_pct = 3
+        character.travel_def_pct = -1
+        character.travel_agi_pct = 2
+        snapshot = services.character.build_snapshot(character)
+        embed = build_panel_embed(snapshot)
+        await session.commit()
+
+        field_names = [field.name for field in embed.fields]
+        assert "🧭 游历遗痕" in field_names
+        travel_field = next(field for field in embed.fields if field.name == "🧭 游历遗痕")
+        assert "+3%" in travel_field.value
+        assert "-1%" in travel_field.value
 
 
 @pytest.mark.asyncio

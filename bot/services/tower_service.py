@@ -55,6 +55,8 @@ class TowerService:
     def run_tower(self, character: Character, *, now=None) -> TowerRunResult:
         if character.is_retreating:
             return TowerRunResult(False, "你仍在闭关参悟中，需先出关，方可再闯通天塔。", [], character.current_qi, character.current_qi, character.highest_floor, character.highest_floor, 0, 0)
+        if character.is_traveling:
+            return TowerRunResult(False, "你仍在外游历，需先归来结算，方可再闯通天塔。", [], character.current_qi, character.current_qi, character.highest_floor, character.highest_floor, 0, 0)
         if character.current_qi <= 0:
             return TowerRunResult(False, "气机已尽，暂时无力再闯通天塔。", [], character.current_qi, character.current_qi, character.highest_floor, character.highest_floor, 0, 0)
 

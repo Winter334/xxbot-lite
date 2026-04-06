@@ -7,6 +7,7 @@ from bot.services.character_service import CharacterSnapshot
 from bot.services.idle_service import IdleSettlement
 from bot.services.ladder_service import LadderChallengeResult
 from bot.services.tower_service import TowerFloorResult, TowerRunResult
+from bot.services.travel_service import TravelSettlement
 from bot.utils.formatters import RARITY_BADGES, RARITY_COLORS, format_big_number, format_duration_minutes, format_progress, format_qi
 
 
@@ -19,29 +20,35 @@ def build_panel_embed(
     progress = format_progress(snapshot.cultivation, snapshot.cultivation_max, width=8)
     percent = int((snapshot.cultivation / snapshot.cultivation_max) * 100) if snapshot.cultivation_max else 0
     honor_line = " · ".join(f"`{tag}`" for tag in snapshot.honor_tags) if snapshot.honor_tags else "暂无额外荣誉"
+    if snapshot.is_traveling:
+        state_text = f"游历中 · {format_duration_minutes(snapshot.travel_minutes)} / {format_duration_minutes(snapshot.travel_duration_minutes)}"
+    elif snapshot.is_retreating:
+        state_text = f"闭关中 · {format_duration_minutes(snapshot.idle_minutes)}"
+    else:
+        state_text = "未在闭关/游历"
 
     embed = discord.Embed(
         title=f"【{snapshot.realm_display}】{snapshot.player_name}",
         description=(
             f"👑 **{snapshot.title}**\n"
-            f"⚡ 总战力：**{format_big_number(snapshot.combat_power)}**\n"
-            f"🔮 命格：`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}\n"
-            f"🏷 荣誉：{honor_line}"
+            f"⚔️ 总战力：**{format_big_number(snapshot.combat_power)}**\n"
+            f"🔭 命格：`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}\n"
+            f"🎖 荣誉：{honor_line}"
         ),
         color=RARITY_COLORS[snapshot.fate_rarity],
     )
     embed.add_field(
-        name="📍 牌面",
+        name="📜 牌面",
         value=(
             f"当前论道：`#{snapshot.current_ladder_rank}`\n"
             f"历史最高：`#{snapshot.best_ladder_rank}`\n"
-            f"最高塔层：`{snapshot.historical_highest_floor}` 层\n"
+            f"历史塔层：`{snapshot.historical_highest_floor}` 层\n"
             f"轮回次数：`{snapshot.reincarnation_count}`"
         ),
         inline=True,
     )
     embed.add_field(
-        name="🗡 三维",
+        name="🛡 三维",
         value=(
             f"⚔️ 杀伐：`{format_big_number(snapshot.total_atk)}`\n"
             f"🛡 护体：`{format_big_number(snapshot.total_def)}`\n"
@@ -50,13 +57,22 @@ def build_panel_embed(
         inline=True,
     )
     embed.add_field(
-        name="🧰 本命",
+        name="🗿 本命",
         value=(
             f"法宝：**{snapshot.artifact_name}** `+{snapshot.artifact_level}`\n"
             f"器魂：`{snapshot.soul_shards}`\n"
-            f"修炼状态：`{'闭关中' if snapshot.is_retreating else '未闭关'}` · 时长 {format_duration_minutes(snapshot.idle_minutes)}"
+            f"当前行藏：`{state_text}`"
         ),
         inline=False,
+    )
+    embed.add_field(
+        name="🧭 游历遗痕",
+        value=(
+            f"杀伐：`{_format_signed_pct(snapshot.travel_atk_pct)}`\n"
+            f"护体：`{_format_signed_pct(snapshot.travel_def_pct)}`\n"
+            f"身法：`{_format_signed_pct(snapshot.travel_agi_pct)}`"
+        ),
+        inline=True,
     )
     embed.add_field(
         name="📈 修为进境",
@@ -68,7 +84,7 @@ def build_panel_embed(
         inline=False,
     )
     if idle_notice:
-        embed.add_field(name="💤 出关所得", value=idle_notice, inline=False)
+        embed.add_field(name="🪷 出关所得", value=idle_notice, inline=False)
     embed.add_field(name="✨ 近况", value=snapshot.last_highlight_text, inline=False)
     if avatar_url:
         embed.set_thumbnail(url=avatar_url)
@@ -94,36 +110,36 @@ def build_tower_floor_embed(
     player_max_hp = floor_result.battle.challenger_max_hp
     enemy_max_hp = floor_result.battle.defender_max_hp
     if preview:
-        enemy_status = f"**{floor_result.enemy_name}**\n♥ 血量：`{format_big_number(enemy_max_hp)} / {format_big_number(enemy_max_hp)}`"
-        player_status = f"**{snapshot.player_name}**\n♥ 血量：`{format_big_number(player_max_hp)} / {format_big_number(player_max_hp)}`"
+        enemy_status = f"**{floor_result.enemy_name}**\n❤ 血量：`{format_big_number(enemy_max_hp)} / {format_big_number(enemy_max_hp)}`"
+        player_status = f"**{snapshot.player_name}**\n❤ 血量：`{format_big_number(player_max_hp)} / {format_big_number(player_max_hp)}`"
         report_text = "未开战，气机流转，杀机未发。"
         reward_text = "胜出后方可结算。"
     else:
         enemy_after = floor_result.battle.defender_hp_after
         player_after = floor_result.battle.challenger_hp_after
         enemy_status = (
-            f"**{floor_result.enemy_name}**\n💀 已倒下"
+            f"**{floor_result.enemy_name}**\n💥 已倒下"
             if enemy_after <= 0
-            else f"**{floor_result.enemy_name}**\n♥ 血量：`{format_big_number(enemy_after)} / {format_big_number(enemy_max_hp)}`"
+            else f"**{floor_result.enemy_name}**\n❤ 血量：`{format_big_number(enemy_after)} / {format_big_number(enemy_max_hp)}`"
         )
         player_status = (
-            f"**{snapshot.player_name}**\n💀 已败退"
+            f"**{snapshot.player_name}**\n💥 已败退"
             if player_after <= 0
-            else f"**{snapshot.player_name}**\n♥ 血量：`{format_big_number(player_after)} / {format_big_number(player_max_hp)}`"
+            else f"**{snapshot.player_name}**\n❤ 血量：`{format_big_number(player_after)} / {format_big_number(player_max_hp)}`"
         )
         report_text = _battle_excerpt(floor_result.battle, limit=8, mode="tower")
         reward_text = _tower_reward_text(floor_result)
 
-    embed.add_field(name="🗿 守塔者", value=enemy_status, inline=True)
-    embed.add_field(name="🧍 你", value=player_status, inline=True)
+    embed.add_field(name="👹 守塔者", value=enemy_status, inline=True)
+    embed.add_field(name="🧑 你", value=player_status, inline=True)
     embed.add_field(name="📜 战报", value=report_text, inline=False)
     embed.add_field(name="🎁 奖励", value=reward_text, inline=False)
     if idle_notice and (preview or run_result is not None):
-        embed.add_field(name="💤 出关所得", value=idle_notice, inline=False)
+        embed.add_field(name="🪷 出关所得", value=idle_notice, inline=False)
 
     if run_result is not None:
         embed.add_field(
-            name="✨ 本轮小结",
+            name="✅ 本轮小结",
             value=(
                 f"气机：`{run_result.qi_before} -> {run_result.qi_after}`\n"
                 f"新高：`{run_result.highest_floor_before} -> {run_result.highest_floor_after}`\n"
@@ -142,7 +158,7 @@ def build_tower_embed(snapshot: CharacterSnapshot, result: TowerRunResult, *, id
             f"{result.message}\n"
             f"气机：`{result.qi_before} -> {result.qi_after}`\n"
             f"新高：`{result.highest_floor_before} -> {result.highest_floor_after}`\n"
-            f"本轮获得器魂：`{result.total_soul}` · 修为：`{format_big_number(result.total_cultivation)}`"
+            f"本轮获得器魂：`{result.total_soul}` · 修为：`+{format_big_number(result.total_cultivation)}`"
         ),
         color=discord.Color.blurple(),
     )
@@ -150,13 +166,13 @@ def build_tower_embed(snapshot: CharacterSnapshot, result: TowerRunResult, *, id
         lines = []
         for floor_result in result.floors:
             suffix = "守关" if floor_result.is_boss else "层战"
-            status = "胜" if floor_result.victory else "败"
+            status = "胜" if floor_result.victory else "负"
             reward_text = _tower_reward_text(floor_result)
             lines.append(f"第 {floor_result.floor} 层 {suffix} {status} | {floor_result.enemy_name} | {reward_text}")
         embed.add_field(name="层数结算", value="\n".join(lines[:5]), inline=False)
         embed.add_field(name="战斗截取", value=_battle_excerpt(result.floors[-1].battle, limit=4, mode="tower"), inline=False)
     if idle_notice:
-        embed.add_field(name="💤 出关所得", value=idle_notice, inline=False)
+        embed.add_field(name="🪷 出关所得", value=idle_notice, inline=False)
     return embed
 
 
@@ -168,12 +184,12 @@ def build_breakthrough_embed(snapshot: CharacterSnapshot, result: BreakthroughRe
         value=(
             f"境界：`{snapshot.realm_display}`\n"
             f"修为：`{format_big_number(snapshot.cultivation)} / {format_big_number(snapshot.cultivation_max)}`\n"
-            f"最高塔层：`{snapshot.highest_floor}`"
+            f"当前塔层：`{snapshot.highest_floor}`"
         ),
         inline=False,
     )
     if idle_notice:
-        embed.add_field(name="💤 出关所得", value=idle_notice, inline=False)
+        embed.add_field(name="🪷 出关所得", value=idle_notice, inline=False)
     if result.required_floor is not None:
         embed.set_footer(text=f"当前突破门槛守关层：第 {result.required_floor} 层")
     return embed
@@ -236,6 +252,84 @@ def build_retreat_settlement_embed(snapshot: CharacterSnapshot, settlement: Idle
     return embed
 
 
+def build_travel_embed(snapshot: CharacterSnapshot) -> discord.Embed:
+    status = "游历中" if snapshot.is_traveling else "未动身"
+    description = (
+        "你正在山海之间寻机撞缘。每 30 分钟结算 1 次奇遇，最久可累计 10 次。"
+        if snapshot.is_traveling
+        else "可在此选择固定时长出门游历。游历与闭关互斥，途中归来只结算完整的 30 分钟行程。"
+    )
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 游历与奇遇",
+        description=description,
+        color=discord.Color.gold() if snapshot.is_traveling else discord.Color.blurple(),
+    )
+    embed.add_field(
+        name="当前状态",
+        value=(
+            f"状态：`{status}`\n"
+            f"已行时长：`{format_duration_minutes(snapshot.travel_minutes)}`\n"
+            f"本次行程：`{format_duration_minutes(snapshot.travel_duration_minutes) if snapshot.travel_duration_minutes else '未设定'}`"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="游历说明",
+        value=(
+            "- 每 30 分钟结算 1 次事件\n"
+            "- 单次游历最多结算 10 次\n"
+            "- 游历与闭关互斥\n"
+            "- 奇遇可能正面，也可能纯负面"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="游历遗痕",
+        value=(
+            f"杀伐：`{_format_signed_pct(snapshot.travel_atk_pct)}`\n"
+            f"护体：`{_format_signed_pct(snapshot.travel_def_pct)}`\n"
+            f"身法：`{_format_signed_pct(snapshot.travel_agi_pct)}`"
+        ),
+        inline=False,
+    )
+    return embed
+
+
+def build_travel_settlement_embed(snapshot: CharacterSnapshot, settlement: TravelSettlement) -> discord.Embed:
+    color = discord.Color.green() if settlement.success else discord.Color.orange()
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 游历结算",
+        description=settlement.message,
+        color=color,
+    )
+    embed.add_field(
+        name="本次结果",
+        value=(
+            f"结算次数：`{settlement.settled_events}`\n"
+            f"有效时长：`{format_duration_minutes(settlement.settled_minutes)}`\n"
+            f"器魂：`{'+' if settlement.total_soul > 0 else ''}{settlement.total_soul}`\n"
+            f"修为：`{'+' if settlement.total_cultivation > 0 else ''}{format_big_number(settlement.total_cultivation)}`"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="遗痕变化",
+        value=(
+            f"杀伐：`{_format_signed_pct(settlement.total_atk_pct)}`\n"
+            f"护体：`{_format_signed_pct(settlement.total_def_pct)}`\n"
+            f"身法：`{_format_signed_pct(settlement.total_agi_pct)}`"
+        ),
+        inline=False,
+    )
+    if settlement.logs:
+        lines = [
+            f"**【{log.title}】**\n{log.flavor_text}\n**结果：** {log.result_text}"
+            for log in settlement.logs[:5]
+        ]
+        embed.add_field(name="奇遇记录", value="\n\n".join(lines), inline=False)
+    return embed
+
+
 def build_reincarnation_confirm_embed(snapshot: CharacterSnapshot) -> discord.Embed:
     embed = discord.Embed(
         title=f"{snapshot.player_name} · 轮回警示",
@@ -289,12 +383,7 @@ def build_reincarnation_embed(snapshot: CharacterSnapshot, message: str) -> disc
     return embed
 
 
-def _ladder_hp_after_round(
-    challenger: CharacterSnapshot,
-    defender: CharacterSnapshot,
-    battle,
-    round_no: int,
-) -> tuple[int, int]:
+def _ladder_hp_after_round(challenger: CharacterSnapshot, defender: CharacterSnapshot, battle, round_no: int) -> tuple[int, int]:
     challenger_hp = battle.challenger_max_hp
     defender_hp = battle.defender_max_hp
     for action in battle.logs:
@@ -354,22 +443,22 @@ def build_ladder_round_embed(
     challenger_state = (
         f"**{challenger.player_name}** · {challenger.realm_display}\n"
         f"称号：**{challenger.title}**\n"
-        + ("💀 已败退" if challenger_hp <= 0 else f"♥ 血量：`{format_big_number(challenger_hp)} / {format_big_number(battle.challenger_max_hp if battle else challenger.total_def * 10)}`")
+        + ("💥 已败退" if challenger_hp <= 0 else f"❤ 血量：`{format_big_number(challenger_hp)} / {format_big_number(battle.challenger_max_hp if battle else challenger.total_def * 10)}`")
     )
     defender_state = (
         f"**{defender.player_name}** · {defender.realm_display}\n"
         f"称号：**{defender.title}**\n"
-        + ("💀 已落败" if defender_hp <= 0 else f"♥ 血量：`{format_big_number(defender_hp)} / {format_big_number(battle.defender_max_hp if battle else defender.total_def * 10)}`")
+        + ("💥 已落败" if defender_hp <= 0 else f"❤ 血量：`{format_big_number(defender_hp)} / {format_big_number(battle.defender_max_hp if battle else defender.total_def * 10)}`")
     )
-    embed.add_field(name="🧍 你", value=challenger_state, inline=True)
-    embed.add_field(name="🗿 对手", value=defender_state, inline=True)
+    embed.add_field(name="🧑 你", value=challenger_state, inline=True)
+    embed.add_field(name="👤 对手", value=defender_state, inline=True)
     if preview:
         embed.add_field(name="📜 战报", value=report_text, inline=False)
     else:
         embed.add_field(name=f"📜 第 {round_no} 回合", value=report_text, inline=False)
     if final:
         embed.add_field(
-            name="✨ 论果",
+            name="✅ 结果",
             value=(
                 f"你：`#{result.challenger_rank_before} -> #{result.challenger_rank_after}`\n"
                 f"对手：`#{result.defender_rank_before} -> #{result.defender_rank_after}`\n"
@@ -381,11 +470,7 @@ def build_ladder_round_embed(
     return embed
 
 
-def build_ladder_battle_embed(
-    challenger: CharacterSnapshot,
-    defender: CharacterSnapshot,
-    result: LadderChallengeResult,
-) -> discord.Embed:
+def build_ladder_battle_embed(challenger: CharacterSnapshot, defender: CharacterSnapshot, result: LadderChallengeResult) -> discord.Embed:
     color = discord.Color.green() if result.battle and result.battle.challenger_won else discord.Color.orange()
     embed = discord.Embed(title=f"{challenger.player_name} · 论道", description=result.message, color=color)
     embed.add_field(
@@ -423,3 +508,7 @@ def _battle_excerpt(battle, limit: int, *, mode: str = "ladder") -> str:
     if battle.reached_round_limit:
         lines.append("十合战罢，挑战方未能夺位。" if mode == "ladder" else "十合战罢，此层未能踏破。")
     return "\n".join(lines) if lines else "此战过于短促，未留战痕。"
+
+
+def _format_signed_pct(value: int) -> str:
+    return f"{value:+d}%"

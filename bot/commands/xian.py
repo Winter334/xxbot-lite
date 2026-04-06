@@ -11,6 +11,7 @@ from bot.views.panel import (
     build_leaderboard_message,
     build_panel_message,
     build_reincarnation_confirm_message,
+    build_travel_message,
     run_private_tower_sequence,
 )
 
@@ -69,6 +70,14 @@ class XianCommands(commands.Cog):
         await self._send_with_broadcasts(
             interaction,
             await build_breakthrough_message(self.bot, interaction.user.id, interaction.user.display_name),
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="\u6e38\u5386", description="\u6253\u5f00\u6e38\u5386\u9762\u677f\uff0c\u9009\u62e9\u65f6\u957f\u540e\u5916\u51fa\u649e\u673a\u7f18\u3002")
+    async def travel(self, interaction: discord.Interaction) -> None:
+        await self._send_with_broadcasts(
+            interaction,
+            await build_travel_message(self.bot, interaction.user.id, interaction.user.display_name),
             ephemeral=True,
         )
 
