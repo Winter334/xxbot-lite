@@ -137,6 +137,27 @@ async def test_refine_embed_shows_affix_name_and_description(session_factory, se
         assert "最大生命" in current_field.value
         assert "凝神" in pending_field.value
         assert "杀伐提高 19%" in pending_field.value
+        field_names = {field.name for field in embed.fields}
+        assert "三维加成" not in field_names
+        assert "总三维" not in field_names
+
+
+@pytest.mark.asyncio
+async def test_refine_embed_only_shows_refine_related_summary(session_factory, services) -> None:
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 5007, "炼词")).character
+        artifact = character.artifact
+        artifact.reinforce_level = 20
+        services.artifact.ensure_affix_slots(artifact)
+
+        snapshot = services.character.build_snapshot(character)
+        panel_state = services.artifact.build_panel_state(artifact)
+        embed = build_refine_panel_embed(snapshot, panel_state)
+
+        summary_field = next(field for field in embed.fields if field.name == "洗炼信息")
+        assert "器魂" in summary_field.value
+        assert "已解锁槽位" in summary_field.value
+        assert "待选结果" in summary_field.value
 
 
 @pytest.mark.asyncio
