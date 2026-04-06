@@ -4,7 +4,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from bot.views.panel import LeaderboardView, PanelView, ReincarnationConfirmView, ReinforceView, RetreatView, TowerRunView
+from bot.views.panel import (
+    ArtifactOverviewView,
+    ArtifactRefineView,
+    ArtifactReinforceView,
+    LeaderboardView,
+    PanelView,
+    ReincarnationConfirmView,
+    RetreatView,
+    TowerRunView,
+)
 
 
 def _assert_component_limits(view) -> None:
@@ -28,7 +37,9 @@ async def test_views_respect_discord_component_limits() -> None:
         PanelView(1),
         ReincarnationConfirmView(1),
         TowerRunView(1, can_retry=True),
-        ReinforceView(1, panel_state),
+        ArtifactOverviewView(1),
+        ArtifactReinforceView(1),
+        ArtifactRefineView(1, panel_state),
         RetreatView(1, is_retreating=False),
         LeaderboardView(1, "power", []),
         LeaderboardView(1, "ladder", challenge_targets),

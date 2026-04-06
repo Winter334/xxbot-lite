@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 import discord
 
 from bot.ui.artifact import (
-    build_artifact_action_embed,
-    build_artifact_embed,
-    build_reinforce_embed,
+    build_artifact_overview_embed,
+    build_refine_panel_embed,
+    build_reinforce_panel_embed,
 )
 from bot.ui.panel import (
     build_breakthrough_embed,
@@ -192,7 +192,30 @@ async def build_artifact_message(bot: XianBot, owner_user_id: int, display_name:
         panel_state = bot.artifact_service.build_panel_state(character.artifact)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return build_artifact_embed(snapshot, panel_state), ReinforceView(owner_user_id, panel_state), broadcasts
+    return build_artifact_overview_embed(snapshot, panel_state), ArtifactOverviewView(owner_user_id), broadcasts
+
+
+async def build_reinforce_panel_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.artifact_service.build_panel_state(character.artifact)
+        stage = bot.character_service.get_stage(character)
+        next_level = min(character.artifact.reinforce_level + 1, stage.reinforce_cap)
+        soul_cost = bot.artifact_service.reinforce_cost(next_level) if character.artifact.reinforce_level < stage.reinforce_cap else 0
+        success_rate = bot.artifact_service.reinforce_success_rate(next_level) if character.artifact.reinforce_level < stage.reinforce_cap else 0.0
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = build_reinforce_panel_embed(
+        snapshot,
+        panel_state,
+        stage_cap=stage.reinforce_cap,
+        next_level=next_level,
+        soul_cost=soul_cost,
+        success_rate=success_rate,
+    )
+    return embed, ArtifactReinforceView(owner_user_id), broadcasts
 
 
 async def build_reinforce_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -203,9 +226,35 @@ async def build_reinforce_message(bot: XianBot, owner_user_id: int, display_name
         bot.character_service.refresh_combat_power(character)
         snapshot = await _sync_snapshot(bot, session, character)
         panel_state = bot.artifact_service.build_panel_state(character.artifact)
+        stage = bot.character_service.get_stage(character)
+        next_level = min(character.artifact.reinforce_level + 1, stage.reinforce_cap)
+        soul_cost = bot.artifact_service.reinforce_cost(next_level) if character.artifact.reinforce_level < stage.reinforce_cap else 0
+        success_rate = bot.artifact_service.reinforce_success_rate(next_level) if character.artifact.reinforce_level < stage.reinforce_cap else 0.0
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return build_reinforce_embed(snapshot, panel_state, result), ReinforceView(owner_user_id, panel_state), broadcasts
+    embed = build_reinforce_panel_embed(
+        snapshot,
+        panel_state,
+        stage_cap=stage.reinforce_cap,
+        next_level=next_level,
+        soul_cost=soul_cost,
+        success_rate=success_rate,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        result=result,
+    )
+    return embed, ArtifactReinforceView(owner_user_id), broadcasts
+
+
+async def build_refine_panel_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.artifact_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return build_refine_panel_embed(snapshot, panel_state), ArtifactRefineView(owner_user_id, panel_state), broadcasts
 
 
 async def build_refine_affix_message(bot: XianBot, owner_user_id: int, display_name: str, slot: int):
@@ -221,16 +270,16 @@ async def build_refine_affix_message(bot: XianBot, owner_user_id: int, display_n
     if result.success and result.pending_entry is not None:
         action_lines.append(f"待选词条：**{bot.artifact_service.affix_name(result.pending_entry)}**")
         action_lines.append(bot.artifact_service.describe_affix(result.pending_entry))
-    embed = build_artifact_action_embed(
+    embed = build_refine_panel_embed(
         snapshot,
         panel_state,
-        title=f"{snapshot.player_name} · 洗炼槽{slot}",
+        title=f"{snapshot.player_name} · 法宝洗炼",
         message=result.message,
         color=discord.Color.green() if result.success else discord.Color.orange(),
         action_title="本次洗炼",
         action_lines=action_lines,
     )
-    return embed, ReinforceView(owner_user_id, panel_state), broadcasts
+    return embed, ArtifactRefineView(owner_user_id, panel_state), broadcasts
 
 
 async def build_save_affixes_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -243,16 +292,16 @@ async def build_save_affixes_message(bot: XianBot, owner_user_id: int, display_n
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     action_lines = [f"写入槽位：{'、'.join(f'槽{slot}' for slot in result.applied_slots) if result.applied_slots else '无'}"]
-    embed = build_artifact_action_embed(
+    embed = build_refine_panel_embed(
         snapshot,
         panel_state,
-        title=f"{snapshot.player_name} · 保存待选",
+        title=f"{snapshot.player_name} · 法宝洗炼",
         message=result.message,
         color=discord.Color.green() if result.success else discord.Color.orange(),
         action_title="保存结果",
         action_lines=action_lines,
     )
-    return embed, ReinforceView(owner_user_id, panel_state), broadcasts
+    return embed, ArtifactRefineView(owner_user_id, panel_state), broadcasts
 
 
 async def build_retreat_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -304,19 +353,14 @@ async def rename_artifact_message(bot: XianBot, owner_user_id: int, display_name
         renamed_used = character.artifact.artifact_rename_used
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    embed = build_artifact_action_embed(
+    suffix = f"当前本命已改名：`{'是' if renamed_used else '否'}`"
+    embed = build_artifact_overview_embed(
         snapshot,
         panel_state,
-        title=f"{snapshot.player_name} · 本命赐名",
-        message=result.message,
+        message=f"{result.message}\n{suffix}",
         color=discord.Color.green() if result.success else discord.Color.orange(),
-        action_title="当前本命",
-        action_lines=[
-            f"法宝：**{snapshot.artifact_name}**",
-            f"是否已改名：`{'是' if renamed_used else '否'}`",
-        ],
     )
-    return embed, ReinforceView(owner_user_id, panel_state), broadcasts
+    return embed, ArtifactOverviewView(owner_user_id), broadcasts
 
 
 async def build_reincarnation_confirm_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -449,7 +493,7 @@ class PanelView(OwnerLockedView):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
-    @discord.ui.button(label="锻宝", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="法宝", style=discord.ButtonStyle.secondary, row=0)
     async def reinforce_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_artifact_message(bot, interaction.user.id, interaction.user.display_name)
@@ -551,23 +595,54 @@ class ReinforceRenameModal(discord.ui.Modal, title="为本命法宝赐名"):
         await _send_broadcasts(bot, broadcasts)
 
 
-class ReinforceView(OwnerLockedView):
-    def __init__(self, owner_user_id: int, panel_state) -> None:
+class ArtifactOverviewView(OwnerLockedView):
+    def __init__(self, owner_user_id: int) -> None:
+        super().__init__(owner_user_id)
+        self._add_open_reinforce_button()
+        self._add_open_refine_button()
+        self._add_rename_button()
+
+    def _add_open_reinforce_button(self) -> None:
+        button = discord.ui.Button(label="强化", row=0, style=discord.ButtonStyle.primary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_reinforce_panel_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_open_refine_button(self) -> None:
+        button = discord.ui.Button(label="洗炼", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_refine_panel_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_rename_button(self) -> None:
+        button = discord.ui.Button(label="改名", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            await interaction.response.send_modal(ReinforceRenameModal(self.owner_user_id))
+
+        button.callback = callback
+        self.add_item(button)
+
+
+class ArtifactReinforceView(OwnerLockedView):
+    def __init__(self, owner_user_id: int) -> None:
         super().__init__(owner_user_id)
         self._add_reinforce_button()
-        self._add_rename_button()
-        self._add_save_button(disabled=not panel_state.has_pending)
-        pending_slots = {slot.slot for slot in panel_state.pending_slots if slot.affix_id}
-        for slot_view in panel_state.current_slots:
-            self._add_refine_button(
-                slot=slot_view.slot,
-                unlock_level=slot_view.unlock_level,
-                unlocked=slot_view.unlocked,
-                highlighted=slot_view.slot in pending_slots,
-            )
 
     def _add_reinforce_button(self) -> None:
-        button = discord.ui.Button(label="强化本命", row=0, style=discord.ButtonStyle.primary)
+        button = discord.ui.Button(label="执行强化", row=0, style=discord.ButtonStyle.primary)
 
         async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
@@ -578,14 +653,19 @@ class ReinforceView(OwnerLockedView):
         button.callback = callback
         self.add_item(button)
 
-    def _add_rename_button(self) -> None:
-        button = discord.ui.Button(label="改名本命", row=0, style=discord.ButtonStyle.secondary)
 
-        async def callback(interaction: discord.Interaction) -> None:
-            await interaction.response.send_modal(ReinforceRenameModal(self.owner_user_id))
-
-        button.callback = callback
-        self.add_item(button)
+class ArtifactRefineView(OwnerLockedView):
+    def __init__(self, owner_user_id: int, panel_state) -> None:
+        super().__init__(owner_user_id)
+        self._add_save_button(disabled=not panel_state.has_pending)
+        pending_slots = {slot.slot for slot in panel_state.pending_slots if slot.affix_id}
+        for slot_view in panel_state.current_slots:
+            self._add_refine_button(
+                slot=slot_view.slot,
+                unlock_level=slot_view.unlock_level,
+                unlocked=slot_view.unlocked,
+                highlighted=slot_view.slot in pending_slots,
+            )
 
     def _add_save_button(self, *, disabled: bool) -> None:
         button = discord.ui.Button(label="保存待选", row=0, style=discord.ButtonStyle.success, disabled=disabled)

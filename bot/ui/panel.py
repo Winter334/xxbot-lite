@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import discord
 
-from bot.services.artifact_service import ReinforceResult
 from bot.services.breakthrough_service import BreakthroughResult
 from bot.services.character_service import CharacterSnapshot
 from bot.services.idle_service import IdleSettlement
@@ -234,57 +233,6 @@ def build_retreat_settlement_embed(snapshot: CharacterSnapshot, settlement: Idle
         ),
         inline=False,
     )
-    return embed
-
-
-def build_artifact_embed(snapshot: CharacterSnapshot) -> discord.Embed:
-    embed = discord.Embed(
-        title=f"{snapshot.player_name} · 本命法宝",
-        description=f"**{snapshot.artifact_name}** `+{snapshot.artifact_level}`",
-        color=discord.Color.dark_gold(),
-    )
-    embed.add_field(
-        name="🧰 法宝详情",
-        value=(
-            f"器魂：`{snapshot.soul_shards}`\n"
-            f"总成长：`{format_big_number(snapshot.artifact_power)}`\n"
-            f"当前主称号：**{snapshot.title}**"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="🗡 成长分布",
-        value=(
-            f"⚔️ 杀伐：`{format_big_number(snapshot.total_atk)}`\n"
-            f"🛡 护体：`{format_big_number(snapshot.total_def)}`\n"
-            f"💨 身法：`{format_big_number(snapshot.total_agi)}`"
-        ),
-        inline=False,
-    )
-    embed.set_footer(text="可在此继续强化本命，或为其赐名。")
-    return embed
-
-
-def build_reinforce_embed(snapshot: CharacterSnapshot, result: ReinforceResult) -> discord.Embed:
-    color = discord.Color.green() if result.success else discord.Color.orange()
-    embed = discord.Embed(title=f"{snapshot.player_name} · 锻宝", description=result.message, color=color)
-    rate = f"{int(result.success_rate * 100)}%" if result.success_rate else "0%"
-    embed.add_field(
-        name="本次锻宝",
-        value=(
-            f"法宝：**{snapshot.artifact_name}**\n"
-            f"强化：`+{result.level_before} -> +{result.level_after}`\n"
-            f"器魂消耗：`{result.soul_cost}`\n"
-            f"成功率：`{rate}`"
-        ),
-        inline=False,
-    )
-    if result.success:
-        embed.add_field(
-            name="成长落点",
-            value=f"杀伐 +`{result.gained_atk}` · 护体 +`{result.gained_def}` · 身法 +`{result.gained_agi}`",
-            inline=False,
-        )
     return embed
 
 
