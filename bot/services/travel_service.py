@@ -75,8 +75,22 @@ class TravelService:
         capped = min(elapsed, timedelta(minutes=character.travel_duration_minutes))
         return max(0, int(capped.total_seconds() // 60))
 
-    def start_travel(self, character: Character, duration_minutes: int, *, now=None) -> TravelSettlement:
-        if duration_minutes not in TRAVEL_DURATION_CHOICES:
+    def next_duration_choice(self, current_minutes: int) -> int:
+        try:
+            index = TRAVEL_DURATION_CHOICES.index(current_minutes)
+        except ValueError:
+            return TRAVEL_DURATION_CHOICES[0]
+        return TRAVEL_DURATION_CHOICES[(index + 1) % len(TRAVEL_DURATION_CHOICES)]
+
+    def cycle_selected_duration(self, character: Character) -> int:
+        next_minutes = self.next_duration_choice(character.travel_selected_duration_minutes or TRAVEL_DURATION_CHOICES[0])
+        character.travel_selected_duration_minutes = next_minutes
+        character.last_highlight_text = f"方才翻了翻行程卷册，将下次游历定为 {next_minutes} 分钟。"
+        return next_minutes
+
+    def start_travel(self, character: Character, duration_minutes: int | None = None, *, now=None) -> TravelSettlement:
+        actual_duration = duration_minutes or character.travel_selected_duration_minutes or TRAVEL_DURATION_CHOICES[0]
+        if actual_duration not in TRAVEL_DURATION_CHOICES:
             return TravelSettlement(False, "该游历时长尚未列入一期行程。", 0, 0, 0, 0, 0, 0, 0, 0, False, ())
         if character.is_traveling:
             return TravelSettlement(False, "你已在外游历，暂不可再启新程。", 0, 0, 0, 0, 0, 0, 0, 0, False, ())
@@ -86,11 +100,12 @@ class TravelService:
         current_time = ensure_shanghai(now or now_shanghai())
         character.is_traveling = True
         character.travel_started_at = current_time
-        character.travel_duration_minutes = duration_minutes
-        character.last_highlight_text = f"方才离山游历，预计行程 {duration_minutes} 分钟。"
+        character.travel_duration_minutes = actual_duration
+        character.travel_selected_duration_minutes = actual_duration
+        character.last_highlight_text = f"方才离山游历，预计行程 {actual_duration} 分钟。"
         return TravelSettlement(
             True,
-            f"你已离开山门，踏上 {duration_minutes} 分钟的游历行程。",
+            f"你已离开山门，踏上 {actual_duration} 分钟的游历行程。",
             0,
             0,
             0,
@@ -123,6 +138,7 @@ class TravelService:
         character.travel_started_at = current_time
         previous_duration = character.travel_duration_minutes
         character.travel_duration_minutes = 0
+        character.travel_selected_duration_minutes = previous_duration or character.travel_selected_duration_minutes
         if logs:
             pieces: list[str] = []
             if total_soul:

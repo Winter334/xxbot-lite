@@ -254,10 +254,13 @@ def build_retreat_settlement_embed(snapshot: CharacterSnapshot, settlement: Idle
 
 def build_travel_embed(snapshot: CharacterSnapshot) -> discord.Embed:
     status = "游历中" if snapshot.is_traveling else "未动身"
+    selected_duration = snapshot.travel_duration_minutes if snapshot.is_traveling else snapshot.travel_selected_duration_minutes
+    remaining_minutes = max(0, selected_duration - snapshot.travel_minutes) if snapshot.is_traveling else selected_duration
+    estimated_events = min(10, selected_duration // 30) if selected_duration else 0
     description = (
-        "你正在山海之间寻机撞缘。每 30 分钟结算 1 次奇遇，最久可累计 10 次。"
+        "你正在山海之间寻机撞缘。行程按预定时长推进，每满 30 分钟结算 1 次奇遇。"
         if snapshot.is_traveling
-        else "可在此选择固定时长出门游历。游历与闭关互斥，途中归来只结算完整的 30 分钟行程。"
+        else "可先定下本次行程，再启程游历。游历与闭关互斥，中途归来只结算完整的 30 分钟路程。"
     )
     embed = discord.Embed(
         title=f"{snapshot.player_name} · 游历与奇遇",
@@ -268,18 +271,20 @@ def build_travel_embed(snapshot: CharacterSnapshot) -> discord.Embed:
         name="当前状态",
         value=(
             f"状态：`{status}`\n"
+            f"本次行程：`{format_duration_minutes(selected_duration) if selected_duration else '未设定'}`\n"
             f"已行时长：`{format_duration_minutes(snapshot.travel_minutes)}`\n"
-            f"本次行程：`{format_duration_minutes(snapshot.travel_duration_minutes) if snapshot.travel_duration_minutes else '未设定'}`"
+            f"剩余时长：`{format_duration_minutes(remaining_minutes)}`\n"
+            f"预计结算：`{estimated_events}` 次"
         ),
         inline=False,
     )
     embed.add_field(
         name="游历说明",
         value=(
+            "- 先切换时长，再开始游历\n"
             "- 每 30 分钟结算 1 次事件\n"
             "- 单次游历最多结算 10 次\n"
-            "- 游历与闭关互斥\n"
-            "- 奇遇可能正面，也可能纯负面"
+            "- 游历与闭关互斥"
         ),
         inline=False,
     )
