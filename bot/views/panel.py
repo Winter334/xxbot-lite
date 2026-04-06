@@ -21,8 +21,11 @@ from bot.ui.panel import (
     build_retreat_settlement_embed,
     build_tower_embed,
     build_tower_floor_embed,
+    build_travel_embed,
+    build_travel_settlement_embed,
 )
 from bot.ui.ranking import build_leaderboard_embed
+from bot.services.travel_service import TRAVEL_DURATION_CHOICES
 
 if TYPE_CHECKING:
     from bot.main import XianBot
@@ -52,6 +55,7 @@ async def _sync_snapshot(bot: XianBot, session, character) -> tuple:
         title=title,
         honor_tags=honor_tags,
         idle_minutes=bot.idle_service.current_idle_minutes(character),
+        travel_minutes=bot.travel_service.current_travel_minutes(character),
     )
     return snapshot
 
@@ -131,8 +135,9 @@ async def run_private_tower_sequence(
     snapshot, result, broadcasts, idle_notice = await _load_tower_run(bot, owner_user_id, display_name)
 
     if not result.floors:
-        embed = _info_embed("闭关未止", result.message) if snapshot.is_retreating and not result.success else build_tower_embed(snapshot, result, idle_notice=idle_notice)
-        view = None if snapshot.is_retreating and not result.success else TowerRunView(owner_user_id, can_retry=False)
+        blocked = (snapshot.is_retreating or snapshot.is_traveling) and not result.success
+        embed = _info_embed("当前无法登塔", result.message) if blocked else build_tower_embed(snapshot, result, idle_notice=idle_notice)
+        view = None if blocked else TowerRunView(owner_user_id, can_retry=False)
         if edit_existing:
             await interaction.response.defer()
             await interaction.edit_original_response(embed=embed, view=view)
@@ -313,6 +318,44 @@ async def build_retreat_message(bot: XianBot, owner_user_id: int, display_name: 
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     return build_retreat_embed(snapshot), RetreatView(owner_user_id, is_retreating=snapshot.is_retreating), broadcasts
+
+
+async def build_travel_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        await _refresh_resources(bot, character)
+        snapshot = await _sync_snapshot(bot, session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return build_travel_embed(snapshot), TravelView(owner_user_id, is_traveling=snapshot.is_traveling), broadcasts
+
+
+async def start_travel_message(bot: XianBot, owner_user_id: int, display_name: str, duration_minutes: int):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        await _refresh_resources(bot, character)
+        result = bot.travel_service.start_travel(character, duration_minutes)
+        snapshot = await _sync_snapshot(bot, session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = build_travel_embed(snapshot)
+    embed.description = result.message
+    return embed, TravelView(owner_user_id, is_traveling=snapshot.is_traveling), broadcasts
+
+
+async def stop_travel_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        await _refresh_resources(bot, character)
+        settlement = bot.travel_service.stop_travel(character)
+        bot.character_service.refresh_combat_power(character)
+        snapshot = await _sync_snapshot(bot, session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return build_travel_settlement_embed(snapshot, settlement), TravelView(owner_user_id, is_traveling=snapshot.is_traveling), broadcasts
 
 
 async def start_retreat_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -497,6 +540,13 @@ class PanelView(OwnerLockedView):
     async def reinforce_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_artifact_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
+
+    @discord.ui.button(label="\u6e38\u5386", style=discord.ButtonStyle.secondary, row=1)
+    async def travel_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await build_travel_message(bot, interaction.user.id, interaction.user.display_name)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
@@ -718,6 +768,52 @@ class RetreatView(OwnerLockedView):
         async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
             embed, view, broadcasts = await stop_retreat_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+
+class TravelView(OwnerLockedView):
+    def __init__(self, owner_user_id: int, *, is_traveling: bool) -> None:
+        super().__init__(owner_user_id)
+        for index, duration in enumerate(TRAVEL_DURATION_CHOICES):
+            row = 0 if index < 5 else 1
+            self._add_duration_button(duration, row=row, disabled=is_traveling)
+        self._add_refresh_button(row=1)
+        self._add_stop_button(row=1, disabled=not is_traveling)
+
+    def _add_duration_button(self, duration: int, *, row: int, disabled: bool) -> None:
+        button = discord.ui.Button(label=f"{duration}\u5206", row=row, style=discord.ButtonStyle.primary, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction, minutes: int = duration) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await start_travel_message(bot, interaction.user.id, interaction.user.display_name, minutes)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_refresh_button(self, *, row: int) -> None:
+        button = discord.ui.Button(label="\u5237\u65b0", row=row, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_travel_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_stop_button(self, *, row: int, disabled: bool) -> None:
+        button = discord.ui.Button(label="\u5f52\u6765\u7ed3\u7b97", row=row, style=discord.ButtonStyle.success, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await stop_travel_message(bot, interaction.user.id, interaction.user.display_name)
             await interaction.response.edit_message(embed=embed, view=view)
             await _send_broadcasts(bot, broadcasts)
 

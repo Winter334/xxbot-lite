@@ -17,6 +17,7 @@ from bot.services.idle_service import IdleService
 from bot.services.ladder_service import LadderService
 from bot.services.ranking_service import RankingService
 from bot.services.tower_service import TowerService
+from bot.services.travel_service import TravelService
 
 
 @dataclass(slots=True)
@@ -30,6 +31,7 @@ class ServiceBundle:
     breakthrough: BreakthroughService
     ladder: LadderService
     ranking: RankingService
+    travel: TravelService
 
 
 @pytest.fixture
@@ -58,4 +60,5 @@ def services() -> ServiceBundle:
     breakthrough = BreakthroughService(character)
     ladder = LadderService(character, combat)
     ranking = RankingService(character, artifact)
-    return ServiceBundle(fate, artifact, character, idle, combat, tower, breakthrough, ladder, ranking)
+    travel = TravelService(rng)
+    return ServiceBundle(fate, artifact, character, idle, combat, tower, breakthrough, ladder, ranking, travel)

@@ -70,6 +70,12 @@ class CharacterSnapshot:
     daily_pvp_attempts_left: int
     idle_minutes: int
     is_retreating: bool
+    is_traveling: bool
+    travel_minutes: int
+    travel_duration_minutes: int
+    travel_atk_pct: int
+    travel_def_pct: int
+    travel_agi_pct: int
 
 
 @dataclass(slots=True)
@@ -163,7 +169,13 @@ class CharacterService:
             current_qi=6,
             qi_max=6,
             is_retreating=False,
+            is_traveling=False,
             last_idle_at=now,
+            travel_started_at=now,
+            travel_duration_minutes=0,
+            travel_atk_pct=0,
+            travel_def_pct=0,
+            travel_agi_pct=0,
             last_qi_recovered_at=now,
             fate_key=fate.key,
             current_ladder_rank=initial_rank,
@@ -211,6 +223,9 @@ class CharacterService:
         atk = stage.base_atk + ((artifact.atk_bonus or 0) if artifact else 0)
         defense = stage.base_def + ((artifact.def_bonus or 0) if artifact else 0)
         agility = stage.base_agi + ((artifact.agi_bonus or 0) if artifact else 0)
+        atk = int(atk * (1 + (character.travel_atk_pct or 0) / 100))
+        defense = int(defense * (1 + (character.travel_def_pct or 0) / 100))
+        agility = int(agility * (1 + (character.travel_agi_pct or 0) / 100))
         atk = int(atk * self.fate_service.combat_multiplier(character.fate_key, "atk"))
         defense = int(defense * self.fate_service.combat_multiplier(character.fate_key, "def"))
         agility = int(agility * self.fate_service.combat_multiplier(character.fate_key, "agi"))
@@ -234,6 +249,7 @@ class CharacterService:
         title: str | None = None,
         honor_tags: tuple[str, ...] = (),
         idle_minutes: int = 0,
+        travel_minutes: int = 0,
     ) -> CharacterSnapshot:
         stage = self.get_stage(character)
         artifact = character.artifact
@@ -274,6 +290,12 @@ class CharacterService:
             daily_pvp_attempts_left=max(0, 5 - character.daily_pvp_attempts_used),
             idle_minutes=idle_minutes,
             is_retreating=character.is_retreating,
+            is_traveling=character.is_traveling,
+            travel_minutes=travel_minutes,
+            travel_duration_minutes=character.travel_duration_minutes,
+            travel_atk_pct=character.travel_atk_pct,
+            travel_def_pct=character.travel_def_pct,
+            travel_agi_pct=character.travel_agi_pct,
         )
 
     def can_reincarnate_today(self, character: Character) -> bool:
@@ -282,6 +304,8 @@ class CharacterService:
     def start_retreat(self, character: Character) -> RetreatActionResult:
         if character.is_retreating:
             return RetreatActionResult(False, "你已在洞府闭关中，无需再次入定。")
+        if character.is_traveling:
+            return RetreatActionResult(False, "你仍在外游历，需先归来结算，方可再入洞府。")
         now = now_shanghai()
         character.is_retreating = True
         character.last_idle_at = now
@@ -318,7 +342,13 @@ class CharacterService:
         character.highest_floor = 0
         character.current_qi = character.qi_max
         character.is_retreating = False
+        character.is_traveling = False
         character.last_idle_at = now
+        character.travel_started_at = now
+        character.travel_duration_minutes = 0
+        character.travel_atk_pct = 0
+        character.travel_def_pct = 0
+        character.travel_agi_pct = 0
         character.last_qi_recovered_at = now
         character.fate_key = new_fate.key
         character.daily_pvp_attempts_used = 0
