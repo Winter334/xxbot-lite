@@ -68,7 +68,7 @@ def build_reinforce_panel_embed(
         if result.newly_unlocked_slots:
             action_lines.append(f"新解锁槽位：{'、'.join(f'槽{slot}' for slot in result.newly_unlocked_slots)}")
         embed.add_field(name="本次强化", value="\n".join(action_lines), inline=False)
-    embed.set_footer(text="强化子面板会在当前消息内更新；法宝总览面板会保持不动。")
+    embed.set_footer(text="强化达到 +10 / +20 / +30 / +40 / +50 时，会依次解锁词条槽位。")
     return embed
 
 
@@ -87,7 +87,7 @@ def build_refine_panel_embed(
         description=_artifact_header(snapshot, message),
         color=color or discord.Color.dark_gold(),
     )
-    _add_overview_fields(embed, snapshot, panel_state)
+    _add_refine_fields(embed, snapshot, panel_state)
     embed.add_field(name="当前词条", value=_render_affix_column(panel_state.current_slots), inline=True)
     embed.add_field(name="待选词条", value=_render_affix_column(panel_state.pending_slots), inline=True)
     if action_title and action_lines:
@@ -139,6 +139,20 @@ def _add_overview_fields(
         inline=True,
     )
     if include_pending and panel_state.has_pending:
+        embed.add_field(name="待保存槽位", value=_render_pending_summary(panel_state), inline=False)
+
+
+def _add_refine_fields(embed: discord.Embed, snapshot: CharacterSnapshot, panel_state: ArtifactPanelState) -> None:
+    embed.add_field(
+        name="洗炼信息",
+        value=(
+            f"器魂：`{snapshot.soul_shards}`\n"
+            f"已解锁槽位：`{panel_state.unlocked_slots} / 5`\n"
+            f"待选结果：`{sum(1 for slot in panel_state.pending_slots if slot.affix_id)} / {panel_state.unlocked_slots}`"
+        ),
+        inline=False,
+    )
+    if panel_state.has_pending:
         embed.add_field(name="待保存槽位", value=_render_pending_summary(panel_state), inline=False)
 
 
