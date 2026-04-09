@@ -627,7 +627,14 @@ def _battle_excerpt(battle, limit: int, *, mode: str = "ladder") -> str:
             line = f"{line[:-1]}，余血 {format_big_number(action.target_hp_after)}。"
         lines.append(line)
     if battle.reached_round_limit:
-        lines.append("十合战罢，挑战方未能夺位。" if mode == "ladder" else "十合战罢，此层未能踏破。")
+        if mode == "ladder":
+            lines.append("十合战罢，挑战方未能夺位。")
+        elif mode == "bounty":
+            lines.append("十合战罢，此番讨伐未能竟功。")
+        elif mode == "robbery":
+            lines.append("十合战罢，此番劫掠未能得手。")
+        else:
+            lines.append("十合战罢，此层未能踏破。")
     return "\n".join(lines) if lines else "此战过于短促，未留战痕。"
 
 

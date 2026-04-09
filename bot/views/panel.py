@@ -11,6 +11,7 @@ from bot.ui.artifact import (
     build_reinforce_panel_embed,
 )
 from bot.ui.panel import (
+    _battle_excerpt,
     build_breakthrough_embed,
     build_faction_action_embed,
     build_faction_embed,
@@ -547,6 +548,8 @@ async def build_bounty_hunt_message(bot: XianBot, owner_user_id: int, display_na
             if result.virtue_delta:
                 lines.append(f"善名：`+{result.virtue_delta}`")
             embed = build_faction_action_embed(snapshot, "悬赏讨伐", result.message, lines, success=result.success)
+            if result.battle is not None:
+                embed.add_field(name="战报截取", value=_battle_excerpt(result.battle, limit=6, mode="bounty"), inline=False)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts
@@ -577,6 +580,8 @@ async def build_robbery_message(bot: XianBot, owner_user_id: int, display_name: 
             if result.same_faction_halved:
                 lines.append("同为魔道，此次收益已减半。")
             embed = build_faction_action_embed(snapshot, "劫掠", result.message, lines, success=result.success)
+            if result.battle is not None:
+                embed.add_field(name="战报截取", value=_battle_excerpt(result.battle, limit=6, mode="robbery"), inline=False)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts
