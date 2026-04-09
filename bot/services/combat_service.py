@@ -17,6 +17,11 @@ class CombatantSnapshot:
     title: str = ""
     fate_name: str = ""
     affixes: tuple[ArtifactAffixEntry, ...] = ()
+    realm_index: int = 1
+    damage_dealt_basis_points: int = 0
+    damage_taken_basis_points: int = 0
+    damage_reduction_basis_points: int = 0
+    versus_higher_realm_damage_basis_points: int = 0
 
 
 @dataclass(slots=True)
@@ -89,8 +94,27 @@ class CombatService:
         title: str = "",
         fate_name: str = "",
         affixes: tuple[ArtifactAffixEntry, ...] | list[ArtifactAffixEntry] = (),
+        realm_index: int = 1,
+        damage_dealt_basis_points: int = 0,
+        damage_taken_basis_points: int = 0,
+        damage_reduction_basis_points: int = 0,
+        versus_higher_realm_damage_basis_points: int = 0,
     ) -> CombatantSnapshot:
-        return CombatantSnapshot(name, atk, defense, agility, defense * 10, title, fate_name, tuple(affixes))
+        return CombatantSnapshot(
+            name,
+            atk,
+            defense,
+            agility,
+            defense * 10,
+            title,
+            fate_name,
+            tuple(affixes),
+            realm_index,
+            damage_dealt_basis_points,
+            damage_taken_basis_points,
+            damage_reduction_basis_points,
+            versus_higher_realm_damage_basis_points,
+        )
 
     def run_battle(
         self,
@@ -197,6 +221,11 @@ class CombatService:
         damage = int(damage * (1 + self._damage_dealt_pct(actor) / 100))
         damage = int(damage * (1 + self._damage_taken_pct(target) / 100))
         damage = max(1, int(damage * max(0.05, 1 - (self._damage_reduction_pct(target) / 100))))
+        damage = int(damage * (1 + actor.snapshot.damage_dealt_basis_points / 10_000))
+        if target.snapshot.realm_index > actor.snapshot.realm_index:
+            damage = int(damage * (1 + actor.snapshot.versus_higher_realm_damage_basis_points / 10_000))
+        damage = int(damage * (1 + target.snapshot.damage_taken_basis_points / 10_000))
+        damage = max(1, int(damage * max(0.05, 1 - (target.snapshot.damage_reduction_basis_points / 10_000))))
 
         target.hp = max(0, target.hp - damage)
         target.hits_taken += 1

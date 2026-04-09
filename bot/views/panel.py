@@ -12,6 +12,10 @@ from bot.ui.artifact import (
 )
 from bot.ui.panel import (
     build_breakthrough_embed,
+    build_faction_action_embed,
+    build_faction_embed,
+    build_fate_rewrite_confirm_embed,
+    build_fate_rewrite_embed,
     build_ladder_battle_embed,
     build_ladder_round_embed,
     build_panel_embed,
@@ -25,6 +29,7 @@ from bot.ui.panel import (
     build_travel_settlement_embed,
 )
 from bot.ui.ranking import build_leaderboard_embed
+from bot.services.faction_service import FactionTarget
 from bot.services.travel_service import TRAVEL_DURATION_CHOICES
 
 if TYPE_CHECKING:
@@ -47,12 +52,14 @@ async def _send_broadcasts(bot: XianBot, broadcasts: list[str]) -> None:
 async def _sync_snapshot(bot: XianBot, session, character) -> tuple:
     bot.ladder_service.reset_daily_attempts_if_needed(character)
     await _refresh_resources(bot, character)
+    bot.faction_service.sync_character_state(character)
     bot.character_service.refresh_combat_power(character)
-    title, honor_tags = await bot.ranking_service.get_titles(session, character)
+    title, honor_tags, faction_title = await bot.ranking_service.get_titles(session, character)
     character.title = title
     snapshot = bot.character_service.build_snapshot(
         character,
         title=title,
+        faction_title=faction_title,
         honor_tags=honor_tags,
         idle_minutes=bot.idle_service.current_idle_minutes(character),
         travel_minutes=bot.travel_service.current_travel_minutes(character),
@@ -444,6 +451,137 @@ async def build_reincarnation_message(bot: XianBot, owner_user_id: int, display_
     return build_reincarnation_embed(snapshot, result.message), None, broadcasts
 
 
+async def build_fate_rewrite_confirm_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        snapshot = await _sync_snapshot(bot, session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return build_fate_rewrite_confirm_embed(snapshot), FateRewriteConfirmView(owner_user_id, can_confirm=snapshot.rewrite_chances > 0), broadcasts
+
+
+async def build_fate_rewrite_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = await bot.character_service.rewrite_fate(session, character)
+        snapshot = await _sync_snapshot(bot, session, character)
+        broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+        if result.broadcast_text:
+            broadcasts.append(result.broadcast_text)
+        await session.commit()
+    return build_fate_rewrite_embed(snapshot, result.message), None, broadcasts
+
+
+async def build_faction_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        snapshot = await _sync_snapshot(bot, session, character)
+        characters = await bot.character_service.list_characters(session)
+        bot.faction_service.sync_many(characters)
+        if character.faction == "righteous":
+            targets = bot.faction_service.list_bounty_targets(characters)
+        elif character.faction == "demonic":
+            targets = bot.faction_service.list_robbery_targets(characters, character)
+        else:
+            targets = []
+        can_rob, rob_reason = bot.faction_service.can_rob(character)
+        can_bounty, bounty_reason = bot.faction_service.can_bounty_hunt(character)
+        robbery_status_text = "可出手" if can_rob else (rob_reason or "当前不可出手")
+        bounty_status_text = "可出手" if can_bounty else (bounty_reason or "当前不可出手")
+        embed = build_faction_embed(
+            snapshot,
+            target_count=len(targets),
+            robbery_status_text=robbery_status_text,
+            bounty_status_text=bounty_status_text,
+        )
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts
+
+
+async def join_faction_message(bot: XianBot, owner_user_id: int, display_name: str, faction_key: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        success, message = bot.faction_service.join_faction(character, faction_key)
+        snapshot = await _sync_snapshot(bot, session, character)
+        characters = await bot.character_service.list_characters(session)
+        if character.faction == "righteous":
+            targets = bot.faction_service.list_bounty_targets(characters)
+        elif character.faction == "demonic":
+            targets = bot.faction_service.list_robbery_targets(characters, character)
+        else:
+            targets = []
+        lines = [f"当前阵营：**{snapshot.faction_name}**"]
+        if snapshot.faction_title:
+            lines.append(f"阵营称号：**{snapshot.faction_title}**")
+        embed = build_faction_action_embed(snapshot, "阵营更定", message, lines, success=success)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts
+
+
+async def build_bounty_hunt_message(bot: XianBot, owner_user_id: int, display_name: str, target_character_id: int):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        actor = creation.character
+        characters = await bot.character_service.list_characters(session)
+        target = next((entry for entry in characters if entry.id == target_character_id), None)
+        result = bot.faction_service.challenge_bounty(actor, target) if target is not None else None
+        snapshot = await _sync_snapshot(bot, session, actor)
+        refreshed = await bot.character_service.list_characters(session)
+        targets = bot.faction_service.list_bounty_targets(refreshed) if actor.faction == "righteous" else []
+        if result is None:
+            embed = build_faction_action_embed(snapshot, "悬赏讨伐", "未能找到该目标。", [], success=False)
+        else:
+            lines = []
+            if result.target_name:
+                lines.append(f"目标：**{result.target_name}**")
+            if result.soul_delta:
+                lines.append(f"器魂：`+{result.soul_delta}`")
+            if result.luck_delta:
+                lines.append(f"气运：`+{result.luck_delta}`")
+            if result.virtue_delta:
+                lines.append(f"善名：`+{result.virtue_delta}`")
+            embed = build_faction_action_embed(snapshot, "悬赏讨伐", result.message, lines, success=result.success)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts
+
+
+async def build_robbery_message(bot: XianBot, owner_user_id: int, display_name: str, target_character_id: int):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        actor = creation.character
+        characters = await bot.character_service.list_characters(session)
+        target = next((entry for entry in characters if entry.id == target_character_id), None)
+        result = bot.faction_service.rob(actor, target) if target is not None else None
+        snapshot = await _sync_snapshot(bot, session, actor)
+        refreshed = await bot.character_service.list_characters(session)
+        targets = bot.faction_service.list_robbery_targets(refreshed, actor) if actor.faction == "demonic" else []
+        if result is None:
+            embed = build_faction_action_embed(snapshot, "劫掠", "未能找到该目标。", [], success=False)
+        else:
+            lines = []
+            if result.target_name:
+                lines.append(f"目标：**{result.target_name}**")
+            if result.soul_delta:
+                lines.append(f"器魂：`+{result.soul_delta}`")
+            if result.luck_delta:
+                lines.append(f"气运：`+{result.luck_delta}`")
+            if result.infamy_delta:
+                lines.append(f"恶名：`+{result.infamy_delta}`")
+            if result.same_faction_halved:
+                lines.append("同为魔道，此次收益已减半。")
+            embed = build_faction_action_embed(snapshot, "劫掠", result.message, lines, success=result.success)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts
+
+
 async def run_private_ladder_sequence(
     bot: XianBot,
     interaction: discord.Interaction,
@@ -570,6 +708,20 @@ class PanelView(OwnerLockedView):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
+    @discord.ui.button(label="阵营", style=discord.ButtonStyle.secondary, row=1)
+    async def faction_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await build_faction_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
+
+    @discord.ui.button(label="改命", style=discord.ButtonStyle.primary, row=1)
+    async def rewrite_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await build_fate_rewrite_confirm_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
+
     @discord.ui.button(label="轮回", style=discord.ButtonStyle.danger, row=1)
     async def reincarnate_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
@@ -601,6 +753,34 @@ class ReincarnationConfirmView(OwnerLockedView):
 
         async def callback(interaction: discord.Interaction) -> None:
             await interaction.response.edit_message(content="已取消本次轮回。", embed=None, view=None)
+
+        button.callback = callback
+        self.add_item(button)
+
+
+class FateRewriteConfirmView(OwnerLockedView):
+    def __init__(self, owner_user_id: int, *, can_confirm: bool) -> None:
+        super().__init__(owner_user_id)
+        self._add_confirm_button(disabled=not can_confirm)
+        self._add_cancel_button()
+
+    def _add_confirm_button(self, *, disabled: bool) -> None:
+        button = discord.ui.Button(label="确认改命", row=0, style=discord.ButtonStyle.primary, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, _, broadcasts = await build_fate_rewrite_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=None)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_cancel_button(self) -> None:
+        button = discord.ui.Button(label="取消", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            await interaction.response.edit_message(content="已取消本次改命。", embed=None, view=None)
 
         button.callback = callback
         self.add_item(button)
@@ -847,6 +1027,94 @@ class TravelView(OwnerLockedView):
         self.add_item(button)
 
 
+class FactionTargetSelect(discord.ui.Select):
+    def __init__(self, owner_user_id: int, *, mode: str, targets: list[FactionTarget]) -> None:
+        self.owner_user_id = owner_user_id
+        self.mode = mode
+        options = []
+        for target in targets[:25]:
+            if mode == "bounty":
+                description = f"{target.realm_display} · {target.faction_name} · 悬赏 {target.bounty_soul}"
+            else:
+                description = f"{target.realm_display} · {target.faction_name} · 气运 {target.luck} · 器魂 {target.soul}"
+            options.append(discord.SelectOption(label=target.display_name[:100], description=description[:100], value=str(target.character_id)))
+        placeholder = "选择要讨伐的悬赏目标" if mode == "bounty" else "选择要劫掠的目标"
+        super().__init__(placeholder=placeholder, options=options, row=1, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_user_id:
+            await interaction.response.send_message("这张面板并非为你而开。", ephemeral=True)
+            return
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        target_character_id = int(self.values[0])
+        if self.mode == "bounty":
+            embed, view, broadcasts = await build_bounty_hunt_message(bot, interaction.user.id, interaction.user.display_name, target_character_id)
+        else:
+            embed, view, broadcasts = await build_robbery_message(bot, interaction.user.id, interaction.user.display_name, target_character_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+        await _send_broadcasts(bot, broadcasts)
+
+
+class FactionView(OwnerLockedView):
+    def __init__(self, owner_user_id: int, *, snapshot, targets: list[FactionTarget]) -> None:
+        super().__init__(owner_user_id)
+        self.snapshot = snapshot
+        self.targets = targets
+        self._add_refresh_button()
+        if snapshot.faction_key == "neutral":
+            self._add_join_button("righteous", "加入正道", discord.ButtonStyle.success, row=0)
+            self._add_join_button("demonic", "堕入魔道", discord.ButtonStyle.danger, row=0)
+            return
+        if snapshot.faction_key == "righteous":
+            self._add_board_button("bounty", "悬赏榜", row=0)
+            self._add_board_button("righteous", "正道榜", row=0)
+            self._add_board_button("demonic", "魔道榜", row=0)
+            if targets:
+                self.add_item(FactionTargetSelect(owner_user_id, mode="bounty", targets=targets))
+            return
+        self._add_board_button("righteous", "正道榜", row=0)
+        self._add_board_button("demonic", "魔道榜", row=0)
+        self._add_board_button("bounty", "悬赏榜", row=0)
+        if targets:
+            self.add_item(FactionTargetSelect(owner_user_id, mode="robbery", targets=targets))
+
+    def _add_refresh_button(self) -> None:
+        button = discord.ui.Button(label="刷新", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_faction_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_join_button(self, faction_key: str, label: str, style: discord.ButtonStyle, *, row: int) -> None:
+        button = discord.ui.Button(label=label, row=row, style=style)
+
+        async def callback(interaction: discord.Interaction, target_faction: str = faction_key) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await join_faction_message(bot, interaction.user.id, interaction.user.display_name, target_faction)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_board_button(self, category: str, label: str, *, row: int) -> None:
+        button = discord.ui.Button(label=label, row=row, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction, category_name: str = category) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_leaderboard_message(bot, interaction.user.id, interaction.user.display_name, category=category_name)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+
 class LeaderboardView(OwnerLockedView):
     def __init__(
         self,
@@ -868,9 +1136,12 @@ class LeaderboardView(OwnerLockedView):
         self._add_category_button("tower", "通天塔", category == "tower", row=0)
         self._add_category_button("artifact", "法宝", category == "artifact", row=1)
         self._add_category_button("realm", "境界", category == "realm", row=1)
+        self._add_category_button("righteous", "正道", category == "righteous", row=1)
+        self._add_category_button("demonic", "魔道", category == "demonic", row=1)
+        self._add_category_button("bounty", "悬赏", category == "bounty", row=2)
         if category == "ladder":
             for target in challenge_targets[:5]:
-                self._add_challenge_button(target.rank, target.display_name)
+                self._add_challenge_button(target.rank, target.display_name, row=3)
 
     def _add_category_button(self, category: str, label: str, active: bool, *, row: int) -> None:
         style = discord.ButtonStyle.primary if active else discord.ButtonStyle.secondary
@@ -886,8 +1157,8 @@ class LeaderboardView(OwnerLockedView):
         button.callback = callback
         self.add_item(button)
 
-    def _add_challenge_button(self, rank: int, display_name: str) -> None:
-        button = discord.ui.Button(label=f"挑战#{rank} {display_name[:4]}", row=2, style=discord.ButtonStyle.danger)
+    def _add_challenge_button(self, rank: int, display_name: str, *, row: int) -> None:
+        button = discord.ui.Button(label=f"挑战#{rank} {display_name[:4]}", row=row, style=discord.ButtonStyle.danger)
 
         async def callback(interaction: discord.Interaction, target_rank: int = rank) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]

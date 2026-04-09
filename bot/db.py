@@ -27,7 +27,7 @@ def create_engine_and_session_factory(database_url: str) -> tuple[AsyncEngine, a
 
 async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
-        def _collect_missing_columns(sync_connection) -> tuple[bool, bool, bool, bool, bool, bool, bool, bool, bool, bool]:
+        def _collect_missing_columns(sync_connection) -> tuple[bool, ...]:
             inspector = inspect(sync_connection)
             table_names = inspector.get_table_names()
             character_columns = {column["name"] for column in inspector.get_columns("characters")} if "characters" in table_names else set()
@@ -41,6 +41,15 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                 "travel_atk_pct" not in character_columns,
                 "travel_def_pct" not in character_columns,
                 "travel_agi_pct" not in character_columns,
+                "faction" not in character_columns,
+                "virtue" not in character_columns,
+                "infamy" not in character_columns,
+                "luck" not in character_columns,
+                "bounty_soul" not in character_columns,
+                "last_bounty_growth_on" not in character_columns,
+                "last_robbery_at" not in character_columns,
+                "last_bounty_hunt_at" not in character_columns,
+                "last_bounty_defeated_on" not in character_columns,
                 "affix_slots_json" not in artifact_columns,
                 "affix_pending_json" not in artifact_columns,
             )
@@ -54,6 +63,15 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             needs_travel_atk_pct,
             needs_travel_def_pct,
             needs_travel_agi_pct,
+            needs_faction,
+            needs_virtue,
+            needs_infamy,
+            needs_luck,
+            needs_bounty_soul,
+            needs_last_bounty_growth_on,
+            needs_last_robbery_at,
+            needs_last_bounty_hunt_at,
+            needs_last_bounty_defeated_on,
             needs_affix_slots,
             needs_affix_pending,
         ) = await connection.run_sync(_collect_missing_columns)
@@ -74,6 +92,24 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN travel_def_pct INTEGER NOT NULL DEFAULT 0"))
         if needs_travel_agi_pct:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN travel_agi_pct INTEGER NOT NULL DEFAULT 0"))
+        if needs_faction:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN faction VARCHAR(16) NOT NULL DEFAULT 'neutral'"))
+        if needs_virtue:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN virtue BIGINT NOT NULL DEFAULT 0"))
+        if needs_infamy:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN infamy BIGINT NOT NULL DEFAULT 0"))
+        if needs_luck:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN luck BIGINT NOT NULL DEFAULT 0"))
+        if needs_bounty_soul:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN bounty_soul BIGINT NOT NULL DEFAULT 0"))
+        if needs_last_bounty_growth_on:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN last_bounty_growth_on DATE"))
+        if needs_last_robbery_at:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN last_robbery_at DATETIME"))
+        if needs_last_bounty_hunt_at:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN last_bounty_hunt_at DATETIME"))
+        if needs_last_bounty_defeated_on:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN last_bounty_defeated_on DATE"))
         if needs_affix_slots:
             await connection.execute(text("ALTER TABLE artifacts ADD COLUMN affix_slots_json TEXT NOT NULL DEFAULT '[]'"))
         if needs_affix_pending:

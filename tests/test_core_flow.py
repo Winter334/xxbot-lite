@@ -31,6 +31,8 @@ async def test_character_creation_assigns_fate_artifact_and_rank(session_factory
         assert character.artifact is not None
         assert character.fate_key
         assert character.combat_power > 0
+        assert character.faction == "neutral"
+        assert 1 <= character.luck <= 99
 
 
 @pytest.mark.asyncio
@@ -57,6 +59,7 @@ async def test_idle_early_realm_has_accelerated_progress(session_factory, servic
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 1004, "松岚")
         character = creation.character
+        character.fate_key = "jinshicangfeng"
         now = now_shanghai()
         services.character.start_retreat(character)
         character.last_idle_at = now - timedelta(minutes=60)
@@ -64,6 +67,24 @@ async def test_idle_early_realm_has_accelerated_progress(session_factory, servic
         await session.commit()
 
         assert settlement.gained_cultivation == 30
+        assert settlement.gained_luck == 0
+
+
+@pytest.mark.asyncio
+async def test_righteous_retreat_gains_luck_linearly(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1007, "清衡")
+        character = creation.character
+        success, _ = services.faction.join_faction(character, "righteous")
+        assert success is True
+        now = now_shanghai()
+        services.character.start_retreat(character)
+        character.last_idle_at = now - timedelta(minutes=90)
+        settlement = services.idle.settle_retreat(character, now=now)
+        await session.commit()
+
+        assert settlement.gained_luck == 45
+        assert character.luck >= 45
 
 
 @pytest.mark.asyncio
@@ -123,6 +144,7 @@ async def test_travel_permanent_stat_bonus_affects_total_stats(session_factory, 
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 1012, "留痕")
         character = creation.character
+        character.fate_key = "lingtaijingshou"
         stage = services.character.get_stage(character)
         character.travel_atk_pct = 10
         character.travel_def_pct = -10
@@ -177,6 +199,7 @@ async def test_panel_embed_shows_travel_marks(session_factory, services) -> None
 
         field_names = [field.name for field in embed.fields]
         assert "🧭 游历遗痕" in field_names
+        assert "☯ 阵营命数" in field_names
         travel_field = next(field for field in embed.fields if field.name == "🧭 游历遗痕")
         assert "+3%" in travel_field.value
         assert "-1%" in travel_field.value
@@ -246,6 +269,7 @@ async def test_title_bonus_applies_small_global_bonus(session_factory, services)
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 4001, "玄霄")
         character = creation.character
+        character.fate_key = "lingtaijingshou"
         stage = services.character.get_stage(character)
         base_atk, base_def, base_agi = stage.base_atk, stage.base_def, stage.base_agi
         character.title = "独断万古"
@@ -261,22 +285,79 @@ async def test_combat_fate_uses_split_bonus_per_stat(session_factory, services) 
         creation = await services.character.get_or_create_character(session, 3001, "玄陵")
         character = creation.character
 
-        character.fate_key = "longhubingqu"  # 稀有双属性，总档位 6%，应分摊为每项 3%
+        character.fate_key = "fengleibingzuo"
         stats = services.character.calculate_total_stats(character)
         stage = services.character.get_stage(character)
 
-        assert stats.atk == int(stage.base_atk * 1.03)
-        assert stats.defense == int(stage.base_def * 1.03)
-        assert stats.agility == stage.base_agi
+        assert stats.atk == int(stage.base_atk * 1.10)
+        assert stats.defense == stage.base_def
+        assert stats.agility == int(stage.base_agi * 1.10)
 
 
 @pytest.mark.asyncio
 async def test_fate_effect_summary_matches_split_bonus_display(session_factory, services) -> None:
-    fate = services.fate.get_fate("hunyuanwugou")
-    assert fate.effect_summary() == "杀伐 + 护体 + 身法 +4%"
+    fate = services.fate.get_fate("hunyuanbaopu")
+    assert fate.effect_summary() == "杀伐 +10%，护体 +10%，身法 +10%"
 
 
 @pytest.mark.asyncio
-async def test_fortune_fate_summary_uses_bonus_drop_wording(session_factory, services) -> None:
-    fate = services.fate.get_fate("ziweichuizhao")
-    assert fate.effect_summary() == "首通额外掉落率 +12%"
+async def test_soul_fate_summary_uses_general_gain_wording(session_factory, services) -> None:
+    fate = services.fate.get_fate("ziyuanyingming")
+    assert fate.effect_summary() == "器魂获取 +25%"
+
+
+@pytest.mark.asyncio
+async def test_rewrite_fate_costs_luck_and_changes_fate(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 5001, "命客")
+        character = creation.character
+        character.luck = 200
+        old_fate = character.fate_key
+
+        result = await services.character.rewrite_fate(session, character)
+        await session.commit()
+
+        assert result.success is True
+        assert character.luck == 100
+        assert character.fate_key != old_fate
+
+
+@pytest.mark.asyncio
+async def test_bounty_hunt_clears_bounty_and_grants_virtue(session_factory, services) -> None:
+    async with session_factory() as session:
+        hunter = (await services.character.get_or_create_character(session, 6001, "正修")).character
+        target = (await services.character.get_or_create_character(session, 6002, "魔修")).character
+        services.faction.join_faction(hunter, "righteous")
+        services.faction.join_faction(target, "demonic")
+        hunter.realm_key = "zhuji"
+        hunter.realm_index = 2
+        target.bounty_soul = 12
+
+        result = services.faction.challenge_bounty(hunter, target)
+        await session.commit()
+
+        assert result.success is True
+        assert hunter.virtue == 12
+        assert hunter.luck >= 10
+        assert target.bounty_soul == 0
+
+
+@pytest.mark.asyncio
+async def test_robbery_on_same_demonic_target_halves_rewards(session_factory, services) -> None:
+    async with session_factory() as session:
+        robber = (await services.character.get_or_create_character(session, 7001, "魔甲")).character
+        target = (await services.character.get_or_create_character(session, 7002, "魔乙")).character
+        services.faction.join_faction(robber, "demonic")
+        services.faction.join_faction(target, "demonic")
+        robber.realm_key = "zhuji"
+        robber.realm_index = 2
+        target.artifact.soul_shards = 20
+        target.luck = 120
+
+        result = services.faction.rob(robber, target)
+        await session.commit()
+
+        assert result.success is True
+        assert result.same_faction_halved is True
+        assert result.soul_delta == 1
+        assert result.luck_delta == 9

@@ -83,24 +83,8 @@ class LadderService:
 
         challenger_snapshot = self.character_service.build_snapshot(challenger)
         defender_snapshot = self.character_service.build_snapshot(defender)
-        challenger_fighter = self.combat_service.create_combatant(
-            name=challenger_snapshot.player_name,
-            atk=challenger_snapshot.total_atk,
-            defense=challenger_snapshot.total_def,
-            agility=challenger_snapshot.total_agi,
-            title=challenger_snapshot.title,
-            fate_name=challenger_snapshot.fate_name,
-            affixes=self.character_service.artifact_service.get_active_affixes(challenger.artifact),
-        )
-        defender_fighter = self.combat_service.create_combatant(
-            name=defender_snapshot.player_name,
-            atk=defender_snapshot.total_atk,
-            defense=defender_snapshot.total_def,
-            agility=defender_snapshot.total_agi,
-            title=defender_snapshot.title,
-            fate_name=defender_snapshot.fate_name,
-            affixes=self.character_service.artifact_service.get_active_affixes(defender.artifact),
-        )
+        challenger_fighter = self.character_service.build_combatant(challenger, title=challenger_snapshot.title)
+        defender_fighter = self.character_service.build_combatant(defender, title=defender_snapshot.title)
         battle = self.combat_service.run_battle(challenger_fighter, defender_fighter, scene_tags=("scene_ladder",))
 
         challenger.daily_pvp_attempts_used += 1

@@ -56,6 +56,30 @@ CATEGORY_STYLE = {
         "rest_title": "📜 境界序列",
         "footer": "境界与当前修为共同排序。",
     },
+    "righteous": {
+        "icon": "☀️",
+        "color": discord.Color.gold(),
+        "viewer_title": "🪪 你的善名",
+        "top_title": "👑 正道前列",
+        "rest_title": "📜 正道群英",
+        "footer": "善名愈盛，正道声望愈高。",
+    },
+    "demonic": {
+        "icon": "🌘",
+        "color": discord.Color.dark_red(),
+        "viewer_title": "🪪 你的恶名",
+        "top_title": "👑 魔道前列",
+        "rest_title": "📜 魔道群魔",
+        "footer": "恶名越重，头上赏格也越高。",
+    },
+    "bounty": {
+        "icon": "📜",
+        "color": discord.Color.orange(),
+        "viewer_title": "🪪 你的赏格",
+        "top_title": "👑 赏格最高",
+        "rest_title": "📜 悬赏名录",
+        "footer": "此榜只列当前赏格最高者。",
+    },
 }
 
 
@@ -101,6 +125,24 @@ def build_leaderboard_embed(result: LeaderboardResult, viewer: CharacterSnapshot
             viewer_lines.append(f"本命：**{viewer.artifact_name}** `+{viewer.artifact_level}`")
         elif result.category == "realm":
             viewer_lines.append(f"当前修为：`{format_big_number(viewer.cultivation)}`")
+        elif result.category == "righteous":
+            viewer_lines = [
+                f"阵营：`{viewer.faction_name}`",
+                f"善名：`{viewer.virtue}`",
+                f"气运：`{viewer.luck}`",
+            ]
+        elif result.category == "demonic":
+            viewer_lines = [
+                f"阵营：`{viewer.faction_name}`",
+                f"恶名：`{viewer.infamy}`",
+                f"悬赏：`{viewer.bounty_soul}`",
+            ]
+        elif result.category == "bounty":
+            viewer_lines = [
+                f"阵营：`{viewer.faction_name}`",
+                f"当前赏格：`{viewer.bounty_soul}`",
+                f"恶名：`{viewer.infamy}`",
+            ]
         embed.add_field(name=style["viewer_title"], value="\n".join(viewer_lines), inline=False)
 
     top_entries = result.entries[:3]

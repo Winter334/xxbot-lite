@@ -14,6 +14,7 @@ from bot.services.broadcast_service import BroadcastService
 from bot.services.character_service import CharacterService
 from bot.services.combat_service import CombatService
 from bot.services.fate_service import FateService
+from bot.services.faction_service import FactionService
 from bot.services.idle_service import IdleService
 from bot.services.ladder_service import LadderService
 from bot.services.ranking_service import RankingService
@@ -34,11 +35,12 @@ class XianBot(commands.Bot):
         self.character_service = CharacterService(self.fate_service, self.artifact_service)
         self.idle_service = IdleService(self.fate_service)
         self.combat_service = CombatService(rng)
+        self.faction_service = FactionService(self.character_service, self.combat_service)
         self.tower_service = TowerService(self.character_service, self.combat_service, self.fate_service, rng)
         self.breakthrough_service = BreakthroughService(self.character_service)
         self.ladder_service = LadderService(self.character_service, self.combat_service)
-        self.ranking_service = RankingService(self.character_service, self.artifact_service)
-        self.travel_service = TravelService(rng)
+        self.ranking_service = RankingService(self.character_service, self.artifact_service, self.faction_service)
+        self.travel_service = TravelService(self.fate_service, rng)
         self.broadcast_service = BroadcastService(settings)
 
     async def setup_hook(self) -> None:

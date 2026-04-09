@@ -6,6 +6,7 @@ import random
 
 from bot.data.realms import get_stage
 from bot.models.character import Character
+from bot.services.fate_service import FateService
 from bot.utils.time_utils import ensure_shanghai, now_shanghai
 
 
@@ -63,7 +64,8 @@ class TravelService:
     event_interval_minutes = 30
     max_events_per_trip = 10
 
-    def __init__(self, rng: random.Random | None = None) -> None:
+    def __init__(self, fate_service: FateService, rng: random.Random | None = None) -> None:
+        self.fate_service = fate_service
         self.rng = rng or random.Random()
         self._events = self._build_event_pool()
 
@@ -180,6 +182,8 @@ class TravelService:
         event = self.rng.choices(self._events, weights=[item.weight for item in self._events], k=1)[0]
         soul_delta = self._roll_range(event.soul_min, event.soul_max)
         cultivation_delta = self._roll_cultivation(character, event.cultivation_pct_min, event.cultivation_pct_max)
+        if soul_delta > 0:
+            soul_delta = self.fate_service.apply_system_soul_modifier(character.fate_key, soul_delta)
         atk_pct_delta = self._roll_range(event.atk_pct_min, event.atk_pct_max)
         def_pct_delta = self._roll_range(event.def_pct_min, event.def_pct_max)
         agi_pct_delta = self._roll_range(event.agi_pct_min, event.agi_pct_max)

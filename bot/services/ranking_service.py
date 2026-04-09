@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.models.character import Character
 from bot.services.artifact_service import ArtifactService
 from bot.services.character_service import CharacterService
+from bot.services.faction_service import FactionService
 
 
 @dataclass(slots=True)
@@ -26,9 +27,10 @@ class LeaderboardResult:
 
 
 class RankingService:
-    def __init__(self, character_service: CharacterService, artifact_service: ArtifactService) -> None:
+    def __init__(self, character_service: CharacterService, artifact_service: ArtifactService, faction_service: FactionService) -> None:
         self.character_service = character_service
         self.artifact_service = artifact_service
+        self.faction_service = faction_service
 
     async def build_leaderboard(
         self,
@@ -38,6 +40,7 @@ class RankingService:
         limit: int = 10,
     ) -> LeaderboardResult:
         characters = await self.character_service.list_characters(session)
+        self.faction_service.sync_many(characters)
         if category == "power":
             ordered = sorted(characters, key=lambda char: (-self.character_service.calculate_total_stats(char).combat_power, char.id))
             return LeaderboardResult(
@@ -86,6 +89,45 @@ class RankingService:
                 ],
             )
 
+        if category == "righteous":
+            ordered = [char for char in characters if char.faction == "righteous"]
+            ordered.sort(key=lambda char: (-(char.virtue or 0), char.id))
+            return LeaderboardResult(
+                category,
+                "正道榜",
+                "善名高者，为众修所仰。",
+                [
+                    LeaderboardEntry(index, char.player.display_name, f"善名 {char.virtue}", self.character_service.get_stage(char).display_name)
+                    for index, char in enumerate(ordered[:limit], start=1)
+                ],
+            )
+
+        if category == "demonic":
+            ordered = [char for char in characters if char.faction == "demonic"]
+            ordered.sort(key=lambda char: (-(char.infamy or 0), char.id))
+            return LeaderboardResult(
+                category,
+                "魔道榜",
+                "恶名深者，头上赏格也更重。",
+                [
+                    LeaderboardEntry(index, char.player.display_name, f"恶名 {char.infamy}", f"悬赏 {char.bounty_soul}")
+                    for index, char in enumerate(ordered[:limit], start=1)
+                ],
+            )
+
+        if category == "bounty":
+            ordered = [char for char in characters if char.faction == "demonic" and (char.bounty_soul or 0) > 0]
+            ordered.sort(key=lambda char: (-(char.bounty_soul or 0), -(char.infamy or 0), char.id))
+            return LeaderboardResult(
+                category,
+                "悬赏榜",
+                "只列当下赏格最高的十名魔修。",
+                [
+                    LeaderboardEntry(index, char.player.display_name, f"悬赏 {char.bounty_soul}", f"恶名 {char.infamy}")
+                    for index, char in enumerate(ordered[:limit], start=1)
+                ],
+            )
+
         if category == "realm_power" and viewer is not None:
             ordered = [char for char in characters if char.realm_key == viewer.realm_key]
             ordered.sort(key=lambda char: (-self.character_service.calculate_total_stats(char).combat_power, char.id))
@@ -111,8 +153,9 @@ class RankingService:
             ],
         )
 
-    async def get_titles(self, session: AsyncSession, character: Character) -> tuple[str, tuple[str, ...]]:
+    async def get_titles(self, session: AsyncSession, character: Character) -> tuple[str, tuple[str, ...], str]:
         characters = await self.character_service.list_characters(session)
+        self.faction_service.sync_many(characters)
         title = "未立尊号"
         if character.current_ladder_rank == 1:
             title = "独断万古"
@@ -158,8 +201,14 @@ class RankingService:
         if character.reincarnation_count > 0:
             honor_tags.append(f"轮回 {character.reincarnation_count} 次")
 
+        faction_title = ""
+        if character.faction == "righteous":
+            faction_title = self.faction_service.righteous_title(characters, character)
+        elif character.faction == "demonic":
+            faction_title = self.faction_service.demonic_title(characters, character)
+
         deduped: list[str] = []
         for tag in honor_tags:
             if tag != title and tag not in deduped:
                 deduped.append(tag)
-        return title, tuple(deduped[:5])
+        return title, tuple(deduped[:5]), faction_title
