@@ -70,15 +70,7 @@ class TowerService:
         for floor in range(highest_floor_before + 1, highest_floor_before + self.per_run_max_floors + 1):
             enemy_name, enemy, is_boss = self._generate_enemy(floor)
             snapshot = self.character_service.build_snapshot(character)
-            player = self.combat_service.create_combatant(
-                name=snapshot.player_name,
-                atk=snapshot.total_atk,
-                defense=snapshot.total_def,
-                agility=snapshot.total_agi,
-                title=snapshot.title,
-                fate_name=snapshot.fate_name,
-                affixes=self.character_service.artifact_service.get_active_affixes(character.artifact),
-            )
+            player = self.character_service.build_combatant(character, title=snapshot.title)
             scene_tags = ("scene_tower", "scene_boss") if is_boss else ("scene_tower",)
             battle = self.combat_service.run_battle(player, enemy, scene_tags=scene_tags)
             reward_soul = 0
@@ -88,6 +80,10 @@ class TowerService:
                 character.highest_floor = floor
                 character.historical_highest_floor = max(character.historical_highest_floor, floor)
                 reward_soul = 3 if is_boss else 1
+                if self._roll_bonus_drop():
+                    reward_soul += 1
+                    bonus_drop_triggered = True
+                reward_soul = self.fate_service.apply_system_soul_modifier(character.fate_key, reward_soul)
                 character.artifact.soul_shards += reward_soul
                 total_soul += reward_soul
                 current_stage = self.character_service.get_stage(character)
@@ -99,10 +95,6 @@ class TowerService:
                 if reward_cultivation > 0:
                     character.cultivation += reward_cultivation
                     total_cultivation += reward_cultivation
-                if self._roll_bonus_drop(character.fate_key):
-                    character.artifact.soul_shards += 1
-                    total_soul += 1
-                    bonus_drop_triggered = True
             floors.append(TowerFloorResult(floor, enemy_name, battle.challenger_won, is_boss, reward_soul, reward_cultivation, bonus_drop_triggered, battle))
             if not battle.challenger_won or is_boss:
                 break
@@ -138,6 +130,5 @@ class TowerService:
         )
         return name, enemy, is_boss
 
-    def _roll_bonus_drop(self, fate_key: str) -> bool:
-        bonus_rate = self.fate_service.bonus_drop_rate(fate_key)
-        return self.rng.random() < self.base_bonus_drop_rate + bonus_rate
+    def _roll_bonus_drop(self) -> bool:
+        return self.rng.random() < self.base_bonus_drop_rate

@@ -11,6 +11,7 @@ from bot.models.artifact import Artifact
 from bot.models.character import Character
 from bot.models.ladder_record import LadderRecord
 from bot.models.player import Player
+from bot.services.combat_service import CombatantSnapshot
 from bot.services.artifact_service import ArtifactService
 from bot.services.fate_service import FateService
 from bot.services.idle_service import IdleSettlement
@@ -40,6 +41,7 @@ class TotalStats:
 class CharacterSnapshot:
     character_id: int
     player_name: str
+    realm_index: int
     realm_display: str
     cultivation: int
     cultivation_max: int
@@ -62,6 +64,14 @@ class CharacterSnapshot:
     artifact_agi_bonus: int
     soul_shards: int
     title: str
+    faction_key: str
+    faction_name: str
+    faction_title: str
+    virtue: int
+    infamy: int
+    luck: int
+    rewrite_chances: int
+    bounty_soul: int
     honor_tags: tuple[str, ...]
     reincarnation_count: int
     last_highlight_text: str
@@ -97,6 +107,15 @@ class ReincarnationResult:
 
 
 @dataclass(slots=True)
+class FateRewriteResult:
+    success: bool
+    message: str
+    character: Character
+    broadcast_needed: bool
+    broadcast_text: str | None
+
+
+@dataclass(slots=True)
 class RetreatActionResult:
     success: bool
     message: str
@@ -107,6 +126,14 @@ class CharacterService:
     def __init__(self, fate_service: FateService, artifact_service: ArtifactService) -> None:
         self.fate_service = fate_service
         self.artifact_service = artifact_service
+
+    def _ensure_character_compatibility(self, character: Character) -> None:
+        if not self.fate_service.has_fate(character.fate_key):
+            character.fate_key = self.fate_service.roll_fate().key
+        if (character.luck or 0) <= 0:
+            character.luck = self.fate_service.random_initial_luck()
+        if not character.faction:
+            character.faction = "neutral"
 
     async def get_character_by_discord_id(self, session: AsyncSession, discord_user_id: int | str) -> Character | None:
         statement = (
@@ -119,7 +146,10 @@ class CharacterService:
                 selectinload(Character.ladder_record),
             )
         )
-        return await session.scalar(statement)
+        character = await session.scalar(statement)
+        if character is not None:
+            self._ensure_character_compatibility(character)
+        return character
 
     async def get_character_by_rank(self, session: AsyncSession, rank: int) -> Character | None:
         statement = (
@@ -131,7 +161,10 @@ class CharacterService:
                 selectinload(Character.ladder_record),
             )
         )
-        return await session.scalar(statement)
+        character = await session.scalar(statement)
+        if character is not None:
+            self._ensure_character_compatibility(character)
+        return character
 
     async def list_characters(self, session: AsyncSession) -> list[Character]:
         statement = select(Character).options(
@@ -140,7 +173,10 @@ class CharacterService:
             selectinload(Character.ladder_record),
         )
         result = await session.scalars(statement)
-        return list(result.all())
+        characters = list(result.all())
+        for character in characters:
+            self._ensure_character_compatibility(character)
+        return characters
 
     async def get_or_create_character(
         self,
@@ -180,6 +216,11 @@ class CharacterService:
             travel_agi_pct=0,
             last_qi_recovered_at=now,
             fate_key=fate.key,
+            faction="neutral",
+            virtue=0,
+            infamy=0,
+            luck=self.fate_service.random_initial_luck(),
+            bounty_soul=0,
             current_ladder_rank=initial_rank,
             best_ladder_rank=initial_rank,
             last_highlight_text=f"方入仙途，得命格「{fate.name}」。",
@@ -228,9 +269,9 @@ class CharacterService:
         atk = int(atk * (1 + (character.travel_atk_pct or 0) / 100))
         defense = int(defense * (1 + (character.travel_def_pct or 0) / 100))
         agility = int(agility * (1 + (character.travel_agi_pct or 0) / 100))
-        atk = int(atk * self.fate_service.combat_multiplier(character.fate_key, "atk"))
-        defense = int(defense * self.fate_service.combat_multiplier(character.fate_key, "def"))
-        agility = int(agility * self.fate_service.combat_multiplier(character.fate_key, "agi"))
+        atk = int(atk * self.fate_service.stat_multiplier(character.fate_key, "atk"))
+        defense = int(defense * self.fate_service.stat_multiplier(character.fate_key, "def"))
+        agility = int(agility * self.fate_service.stat_multiplier(character.fate_key, "agi"))
         title_multiplier = self._title_multiplier(character)
         if title_multiplier > 0:
             atk = int(atk * (1 + title_multiplier))
@@ -249,10 +290,12 @@ class CharacterService:
         character: Character,
         *,
         title: str | None = None,
+        faction_title: str = "",
         honor_tags: tuple[str, ...] = (),
         idle_minutes: int = 0,
         travel_minutes: int = 0,
     ) -> CharacterSnapshot:
+        self._ensure_character_compatibility(character)
         stage = self.get_stage(character)
         artifact = character.artifact
         if artifact is not None:
@@ -262,6 +305,7 @@ class CharacterService:
         return CharacterSnapshot(
             character_id=character.id,
             player_name=character.player.display_name,
+            realm_index=stage.realm_index,
             realm_display=stage.display_name,
             cultivation=character.cultivation,
             cultivation_max=stage.cultivation_max,
@@ -284,6 +328,14 @@ class CharacterService:
             artifact_agi_bonus=(artifact.agi_bonus or 0) if artifact else 0,
             soul_shards=(artifact.soul_shards or 0) if artifact else 0,
             title=title or character.title,
+            faction_key=character.faction,
+            faction_name={"neutral": "中立", "righteous": "正道", "demonic": "魔道"}.get(character.faction, "中立"),
+            faction_title=faction_title,
+            virtue=character.virtue or 0,
+            infamy=character.infamy or 0,
+            luck=character.luck or 0,
+            rewrite_chances=max(0, (character.luck or 0) // 100),
+            bounty_soul=character.bounty_soul or 0,
             honor_tags=honor_tags,
             reincarnation_count=character.reincarnation_count,
             last_highlight_text=character.last_highlight_text,
@@ -299,6 +351,25 @@ class CharacterService:
             travel_atk_pct=character.travel_atk_pct,
             travel_def_pct=character.travel_def_pct,
             travel_agi_pct=character.travel_agi_pct,
+        )
+
+    def build_combatant(self, character: Character, *, title: str | None = None) -> CombatantSnapshot:
+        snapshot = self.build_snapshot(character, title=title)
+        fate = self.fate_service.get_fate(character.fate_key)
+        return CombatantSnapshot(
+            name=snapshot.player_name,
+            atk=snapshot.total_atk,
+            defense=snapshot.total_def,
+            agility=snapshot.total_agi,
+            max_hp=snapshot.total_def * 10,
+            title=title or character.title,
+            fate_name=snapshot.fate_name,
+            affixes=tuple(self.artifact_service.get_active_affixes(character.artifact)) if character.artifact is not None else (),
+            realm_index=snapshot.realm_index,
+            damage_dealt_basis_points=fate.damage_dealt_basis_points,
+            damage_taken_basis_points=fate.damage_taken_basis_points,
+            damage_reduction_basis_points=fate.damage_reduction_basis_points,
+            versus_higher_realm_damage_basis_points=fate.versus_higher_realm_damage_basis_points,
         )
 
     def can_reincarnate_today(self, character: Character) -> bool:
@@ -319,12 +390,14 @@ class CharacterService:
         if not character.is_retreating:
             return RetreatActionResult(False, "你当前并未闭关，无需强行出关。", settlement)
         character.is_retreating = False
-        if settlement.gained_cultivation > 0 or settlement.gained_soul > 0:
+        if settlement.gained_cultivation > 0 or settlement.gained_soul > 0 or settlement.gained_luck > 0:
             pieces: list[str] = []
             if settlement.gained_cultivation > 0:
                 pieces.append(f"修为增长 {settlement.gained_cultivation}")
             if settlement.gained_soul > 0:
                 pieces.append(f"器魂凝成 {settlement.gained_soul}")
+            if settlement.gained_luck > 0:
+                pieces.append(f"气运增长 {settlement.gained_luck}")
             character.last_highlight_text = f"方才出关，{'，'.join(pieces)}。"
         else:
             character.last_highlight_text = "方才出关，却觉灵气未满一周天。"
@@ -355,6 +428,15 @@ class CharacterService:
         character.travel_agi_pct = 0
         character.last_qi_recovered_at = now
         character.fate_key = new_fate.key
+        character.faction = "neutral"
+        character.virtue = 0
+        character.infamy = 0
+        character.luck = self.fate_service.random_initial_luck()
+        character.bounty_soul = 0
+        character.last_bounty_growth_on = None
+        character.last_robbery_at = None
+        character.last_bounty_hunt_at = None
+        character.last_bounty_defeated_on = None
         character.daily_pvp_attempts_used = 0
         character.last_pvp_reset_on = today
         character.reincarnation_count += 1
@@ -373,3 +455,19 @@ class CharacterService:
         if new_fate.broadcast_on_obtain:
             broadcast_text = f"【轮回惊世】{character.player.display_name} 轮回之后，再得传说命格「{new_fate.name}」。"
         return ReincarnationResult(True, "旧躯尽褪，命数已换。", character, new_fate.broadcast_on_obtain, broadcast_text)
+
+    async def rewrite_fate(self, session: AsyncSession, character: Character) -> FateRewriteResult:
+        self._ensure_character_compatibility(character)
+        if character.luck < 100:
+            return FateRewriteResult(False, "气运未满百数，还不足以逆转命盘。", character, False, None)
+
+        new_fate = self.fate_service.roll_fate(exclude_key=character.fate_key)
+        character.luck -= 100
+        character.fate_key = new_fate.key
+        character.last_highlight_text = f"方才逆天改命，命数重定为「{new_fate.name}」。"
+        self.refresh_combat_power(character)
+
+        broadcast_text = None
+        if new_fate.broadcast_on_obtain:
+            broadcast_text = f"【命数翻覆】{character.player.display_name} 逆天改命，再得传说命格「{new_fate.name}」。"
+        return FateRewriteResult(True, "你以百点气运强改命盘，旧命已去，新命已定。", character, new_fate.broadcast_on_obtain, broadcast_text)

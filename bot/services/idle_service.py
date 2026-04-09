@@ -17,6 +17,7 @@ class IdleSettlement:
     settled_minutes: int
     recovered_qi: int
     gained_soul: int
+    gained_luck: int
 
 
 class IdleService:
@@ -46,10 +47,11 @@ class IdleService:
         current_time = ensure_shanghai(now or now_shanghai())
         recovered_qi = self._recover_qi(character, current_time)
         if not character.is_retreating:
-            return IdleSettlement(0, 0, 0, recovered_qi, 0)
+            return IdleSettlement(0, 0, 0, recovered_qi, 0, 0)
         gained_cultivation, cycles, minutes = self._settle_idle(character, current_time)
         gained_soul = self._roll_idle_soul(character, cycles)
-        return IdleSettlement(gained_cultivation, cycles, minutes, recovered_qi, gained_soul)
+        gained_luck = self._settle_luck(character, minutes)
+        return IdleSettlement(gained_cultivation, cycles, minutes, recovered_qi, gained_soul, gained_luck)
 
     def current_idle_minutes(self, character: Character, *, now=None) -> int:
         if not character.is_retreating:
@@ -89,7 +91,7 @@ class IdleService:
         floor_stage = get_stage_for_floor(max(character.highest_floor, 1))
         current_stage = get_stage(character.realm_key, character.stage_key)
         per_cycle = max(1, int(floor_stage.cultivation_max * 0.01))
-        multiplier = self.fate_service.idle_multiplier(character.fate_key) * self._idle_speed_multiplier(current_stage)
+        multiplier = self.fate_service.idle_cultivation_multiplier(character.fate_key) * self._idle_speed_multiplier(current_stage)
         gained = int(per_cycle * cycles * multiplier)
         actual = min(gained, max(0, current_stage.cultivation_max - character.cultivation))
         character.cultivation += actual
@@ -103,6 +105,15 @@ class IdleService:
         for _ in range(cycles):
             if self.rng.random() < self.soul_drop_chance_per_cycle:
                 gained += 1
+        gained = self.fate_service.apply_system_soul_modifier(character.fate_key, gained)
         if gained > 0:
             character.artifact.soul_shards += gained
+        return gained
+
+    def _settle_luck(self, character: Character, settled_minutes: int) -> int:
+        if settled_minutes <= 0 or character.faction != "righteous":
+            return 0
+        gained = settled_minutes * 30 // 60
+        if gained > 0:
+            character.luck += gained
         return gained

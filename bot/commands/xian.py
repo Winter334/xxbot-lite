@@ -26,6 +26,9 @@ LEADERBOARD_CHOICES = [
     app_commands.Choice(name="通天塔榜", value="tower"),
     app_commands.Choice(name="本命法宝榜", value="artifact"),
     app_commands.Choice(name="境界榜", value="realm"),
+    app_commands.Choice(name="正道榜", value="righteous"),
+    app_commands.Choice(name="魔道榜", value="demonic"),
+    app_commands.Choice(name="悬赏榜", value="bounty"),
 ]
 
 PUBLIC_PANEL_DELETE_AFTER = 10 * 60

@@ -9,6 +9,7 @@ dependencies = [
   "aiosqlite>=0.21.0",
   "discord.py>=2.5.2",
   "sqlalchemy>=2.0.40",
+  "tzdata>=2025.2",
 ]
 
 [tool.setuptools]

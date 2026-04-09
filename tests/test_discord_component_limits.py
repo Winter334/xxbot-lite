@@ -8,6 +8,8 @@ from bot.views.panel import (
     ArtifactOverviewView,
     ArtifactRefineView,
     ArtifactReinforceView,
+    FactionView,
+    FateRewriteConfirmView,
     LeaderboardView,
     PanelView,
     ReincarnationConfirmView,
@@ -37,6 +39,7 @@ async def test_views_respect_discord_component_limits() -> None:
     for view in (
         PanelView(1),
         ReincarnationConfirmView(1),
+        FateRewriteConfirmView(1, can_confirm=True),
         TowerRunView(1, can_retry=True),
         ArtifactOverviewView(1),
         ArtifactReinforceView(1),
@@ -48,6 +51,15 @@ async def test_views_respect_discord_component_limits() -> None:
                 is_traveling=False,
                 travel_selected_duration_minutes=120,
             ),
+        ),
+        FactionView(
+            1,
+            snapshot=SimpleNamespace(
+                faction_key="neutral",
+                faction_name="中立",
+                faction_title="",
+            ),
+            targets=[],
         ),
         LeaderboardView(1, "power", []),
         LeaderboardView(1, "ladder", challenge_targets),

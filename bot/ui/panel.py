@@ -33,6 +33,8 @@ def build_panel_embed(
             f"👑 **{snapshot.title}**\n"
             f"⚔️ 总战力：**{format_big_number(snapshot.combat_power)}**\n"
             f"🔭 命格：`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}\n"
+            f"☯ 阵营：**{snapshot.faction_name}**"
+            f"{f' · {snapshot.faction_title}' if snapshot.faction_title else ''}\n"
             f"🎖 荣誉：{honor_line}"
         ),
         color=RARITY_COLORS[snapshot.fate_rarity],
@@ -65,6 +67,15 @@ def build_panel_embed(
         ),
         inline=False,
     )
+    faction_lines = [f"气运：`{snapshot.luck}` · 可改命 `×{snapshot.rewrite_chances}`"]
+    if snapshot.faction_key == "righteous":
+        faction_lines.append(f"善名：`{snapshot.virtue}`")
+    elif snapshot.faction_key == "demonic":
+        faction_lines.append(f"恶名：`{snapshot.infamy}`")
+        faction_lines.append(f"悬赏：`{snapshot.bounty_soul}`")
+    else:
+        faction_lines.append("善名：`0` · 恶名：`0`")
+    embed.add_field(name="☯ 阵营命数", value="\n".join(faction_lines), inline=True)
     embed.add_field(
         name="🧭 游历遗痕",
         value=(
@@ -236,6 +247,7 @@ def build_retreat_settlement_embed(snapshot: CharacterSnapshot, settlement: Idle
             f"时长：`{format_duration_minutes(settlement.settled_minutes)}`\n"
             f"修为：`+{format_big_number(settlement.gained_cultivation)}`\n"
             f"器魂：`+{settlement.gained_soul}`\n"
+            f"气运：`+{settlement.gained_luck}`\n"
             f"气机恢复：`+{settlement.recovered_qi}`"
         ),
         inline=False,
@@ -382,6 +394,110 @@ def build_reincarnation_embed(snapshot: CharacterSnapshot, message: str) -> disc
             f"塔层：`{snapshot.highest_floor}`\n"
             f"论道：`#{snapshot.current_ladder_rank}`\n"
             f"轮回次数：`{snapshot.reincarnation_count}`"
+        ),
+        inline=False,
+    )
+    return embed
+
+
+def build_fate_rewrite_confirm_embed(snapshot: CharacterSnapshot) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 逆天改命",
+        description="改命不会清空主线进度，但会直接消耗 100 点气运重抽当前命格。",
+        color=discord.Color.dark_teal(),
+    )
+    embed.add_field(
+        name="当前命数",
+        value=f"`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}",
+        inline=False,
+    )
+    embed.add_field(
+        name="当前气运",
+        value=(
+            f"气运：`{snapshot.luck}`\n"
+            f"本次消耗：`100`\n"
+            f"可改命次数：`{snapshot.rewrite_chances}`"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="新命格不会与当前命格重复，但仍可能与历史命格重复。")
+    return embed
+
+
+def build_fate_rewrite_embed(snapshot: CharacterSnapshot, message: str) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 命盘重铸",
+        description=message,
+        color=RARITY_COLORS[snapshot.fate_rarity],
+    )
+    embed.add_field(
+        name="新命数",
+        value=f"`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}",
+        inline=False,
+    )
+    embed.add_field(
+        name="气运余数",
+        value=f"当前气运：`{snapshot.luck}` · 可继续改命 `×{snapshot.rewrite_chances}`",
+        inline=False,
+    )
+    return embed
+
+
+def build_faction_embed(
+    snapshot: CharacterSnapshot,
+    *,
+    target_count: int = 0,
+    robbery_status_text: str | None = None,
+    bounty_status_text: str | None = None,
+) -> discord.Embed:
+    if snapshot.faction_key == "righteous":
+        description = "你已入正道，可查看悬赏榜并承赏讨伐魔修。"
+    elif snapshot.faction_key == "demonic":
+        description = "你已堕魔道，可择人劫掠，但也会不断推高自身赏格。"
+    else:
+        description = "你仍处中立，可在此选择投入正道或堕入魔道。"
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 阵营",
+        description=description,
+        color=discord.Color.dark_gold() if snapshot.faction_key == "righteous" else (discord.Color.dark_red() if snapshot.faction_key == "demonic" else discord.Color.blurple()),
+    )
+    status_lines = [f"当前阵营：**{snapshot.faction_name}**"]
+    if snapshot.faction_title:
+        status_lines.append(f"阵营称号：**{snapshot.faction_title}**")
+    status_lines.append(f"气运：`{snapshot.luck}` · 可改命 `×{snapshot.rewrite_chances}`")
+    if snapshot.faction_key == "righteous":
+        status_lines.append(f"善名：`{snapshot.virtue}`")
+        status_lines.append(f"讨伐状态：`{bounty_status_text or '可出手'}`")
+    elif snapshot.faction_key == "demonic":
+        status_lines.append(f"恶名：`{snapshot.infamy}`")
+        status_lines.append(f"当前悬赏：`{snapshot.bounty_soul}`")
+        status_lines.append(f"劫掠状态：`{robbery_status_text or '可出手'}`")
+    embed.add_field(name="阵营状态", value="\n".join(status_lines), inline=False)
+    if snapshot.faction_key == "righteous":
+        embed.add_field(name="可见悬赏目标", value=f"当前可选目标：`{target_count}`", inline=False)
+    elif snapshot.faction_key == "demonic":
+        embed.add_field(name="可劫掠目标", value=f"当前可选目标：`{target_count}`", inline=False)
+    else:
+        embed.add_field(name="当前说明", value="阵营一旦选择，此版本内不可更改。", inline=False)
+    return embed
+
+
+def build_faction_action_embed(snapshot: CharacterSnapshot, title: str, message: str, lines: list[str], *, success: bool) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · {title}",
+        description=message,
+        color=discord.Color.green() if success else discord.Color.orange(),
+    )
+    embed.add_field(name="当前阵营", value=f"**{snapshot.faction_name}**{f' · {snapshot.faction_title}' if snapshot.faction_title else ''}", inline=False)
+    if lines:
+        embed.add_field(name="本次结果", value="\n".join(lines), inline=False)
+    embed.add_field(
+        name="命数与赏格",
+        value=(
+            f"气运：`{snapshot.luck}`\n"
+            f"善名：`{snapshot.virtue}`\n"
+            f"恶名：`{snapshot.infamy}`\n"
+            f"悬赏：`{snapshot.bounty_soul}`"
         ),
         inline=False,
     )
