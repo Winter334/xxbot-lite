@@ -63,11 +63,14 @@ class TravelSettlement:
 class TravelService:
     event_interval_minutes = 30
     max_events_per_trip = 10
+    stat_event_chance = 0.08
 
     def __init__(self, fate_service: FateService, rng: random.Random | None = None) -> None:
         self.fate_service = fate_service
         self.rng = rng or random.Random()
         self._events = self._build_event_pool()
+        self._stat_events = tuple(event for event in self._events if self._is_stat_event(event))
+        self._non_stat_events = tuple(event for event in self._events if not self._is_stat_event(event))
 
     def current_travel_minutes(self, character: Character, *, now=None) -> int:
         if not character.is_traveling:
@@ -179,7 +182,7 @@ class TravelService:
         )
 
     def _resolve_event(self, character: Character) -> TravelEventLog:
-        event = self.rng.choices(self._events, weights=[item.weight for item in self._events], k=1)[0]
+        event = self._roll_event()
         soul_delta = self._roll_range(event.soul_min, event.soul_max)
         cultivation_delta = self._roll_cultivation(character, event.cultivation_pct_min, event.cultivation_pct_max)
         if soul_delta > 0:
@@ -205,6 +208,26 @@ class TravelService:
             atk_pct_delta=atk_pct_delta,
             def_pct_delta=def_pct_delta,
             agi_pct_delta=agi_pct_delta,
+        )
+
+    def _roll_event(self) -> TravelEventDefinition:
+        # 游历遗痕仍然保留，但涉及三维永久变化的奇遇改为低概率触发。
+        pool = self._stat_events if self.rng.random() < self.stat_event_chance else self._non_stat_events
+        if not pool:
+            pool = self._events
+        return self.rng.choices(pool, weights=[item.weight for item in pool], k=1)[0]
+
+    @staticmethod
+    def _is_stat_event(event: TravelEventDefinition) -> bool:
+        return any(
+            (
+                event.atk_pct_min,
+                event.atk_pct_max,
+                event.def_pct_min,
+                event.def_pct_max,
+                event.agi_pct_min,
+                event.agi_pct_max,
+            )
         )
 
     def _roll_cultivation(self, character: Character, pct_min: int, pct_max: int) -> int:

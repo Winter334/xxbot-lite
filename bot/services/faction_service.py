@@ -216,7 +216,7 @@ class FactionService:
         target.last_highlight_text = f"方才被正道修士 {hunter.player.display_name} 讨伐。"
         return FactionActionResult(
             True,
-            "讨伐得手，赏格已尽数入手。",
+            "讨伐得手，对方悬赏已全部兑现。",
             battle,
             soul_delta=reward_soul,
             luck_delta=10,

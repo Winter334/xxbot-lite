@@ -114,7 +114,7 @@ class LadderService:
             if defender.ladder_record is not None:
                 defender.ladder_record.wins += 1
                 defender.ladder_record.streak += 1
-            message = "鏖战十合未能夺位，此番论道判负。"
+            message = f"战至 {self.combat_service.max_rounds} 回合上限仍未夺位，此番论道判负。"
 
         return LadderChallengeResult(
             True,
