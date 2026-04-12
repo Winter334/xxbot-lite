@@ -70,15 +70,15 @@ CATEGORY_STYLE = {
         "viewer_title": "🪪 你的恶名",
         "top_title": "👑 魔道前列",
         "rest_title": "📜 魔道群魔",
-        "footer": "恶名越重，头上赏格也越高。",
+        "footer": "恶名越重，头上悬赏也越高。",
     },
     "bounty": {
         "icon": "📜",
         "color": discord.Color.orange(),
-        "viewer_title": "🪪 你的赏格",
-        "top_title": "👑 赏格最高",
+        "viewer_title": "🪪 你的悬赏",
+        "top_title": "👑 悬赏最高",
         "rest_title": "📜 悬赏名录",
-        "footer": "此榜只列当前赏格最高者。",
+        "footer": "此榜只列当前悬赏最高者。",
     },
 }
 
@@ -140,7 +140,7 @@ def build_leaderboard_embed(result: LeaderboardResult, viewer: CharacterSnapshot
         elif result.category == "bounty":
             viewer_lines = [
                 f"阵营：`{viewer.faction_name}`",
-                f"当前赏格：`{viewer.bounty_soul}`",
+                f"当前悬赏：`{viewer.bounty_soul}`",
                 f"恶名：`{viewer.infamy}`",
             ]
         embed.add_field(name=style["viewer_title"], value="\n".join(viewer_lines), inline=False)

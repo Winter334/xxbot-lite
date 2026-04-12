@@ -454,7 +454,7 @@ class CharacterService:
         broadcast_text = None
         if new_fate.broadcast_on_obtain:
             broadcast_text = f"【轮回惊世】{character.player.display_name} 轮回之后，再得传说命格「{new_fate.name}」。"
-        return ReincarnationResult(True, "旧躯尽褪，命数已换。", character, new_fate.broadcast_on_obtain, broadcast_text)
+        return ReincarnationResult(True, "旧躯尽褪，命格已换。", character, new_fate.broadcast_on_obtain, broadcast_text)
 
     async def rewrite_fate(self, session: AsyncSession, character: Character) -> FateRewriteResult:
         self._ensure_character_compatibility(character)
@@ -464,10 +464,10 @@ class CharacterService:
         new_fate = self.fate_service.roll_fate(exclude_key=character.fate_key)
         character.luck -= 100
         character.fate_key = new_fate.key
-        character.last_highlight_text = f"方才逆天改命，命数重定为「{new_fate.name}」。"
+        character.last_highlight_text = f"方才逆天改命，命格重定为「{new_fate.name}」。"
         self.refresh_combat_power(character)
 
         broadcast_text = None
         if new_fate.broadcast_on_obtain:
-            broadcast_text = f"【命数翻覆】{character.player.display_name} 逆天改命，再得传说命格「{new_fate.name}」。"
+            broadcast_text = f"【逆天改命】{character.player.display_name} 再得传说命格「{new_fate.name}」。"
         return FateRewriteResult(True, "你以百点气运强改命盘，旧命已去，新命已定。", character, new_fate.broadcast_on_obtain, broadcast_text)

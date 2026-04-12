@@ -108,7 +108,7 @@ class RankingService:
             return LeaderboardResult(
                 category,
                 "魔道榜",
-                "恶名深者，头上赏格也更重。",
+                "恶名深者，头上悬赏也更重。",
                 [
                     LeaderboardEntry(index, char.player.display_name, f"恶名 {char.infamy}", f"悬赏 {char.bounty_soul}")
                     for index, char in enumerate(ordered[:limit], start=1)
@@ -121,7 +121,7 @@ class RankingService:
             return LeaderboardResult(
                 category,
                 "悬赏榜",
-                "只列当下赏格最高的十名魔修。",
+                "只列当下悬赏最高的十名魔修。",
                 [
                     LeaderboardEntry(index, char.player.display_name, f"悬赏 {char.bounty_soul}", f"恶名 {char.infamy}")
                     for index, char in enumerate(ordered[:limit], start=1)

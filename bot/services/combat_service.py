@@ -79,7 +79,7 @@ class _CombatState:
 
 
 class CombatService:
-    max_rounds = 10
+    max_rounds = 20
 
     def __init__(self, rng: random.Random | None = None) -> None:
         self.rng = rng or random.Random()

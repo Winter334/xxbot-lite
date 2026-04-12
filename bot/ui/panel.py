@@ -4,11 +4,15 @@ import discord
 
 from bot.services.breakthrough_service import BreakthroughResult
 from bot.services.character_service import CharacterSnapshot
+from bot.services.combat_service import CombatService
 from bot.services.idle_service import IdleSettlement
 from bot.services.ladder_service import LadderChallengeResult
 from bot.services.tower_service import TowerFloorResult, TowerRunResult
 from bot.services.travel_service import TravelSettlement
 from bot.utils.formatters import RARITY_BADGES, RARITY_COLORS, format_big_number, format_duration_minutes, format_progress, format_qi
+
+
+MAX_BATTLE_ROUNDS = CombatService.max_rounds
 
 
 def build_panel_embed(
@@ -75,7 +79,7 @@ def build_panel_embed(
         faction_lines.append(f"悬赏：`{snapshot.bounty_soul}`")
     else:
         faction_lines.append("善名：`0` · 恶名：`0`")
-    embed.add_field(name="☯ 阵营命数", value="\n".join(faction_lines), inline=True)
+    embed.add_field(name="☯ 阵营信息", value="\n".join(faction_lines), inline=True)
     embed.add_field(
         name="🧭 游历遗痕",
         value=(
@@ -383,7 +387,7 @@ def build_reincarnation_embed(snapshot: CharacterSnapshot, message: str) -> disc
         color=RARITY_COLORS[snapshot.fate_rarity],
     )
     embed.add_field(
-        name="新命数",
+        name="新命格",
         value=f"`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}",
         inline=False,
     )
@@ -407,7 +411,7 @@ def build_fate_rewrite_confirm_embed(snapshot: CharacterSnapshot) -> discord.Emb
         color=discord.Color.dark_teal(),
     )
     embed.add_field(
-        name="当前命数",
+        name="当前命格",
         value=f"`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}",
         inline=False,
     )
@@ -426,12 +430,12 @@ def build_fate_rewrite_confirm_embed(snapshot: CharacterSnapshot) -> discord.Emb
 
 def build_fate_rewrite_embed(snapshot: CharacterSnapshot, message: str) -> discord.Embed:
     embed = discord.Embed(
-        title=f"{snapshot.player_name} · 命盘重铸",
+        title=f"{snapshot.player_name} · 改命结果",
         description=message,
         color=RARITY_COLORS[snapshot.fate_rarity],
     )
     embed.add_field(
-        name="新命数",
+        name="新命格",
         value=f"`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}",
         inline=False,
     )
@@ -453,7 +457,7 @@ def build_faction_embed(
     if snapshot.faction_key == "righteous":
         description = "你已入正道，可查看悬赏榜并承赏讨伐魔修。"
     elif snapshot.faction_key == "demonic":
-        description = "你已堕魔道，可择人劫掠，但也会不断推高自身赏格。"
+        description = "你已堕入魔道，可择人劫掠，但也会不断推高自身悬赏。"
     else:
         description = "你仍处中立，可在此选择投入正道或堕入魔道。"
     embed = discord.Embed(
@@ -492,7 +496,7 @@ def build_faction_action_embed(snapshot: CharacterSnapshot, title: str, message:
     if lines:
         embed.add_field(name="本次结果", value="\n".join(lines), inline=False)
     embed.add_field(
-        name="命数与赏格",
+        name="阵营结算",
         value=(
             f"气运：`{snapshot.luck}`\n"
             f"善名：`{snapshot.virtue}`\n"
@@ -628,13 +632,13 @@ def _battle_excerpt(battle, limit: int, *, mode: str = "ladder") -> str:
         lines.append(line)
     if battle.reached_round_limit:
         if mode == "ladder":
-            lines.append("十合战罢，挑战方未能夺位。")
+            lines.append(f"战至 {MAX_BATTLE_ROUNDS} 回合上限，挑战方未能夺位。")
         elif mode == "bounty":
-            lines.append("十合战罢，此番讨伐未能竟功。")
+            lines.append(f"战至 {MAX_BATTLE_ROUNDS} 回合上限，此番讨伐未能得手。")
         elif mode == "robbery":
-            lines.append("十合战罢，此番劫掠未能得手。")
+            lines.append(f"战至 {MAX_BATTLE_ROUNDS} 回合上限，此番劫掠未能得手。")
         else:
-            lines.append("十合战罢，此层未能踏破。")
+            lines.append(f"战至 {MAX_BATTLE_ROUNDS} 回合上限，此层未能踏破。")
     return "\n".join(lines) if lines else "此战过于短促，未留战痕。"
 
 

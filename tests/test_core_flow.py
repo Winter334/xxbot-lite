@@ -4,8 +4,31 @@ from datetime import timedelta
 
 import pytest
 
-from bot.ui.panel import build_panel_embed
+from bot.services.travel_service import TravelService
+from bot.ui.panel import build_ladder_round_embed, build_panel_embed
 from bot.utils.time_utils import now_shanghai
+
+
+class TravelRoller:
+    def __init__(self, random_values, event_ids, int_values) -> None:
+        self._random_values = iter(random_values)
+        self._event_ids = iter(event_ids)
+        self._int_values = iter(int_values)
+
+    def random(self) -> float:
+        return next(self._random_values)
+
+    def choices(self, population, weights, k=1):
+        event_id = next(self._event_ids)
+        for event in population:
+            if event.event_id == event_id:
+                return [event]
+        raise AssertionError(f"event {event_id} not in current pool")
+
+    def randint(self, start: int, end: int) -> int:
+        value = next(self._int_values)
+        assert start <= value <= end
+        return value
 
 
 @pytest.mark.asyncio
@@ -186,6 +209,26 @@ async def test_travel_negative_event_can_apply(session_factory, services) -> Non
 
 
 @pytest.mark.asyncio
+async def test_travel_stat_events_use_low_probability_gate(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1015, "行客")
+        character = creation.character
+
+        non_stat_service = TravelService(services.fate, rng=TravelRoller([0.99], ["soul_1"], [2]))
+        non_stat_log = non_stat_service._resolve_event(character)
+        assert non_stat_log.atk_pct_delta == 0
+        assert non_stat_log.def_pct_delta == 0
+        assert non_stat_log.agi_pct_delta == 0
+
+        stat_service = TravelService(services.fate, rng=TravelRoller([0.0], ["atk_up"], [2]))
+        stat_log = stat_service._resolve_event(character)
+        await session.commit()
+
+        assert stat_log.atk_pct_delta == 2
+        assert character.travel_atk_pct == 2
+
+
+@pytest.mark.asyncio
 async def test_panel_embed_shows_travel_marks(session_factory, services) -> None:
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 1014, "留名")
@@ -199,7 +242,7 @@ async def test_panel_embed_shows_travel_marks(session_factory, services) -> None
 
         field_names = [field.name for field in embed.fields]
         assert "🧭 游历遗痕" in field_names
-        assert "☯ 阵营命数" in field_names
+        assert "☯ 阵营信息" in field_names
         travel_field = next(field for field in embed.fields if field.name == "🧭 游历遗痕")
         assert "+3%" in travel_field.value
         assert "-1%" in travel_field.value
@@ -289,21 +332,21 @@ async def test_combat_fate_uses_split_bonus_per_stat(session_factory, services) 
         stats = services.character.calculate_total_stats(character)
         stage = services.character.get_stage(character)
 
-        assert stats.atk == int(stage.base_atk * 1.10)
+        assert stats.atk == int(stage.base_atk * 1.15)
         assert stats.defense == stage.base_def
-        assert stats.agility == int(stage.base_agi * 1.10)
+        assert stats.agility == int(stage.base_agi * 1.15)
 
 
 @pytest.mark.asyncio
 async def test_fate_effect_summary_matches_split_bonus_display(session_factory, services) -> None:
     fate = services.fate.get_fate("hunyuanbaopu")
-    assert fate.effect_summary() == "杀伐 +10%，护体 +10%，身法 +10%"
+    assert fate.effect_summary() == "杀伐 +18%，护体 +18%，身法 +18%"
 
 
 @pytest.mark.asyncio
 async def test_soul_fate_summary_uses_general_gain_wording(session_factory, services) -> None:
     fate = services.fate.get_fate("ziyuanyingming")
-    assert fate.effect_summary() == "器魂获取 +25%"
+    assert fate.effect_summary() == "器魂获取 +40%"
 
 
 @pytest.mark.asyncio
