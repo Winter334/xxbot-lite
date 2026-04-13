@@ -31,7 +31,7 @@ def _assert_component_limits(view) -> None:
 async def test_views_respect_discord_component_limits() -> None:
     panel_state = SimpleNamespace(
         has_pending=True,
-        pending_slots=[SimpleNamespace(slot=i, affix_id=("x" if i in (2, 4) else None)) for i in range(1, 6)],
+        pending_slots=[SimpleNamespace(slot=i, affix_id=("x" if i in (2, 4) else None), unlocked=True) for i in range(1, 6)],
         current_slots=[SimpleNamespace(slot=i, unlock_level=i * 10, unlocked=True) for i in range(1, 6)],
     )
     challenge_targets = [SimpleNamespace(rank=i, display_name=f"修士{i}") for i in range(1, 6)]

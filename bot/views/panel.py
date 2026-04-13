@@ -317,6 +317,31 @@ async def build_save_affixes_message(bot: XianBot, owner_user_id: int, display_n
     return embed, ArtifactRefineView(owner_user_id, panel_state), broadcasts
 
 
+async def build_discard_affix_message(bot: XianBot, owner_user_id: int, display_name: str, slot: int):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.artifact_service.discard_pending_affix(character.artifact, slot)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.artifact_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines = [f"槽位：槽{slot}"]
+    if result.success and result.discarded_entry is not None:
+        action_lines.append(f"已放弃：**{bot.artifact_service.affix_name(result.discarded_entry)}**")
+        action_lines.append(bot.artifact_service.describe_affix(result.discarded_entry))
+    embed = build_refine_panel_embed(
+        snapshot,
+        panel_state,
+        title=f"{snapshot.player_name} · 法宝洗炼",
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="放弃结果",
+        action_lines=action_lines,
+    )
+    return embed, ArtifactRefineView(owner_user_id, panel_state), broadcasts
+
+
 async def build_retreat_message(bot: XianBot, owner_user_id: int, display_name: str):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
@@ -914,6 +939,10 @@ class ArtifactRefineView(OwnerLockedView):
                 unlocked=slot_view.unlocked,
                 highlighted=slot_view.slot in pending_slots,
             )
+        for slot_view in panel_state.pending_slots:
+            if not slot_view.unlocked:
+                continue
+            self._add_discard_button(slot=slot_view.slot, has_pending=slot_view.slot in pending_slots)
 
     def _add_save_button(self, *, disabled: bool) -> None:
         button = discord.ui.Button(label="保存待选", row=0, style=discord.ButtonStyle.success, disabled=disabled)
@@ -921,6 +950,18 @@ class ArtifactRefineView(OwnerLockedView):
         async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
             embed, view, broadcasts = await build_save_affixes_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_discard_button(self, *, slot: int, has_pending: bool) -> None:
+        button = discord.ui.Button(label=f"弃槽{slot}", row=2, style=discord.ButtonStyle.danger, disabled=not has_pending)
+
+        async def callback(interaction: discord.Interaction, slot_no: int = slot) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_discard_affix_message(bot, interaction.user.id, interaction.user.display_name, slot_no)
             await interaction.response.edit_message(embed=embed, view=view)
             await _send_broadcasts(bot, broadcasts)
 

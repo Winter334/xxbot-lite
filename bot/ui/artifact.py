@@ -92,7 +92,7 @@ def build_refine_panel_embed(
     embed.add_field(name="待选词条", value=_render_affix_column(panel_state.pending_slots), inline=True)
     if action_title and action_lines:
         embed.add_field(name=action_title, value="\n".join(action_lines), inline=False)
-    embed.set_footer(text="单次洗炼消耗 2 器魂；待选词条点击“保存待选”后才会写入当前词条。")
+    embed.set_footer(text="单次洗炼消耗 2 器魂；待选词条可点击“弃槽X”放弃，点击“保存待选”后才会写入当前词条。")
     return embed
 
 
