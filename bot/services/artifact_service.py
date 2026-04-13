@@ -79,6 +79,14 @@ class SavePendingAffixesResult:
     applied_slots: tuple[int, ...]
 
 
+@dataclass(slots=True)
+class DiscardPendingAffixResult:
+    success: bool
+    message: str
+    slot: int
+    discarded_entry: ArtifactAffixEntry | None = None
+
+
 class ArtifactService:
     def __init__(self, rng: random.Random | None = None) -> None:
         self.rng = rng or random.Random()
@@ -206,6 +214,31 @@ class ArtifactService:
         self._store_entries(artifact, "affix_slots_json", current_map.values())
         self._store_entries(artifact, "affix_pending_json", ())
         return SavePendingAffixesResult(True, f"已将槽{ '、槽'.join(str(slot) for slot in applied_slots)} 的待选词条写入本命法宝。", applied_slots)
+
+    def discard_pending_affix(self, artifact: Artifact, slot: int) -> DiscardPendingAffixResult:
+        self.ensure_affix_slots(artifact)
+        if slot < 1 or slot > MAX_AFFIX_SLOTS:
+            return DiscardPendingAffixResult(False, "所选词条槽位不存在。", slot)
+        if not self.slot_is_unlocked(artifact, slot):
+            return DiscardPendingAffixResult(
+                False,
+                f"槽{slot} 尚未解锁，需要本命法宝达到 +{self.slot_unlock_level(slot)}。",
+                slot,
+            )
+
+        pending_map = {entry.slot: entry for entry in self.get_pending_affixes(artifact)}
+        discarded_entry = pending_map.pop(slot, None)
+        if discarded_entry is None:
+            return DiscardPendingAffixResult(False, f"槽{slot} 当前没有可放弃的待选词条。", slot)
+
+        self._store_entries(artifact, "affix_pending_json", pending_map.values())
+        definition = get_artifact_affix_definition(discarded_entry.affix_id)
+        return DiscardPendingAffixResult(
+            True,
+            f"已放弃槽{slot} 的待选词条「{definition.name}」。",
+            slot,
+            discarded_entry,
+        )
 
     def reset_affixes(self, artifact: Artifact) -> None:
         artifact.affix_slots_json = "[]"
