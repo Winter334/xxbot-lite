@@ -30,6 +30,7 @@ from bot.ui.panel import (
     build_travel_settlement_embed,
 )
 from bot.ui.ranking import build_leaderboard_embed
+from bot.ui.spirit import build_spirit_panel_embed
 from bot.services.faction_service import FactionTarget
 from bot.services.travel_service import TRAVEL_DURATION_CHOICES
 
@@ -206,6 +207,159 @@ async def build_artifact_message(bot: XianBot, owner_user_id: int, display_name:
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     return build_artifact_overview_embed(snapshot, panel_state), ArtifactOverviewView(owner_user_id), broadcasts
+
+
+def _format_spirit_finish_at(value) -> str:
+    return f"{value.month:02d}/{value.day:02d} {value.hour:02d}:{value.minute:02d}"
+
+
+async def build_spirit_panel_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return build_spirit_panel_embed(snapshot, panel_state), SpiritOverviewView(owner_user_id, panel_state), broadcasts
+
+
+async def start_spirit_nurture_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.spirit_service.start_nurture(character.artifact)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines = [f"器魂：`{result.soul_before} -> {result.soul_after}`"]
+    if result.finish_at is not None:
+        action_lines.append(f"炉成时刻：`{_format_spirit_finish_at(result.finish_at)}`")
+    embed = build_spirit_panel_embed(
+        snapshot,
+        panel_state,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="本次孕育",
+        action_lines=action_lines,
+    )
+    return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
+
+
+async def start_spirit_reforge_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.spirit_service.start_reforge(character.artifact)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines = [f"器魂：`{result.soul_before} -> {result.soul_after}`"]
+    if result.finish_at is not None:
+        action_lines.append(f"炉成时刻：`{_format_spirit_finish_at(result.finish_at)}`")
+    embed = build_spirit_panel_embed(
+        snapshot,
+        panel_state,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="本次重炼",
+        action_lines=action_lines,
+    )
+    return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
+
+
+async def collect_spirit_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.spirit_service.collect_result(character.artifact)
+        bot.character_service.refresh_combat_power(character)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines: list[str] = []
+    spirit_view = panel_state.current_spirit if result.collected_spirit is not None else panel_state.pending_spirit
+    if spirit_view is not None:
+        action_lines.append(f"品阶：`{spirit_view.tier_name}`")
+        action_lines.append(f"神通：`{spirit_view.power_name}`")
+    embed = build_spirit_panel_embed(
+        snapshot,
+        panel_state,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="收取结果" if action_lines else None,
+        action_lines=action_lines or None,
+    )
+    return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
+
+
+async def accept_spirit_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.spirit_service.accept_pending_spirit(character.artifact)
+        bot.character_service.refresh_combat_power(character)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines: list[str] = []
+    if result.success and panel_state.current_spirit is not None:
+        action_lines.append(f"品阶：`{panel_state.current_spirit.tier_name}`")
+        action_lines.append(f"神通：`{panel_state.current_spirit.power_name}`")
+    embed = build_spirit_panel_embed(
+        snapshot,
+        panel_state,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="纳灵结果" if action_lines else None,
+        action_lines=action_lines or None,
+    )
+    return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
+
+
+async def discard_spirit_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.spirit_service.discard_pending_spirit(character.artifact)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = build_spirit_panel_embed(
+        snapshot,
+        panel_state,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title=None,
+        action_lines=None,
+    )
+    return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
+
+
+async def rename_spirit_message(bot: XianBot, owner_user_id: int, display_name: str, new_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.spirit_service.rename_spirit(character.artifact, new_name)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines = [f"名称：`{result.name_before or '未命名'} -> {result.name_after or '未命名'}`"]
+    embed = build_spirit_panel_embed(
+        snapshot,
+        panel_state,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="本次赐名",
+        action_lines=action_lines,
+    )
+    return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
 
 
 async def build_reinforce_panel_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -868,11 +1022,26 @@ class ReinforceRenameModal(discord.ui.Modal, title="为本命法宝赐名"):
         await _send_broadcasts(bot, broadcasts)
 
 
+class SpiritRenameModal(discord.ui.Modal, title="为器灵赐名"):
+    spirit_name = discord.ui.TextInput(label="新名字", placeholder="请输入 2~12 个字符", max_length=12)
+
+    def __init__(self, owner_user_id: int) -> None:
+        super().__init__()
+        self.owner_user_id = owner_user_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await rename_spirit_message(bot, interaction.user.id, interaction.user.display_name, str(self.spirit_name))
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
+
+
 class ArtifactOverviewView(OwnerLockedView):
     def __init__(self, owner_user_id: int) -> None:
         super().__init__(owner_user_id)
         self._add_open_reinforce_button()
         self._add_open_refine_button()
+        self._add_open_spirit_button()
         self._add_rename_button()
 
     def _add_open_reinforce_button(self) -> None:
@@ -904,6 +1073,18 @@ class ArtifactOverviewView(OwnerLockedView):
 
         async def callback(interaction: discord.Interaction) -> None:
             await interaction.response.send_modal(ReinforceRenameModal(self.owner_user_id))
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_open_spirit_button(self) -> None:
+        button = discord.ui.Button(label="器灵", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_spirit_panel_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_broadcasts(bot, broadcasts)
 
         button.callback = callback
         self.add_item(button)
@@ -978,6 +1159,104 @@ class ArtifactRefineView(OwnerLockedView):
             embed, view, broadcasts = await build_refine_affix_message(bot, interaction.user.id, interaction.user.display_name, slot_no)
             await interaction.response.edit_message(embed=embed, view=view)
             await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+class SpiritOverviewView(OwnerLockedView):
+    def __init__(self, owner_user_id: int, panel_state) -> None:
+        super().__init__(owner_user_id)
+        self._add_refresh_button()
+        if panel_state.can_start_nurture:
+            self._add_nurture_button()
+        if panel_state.can_start_reforge:
+            self._add_reforge_button()
+        if panel_state.can_collect:
+            self._add_collect_button()
+        if panel_state.can_accept_pending:
+            self._add_accept_button()
+        if panel_state.can_discard_pending:
+            self._add_discard_button()
+        if panel_state.can_rename and not panel_state.can_collect:
+            self._add_rename_button()
+
+    def _add_refresh_button(self) -> None:
+        button = discord.ui.Button(label="刷新", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_spirit_panel_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_nurture_button(self) -> None:
+        button = discord.ui.Button(label="开始孕育", row=0, style=discord.ButtonStyle.primary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await start_spirit_nurture_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_reforge_button(self) -> None:
+        button = discord.ui.Button(label="开始重炼", row=0, style=discord.ButtonStyle.primary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await start_spirit_reforge_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_collect_button(self) -> None:
+        button = discord.ui.Button(label="收取结果", row=0, style=discord.ButtonStyle.success)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await collect_spirit_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_accept_button(self) -> None:
+        button = discord.ui.Button(label="纳灵", row=0, style=discord.ButtonStyle.success)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await accept_spirit_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_discard_button(self) -> None:
+        button = discord.ui.Button(label="弃炼", row=0, style=discord.ButtonStyle.danger)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await discard_spirit_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_rename_button(self) -> None:
+        button = discord.ui.Button(label="赐名", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            await interaction.response.send_modal(SpiritRenameModal(self.owner_user_id))
 
         button.callback = callback
         self.add_item(button)

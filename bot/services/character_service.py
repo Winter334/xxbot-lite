@@ -15,6 +15,7 @@ from bot.services.combat_service import CombatantSnapshot
 from bot.services.artifact_service import ArtifactService
 from bot.services.fate_service import FateService
 from bot.services.idle_service import IdleSettlement
+from bot.services.spirit_service import SpiritService
 from bot.utils.time_utils import now_shanghai, today_shanghai
 
 
@@ -62,6 +63,9 @@ class CharacterSnapshot:
     artifact_atk_bonus: int
     artifact_def_bonus: int
     artifact_agi_bonus: int
+    spirit_name: str
+    spirit_tier_name: str
+    spirit_power_name: str
     soul_shards: int
     title: str
     faction_key: str
@@ -123,9 +127,10 @@ class RetreatActionResult:
 
 
 class CharacterService:
-    def __init__(self, fate_service: FateService, artifact_service: ArtifactService) -> None:
+    def __init__(self, fate_service: FateService, artifact_service: ArtifactService, spirit_service: SpiritService) -> None:
         self.fate_service = fate_service
         self.artifact_service = artifact_service
+        self.spirit_service = spirit_service
 
     def _ensure_character_compatibility(self, character: Character) -> None:
         if not self.fate_service.has_fate(character.fate_key):
@@ -134,6 +139,8 @@ class CharacterService:
             character.luck = self.fate_service.random_initial_luck()
         if not character.faction:
             character.faction = "neutral"
+        if character.artifact is not None:
+            self.spirit_service.ensure_compatibility(character.artifact)
 
     async def get_character_by_discord_id(self, session: AsyncSession, discord_user_id: int | str) -> Character | None:
         statement = (
@@ -235,6 +242,12 @@ class CharacterService:
             soul_shards=0,
             affix_slots_json="[]",
             affix_pending_json="[]",
+            spirit_name=None,
+            spirit_rename_used=False,
+            spirit_json="",
+            spirit_pending_json="",
+            spirit_refining_until=None,
+            spirit_refining_mode=None,
         )
         character.ladder_record = LadderRecord(rank=initial_rank, wins=0, losses=0, streak=0)
         self.refresh_combat_power(character)
@@ -263,9 +276,13 @@ class CharacterService:
     def calculate_total_stats(self, character: Character) -> TotalStats:
         stage = self.get_stage(character)
         artifact = character.artifact
-        atk = stage.base_atk + ((artifact.atk_bonus or 0) if artifact else 0)
-        defense = stage.base_def + ((artifact.def_bonus or 0) if artifact else 0)
-        agility = stage.base_agi + ((artifact.agi_bonus or 0) if artifact else 0)
+        if artifact is not None:
+            artifact_atk_bonus, artifact_def_bonus, artifact_agi_bonus = self.spirit_service.effective_artifact_bonuses(artifact)
+        else:
+            artifact_atk_bonus, artifact_def_bonus, artifact_agi_bonus = (0, 0, 0)
+        atk = stage.base_atk + artifact_atk_bonus
+        defense = stage.base_def + artifact_def_bonus
+        agility = stage.base_agi + artifact_agi_bonus
         atk = int(atk * (1 + (character.travel_atk_pct or 0) / 100))
         defense = int(defense * (1 + (character.travel_def_pct or 0) / 100))
         agility = int(agility * (1 + (character.travel_agi_pct or 0) / 100))
@@ -300,8 +317,11 @@ class CharacterService:
         artifact = character.artifact
         if artifact is not None:
             self.artifact_service.ensure_affix_slots(artifact)
+            self.spirit_service.ensure_compatibility(artifact)
         stats = self.calculate_total_stats(character)
         fate = self.fate_service.get_fate(character.fate_key)
+        spirit_name, spirit_tier_name, spirit_power_name = self.spirit_service.spirit_summary(artifact) if artifact is not None else ("未孕器灵", "", "")
+        artifact_atk_bonus, artifact_def_bonus, artifact_agi_bonus = self.spirit_service.effective_artifact_bonuses(artifact) if artifact is not None else (0, 0, 0)
         return CharacterSnapshot(
             character_id=character.id,
             player_name=character.player.display_name,
@@ -322,10 +342,13 @@ class CharacterService:
             fate_summary=fate.effect_summary(),
             artifact_name=artifact.name if artifact else "未铸本命",
             artifact_level=(artifact.reinforce_level or 0) if artifact else 0,
-            artifact_power=self.artifact_service.artifact_power(artifact) if artifact else 0,
-            artifact_atk_bonus=(artifact.atk_bonus or 0) if artifact else 0,
-            artifact_def_bonus=(artifact.def_bonus or 0) if artifact else 0,
-            artifact_agi_bonus=(artifact.agi_bonus or 0) if artifact else 0,
+            artifact_power=self.spirit_service.artifact_power(artifact) if artifact else 0,
+            artifact_atk_bonus=artifact_atk_bonus,
+            artifact_def_bonus=artifact_def_bonus,
+            artifact_agi_bonus=artifact_agi_bonus,
+            spirit_name=spirit_name,
+            spirit_tier_name=spirit_tier_name,
+            spirit_power_name=spirit_power_name,
             soul_shards=(artifact.soul_shards or 0) if artifact else 0,
             title=title or character.title,
             faction_key=character.faction,
@@ -365,6 +388,7 @@ class CharacterService:
             title=title or character.title,
             fate_name=snapshot.fate_name,
             affixes=tuple(self.artifact_service.get_active_affixes(character.artifact)) if character.artifact is not None else (),
+            spirit_power=self.spirit_service.current_spirit_power(character.artifact) if character.artifact is not None else None,
             realm_index=snapshot.realm_index,
             damage_dealt_basis_points=fate.damage_dealt_basis_points,
             damage_taken_basis_points=fate.damage_taken_basis_points,
@@ -449,6 +473,12 @@ class CharacterService:
             character.artifact.agi_bonus = 0
             character.artifact.soul_shards = 0
             self.artifact_service.reset_affixes(character.artifact)
+            character.artifact.spirit_name = None
+            character.artifact.spirit_rename_used = False
+            character.artifact.spirit_json = ""
+            character.artifact.spirit_pending_json = ""
+            character.artifact.spirit_refining_until = None
+            character.artifact.spirit_refining_mode = None
         self.refresh_combat_power(character)
 
         broadcast_text = None

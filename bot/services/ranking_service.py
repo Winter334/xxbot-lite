@@ -8,6 +8,7 @@ from bot.models.character import Character
 from bot.services.artifact_service import ArtifactService
 from bot.services.character_service import CharacterService
 from bot.services.faction_service import FactionService
+from bot.services.spirit_service import SpiritService
 
 
 @dataclass(slots=True)
@@ -27,9 +28,16 @@ class LeaderboardResult:
 
 
 class RankingService:
-    def __init__(self, character_service: CharacterService, artifact_service: ArtifactService, faction_service: FactionService) -> None:
+    def __init__(
+        self,
+        character_service: CharacterService,
+        artifact_service: ArtifactService,
+        spirit_service: SpiritService,
+        faction_service: FactionService,
+    ) -> None:
         self.character_service = character_service
         self.artifact_service = artifact_service
+        self.spirit_service = spirit_service
         self.faction_service = faction_service
 
     async def build_leaderboard(
@@ -66,13 +74,13 @@ class RankingService:
             )
 
         if category == "artifact":
-            ordered = sorted(characters, key=lambda char: (-self.artifact_service.artifact_power(char.artifact), char.id))
+            ordered = sorted(characters, key=lambda char: (-self.spirit_service.artifact_power(char.artifact), char.id))
             return LeaderboardResult(
                 category,
                 "本命法宝榜",
                 "器魂所聚，本命分高下。",
                 [
-                    LeaderboardEntry(index, char.player.display_name, f"{char.artifact.name} +{char.artifact.reinforce_level}", f"总成长 {self.artifact_service.artifact_power(char.artifact)}")
+                    LeaderboardEntry(index, char.player.display_name, f"{char.artifact.name} +{char.artifact.reinforce_level}", f"总成长 {self.spirit_service.artifact_power(char.artifact)}")
                     for index, char in enumerate(ordered[:limit], start=1)
                 ],
             )
@@ -168,7 +176,7 @@ class RankingService:
 
         power_top = max(characters, key=lambda char: self.character_service.calculate_total_stats(char).combat_power, default=None)
         tower_top = max(characters, key=lambda char: char.historical_highest_floor, default=None)
-        artifact_top = max(characters, key=lambda char: self.artifact_service.artifact_power(char.artifact), default=None)
+        artifact_top = max(characters, key=lambda char: self.spirit_service.artifact_power(char.artifact), default=None)
         same_realm = [char for char in characters if char.realm_key == character.realm_key]
         realm_top = max(same_realm, key=lambda char: self.character_service.calculate_total_stats(char).combat_power, default=None)
 

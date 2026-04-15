@@ -17,6 +17,7 @@ from bot.services.faction_service import FactionService
 from bot.services.idle_service import IdleService
 from bot.services.ladder_service import LadderService
 from bot.services.ranking_service import RankingService
+from bot.services.spirit_service import SpiritService
 from bot.services.tower_service import TowerService
 from bot.services.travel_service import TravelService
 
@@ -25,6 +26,7 @@ from bot.services.travel_service import TravelService
 class ServiceBundle:
     fate: FateService
     artifact: ArtifactService
+    spirit: SpiritService
     character: CharacterService
     idle: IdleService
     combat: CombatService
@@ -55,13 +57,14 @@ def services() -> ServiceBundle:
     rng = random.Random(42)
     fate = FateService(rng)
     artifact = ArtifactService(rng)
-    character = CharacterService(fate, artifact)
+    spirit = SpiritService(rng)
+    character = CharacterService(fate, artifact, spirit)
     idle = IdleService(fate)
     combat = CombatService(rng)
     faction = FactionService(character, combat)
     tower = TowerService(character, combat, fate, rng)
     breakthrough = BreakthroughService(character)
     ladder = LadderService(character, combat)
-    ranking = RankingService(character, artifact, faction)
+    ranking = RankingService(character, artifact, spirit, faction)
     travel = TravelService(fate, rng)
-    return ServiceBundle(fate, artifact, character, idle, combat, faction, tower, breakthrough, ladder, ranking, travel)
+    return ServiceBundle(fate, artifact, spirit, character, idle, combat, faction, tower, breakthrough, ladder, ranking, travel)

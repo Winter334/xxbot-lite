@@ -67,6 +67,8 @@ def build_panel_embed(
         value=(
             f"法宝：**{snapshot.artifact_name}** `+{snapshot.artifact_level}`\n"
             f"器魂：`{snapshot.soul_shards}`\n"
+            f"器灵：`{snapshot.spirit_name}`{f' · {snapshot.spirit_tier_name}' if snapshot.spirit_tier_name else ''}\n"
+            f"神通：`{snapshot.spirit_power_name or '未显神通'}`\n"
             f"当前行藏：`{state_text}`"
         ),
         inline=False,

@@ -52,6 +52,12 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                 "last_bounty_defeated_on" not in character_columns,
                 "affix_slots_json" not in artifact_columns,
                 "affix_pending_json" not in artifact_columns,
+                "spirit_name" not in artifact_columns,
+                "spirit_rename_used" not in artifact_columns,
+                "spirit_json" not in artifact_columns,
+                "spirit_pending_json" not in artifact_columns,
+                "spirit_refining_until" not in artifact_columns,
+                "spirit_refining_mode" not in artifact_columns,
             )
 
         (
@@ -74,6 +80,12 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             needs_last_bounty_defeated_on,
             needs_affix_slots,
             needs_affix_pending,
+            needs_spirit_name,
+            needs_spirit_rename_used,
+            needs_spirit_json,
+            needs_spirit_pending,
+            needs_spirit_refining_until,
+            needs_spirit_refining_mode,
         ) = await connection.run_sync(_collect_missing_columns)
         if needs_retreat_column:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN is_retreating BOOLEAN NOT NULL DEFAULT 0"))
@@ -114,6 +126,18 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             await connection.execute(text("ALTER TABLE artifacts ADD COLUMN affix_slots_json TEXT NOT NULL DEFAULT '[]'"))
         if needs_affix_pending:
             await connection.execute(text("ALTER TABLE artifacts ADD COLUMN affix_pending_json TEXT NOT NULL DEFAULT '[]'"))
+        if needs_spirit_name:
+            await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_name VARCHAR(64)"))
+        if needs_spirit_rename_used:
+            await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_rename_used BOOLEAN NOT NULL DEFAULT 0"))
+        if needs_spirit_json:
+            await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_json TEXT NOT NULL DEFAULT ''"))
+        if needs_spirit_pending:
+            await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_pending_json TEXT NOT NULL DEFAULT ''"))
+        if needs_spirit_refining_until:
+            await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_refining_until DATETIME"))
+        if needs_spirit_refining_mode:
+            await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_refining_mode VARCHAR(16)"))
 
 
 async def init_models(engine: AsyncEngine) -> None:
