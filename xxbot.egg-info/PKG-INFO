@@ -1,0 +1,58 @@
+Metadata-Version: 2.4
+Name: xxbot
+Version: 0.1.0
+Summary: Discord 修仙 Bot 一期最小可玩闭环
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: alembic>=1.16.0
+Requires-Dist: aiosqlite>=0.21.0
+Requires-Dist: discord.py>=2.5.2
+Requires-Dist: sqlalchemy>=2.0.40
+Requires-Dist: tzdata>=2025.2
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.5; extra == "dev"
+Requires-Dist: pytest-asyncio>=1.0.0; extra == "dev"
+
+# xxbot
+
+一期 Discord 修仙 Bot。
+
+## 本地启动
+
+> 需要 **Python 3.12**。若本机只有 Python 3.11，请先安装 3.12 再创建虚拟环境。
+
+1. 创建虚拟环境并安装依赖：
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e .[dev]
+```
+
+2. 复制 `.env.example` 为 `.env` 并填写 `DISCORD_TOKEN`。
+3. 初始化数据库：
+
+```powershell
+alembic upgrade head
+```
+
+4. 启动 Bot：
+
+```powershell
+python -m bot.main
+```
+
+## 主要命令
+
+- `/修仙`
+- `/登塔`
+- `/突破`
+- `/榜单`
+- `/面板`
+- `/轮回`
+
+## 测试
+
+```powershell
+pytest
+```
