@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import pytest
 
+from bot.data.spirits import SpiritPowerEntry
 from bot.services.travel_service import TravelService
 from bot.ui.panel import build_ladder_round_embed, build_panel_embed
 from bot.utils.time_utils import now_shanghai
@@ -29,6 +30,14 @@ class TravelRoller:
         value = next(self._int_values)
         assert start <= value <= end
         return value
+
+
+class CombatRoller:
+    def __init__(self, random_values) -> None:
+        self._random_values = iter(random_values)
+
+    def random(self) -> float:
+        return next(self._random_values)
 
 
 @pytest.mark.asyncio
@@ -246,6 +255,70 @@ async def test_panel_embed_shows_travel_marks(session_factory, services) -> None
         travel_field = next(field for field in embed.fields if field.name == "🧭 游历遗痕")
         assert "+3%" in travel_field.value
         assert "-1%" in travel_field.value
+
+
+@pytest.mark.asyncio
+async def test_spirit_nurture_collects_after_unlock_and_boosts_artifact_power(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1016, "灵工")
+        character = creation.character
+        character.artifact.reinforce_level = 60
+        character.artifact.atk_bonus = 12000
+        character.artifact.def_bonus = 9000
+        character.artifact.agi_bonus = 6000
+        character.artifact.soul_shards = 200
+        now = now_shanghai()
+
+        start = services.spirit.start_nurture(character.artifact, now=now)
+        early_collect = services.spirit.collect_result(character.artifact, now=now + timedelta(minutes=30))
+        final_collect = services.spirit.collect_result(character.artifact, now=now + timedelta(minutes=60))
+        await session.commit()
+
+        assert start.success is True
+        assert early_collect.success is False
+        assert final_collect.success is True
+        assert services.spirit.get_current_spirit(character.artifact) is not None
+        assert character.artifact.spirit_name
+        assert services.spirit.artifact_power(character.artifact) > (12000 + 9000 + 6000)
+
+
+@pytest.mark.asyncio
+async def test_panel_embed_shows_spirit_summary(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1017, "灵照")
+        character = creation.character
+        character.artifact.reinforce_level = 60
+        character.artifact.atk_bonus = 12000
+        character.artifact.def_bonus = 9000
+        character.artifact.agi_bonus = 6000
+        character.artifact.soul_shards = 200
+        now = now_shanghai()
+        services.spirit.start_nurture(character.artifact, now=now)
+        services.spirit.collect_result(character.artifact, now=now + timedelta(minutes=60))
+        snapshot = services.character.build_snapshot(character)
+        embed = build_panel_embed(snapshot)
+        await session.commit()
+
+        artifact_field = next(field for field in embed.fields if field.name == "🗿 本命")
+        assert "器灵：" in artifact_field.value
+        assert "神通：" in artifact_field.value
+
+
+@pytest.mark.asyncio
+async def test_niepan_spirit_power_revives_once_in_combat(session_factory, services) -> None:
+    roller = CombatRoller([0.99] * 40)
+    attacker = services.combat.create_combatant(name="斩者", atk=500, defense=30, agility=50)
+    defender = services.combat.create_combatant(
+        name="守者",
+        atk=20,
+        defense=20,
+        agility=10,
+        spirit_power=SpiritPowerEntry("niepan", {"heal_pct": 50, "reduce_pct": 80}),
+    )
+
+    result = services.combat.run_battle(attacker, defender, rng=roller)
+
+    assert any(log.text and "涅槃再起" in log.text for log in result.logs)
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import random
 
 from bot.data.artifact_affixes import ArtifactAffixEntry, get_artifact_affix_definition
+from bot.data.spirits import SpiritPowerEntry
 from bot.utils.formatters import clamp
 
 
@@ -17,6 +18,7 @@ class CombatantSnapshot:
     title: str = ""
     fate_name: str = ""
     affixes: tuple[ArtifactAffixEntry, ...] = ()
+    spirit_power: SpiritPowerEntry | None = None
     realm_index: int = 1
     damage_dealt_basis_points: int = 0
     damage_taken_basis_points: int = 0
@@ -76,6 +78,10 @@ class _CombatState:
     statuses: list[_StatusEffect] = field(default_factory=list)
     hits_taken: int = 0
     low_hp_marks: set[int] = field(default_factory=set)
+    revive_used: bool = False
+    block_used_round: int = 0
+    counter_used_round: int = 0
+    skip_next_action: bool = False
 
 
 class CombatService:
@@ -94,6 +100,7 @@ class CombatService:
         title: str = "",
         fate_name: str = "",
         affixes: tuple[ArtifactAffixEntry, ...] | list[ArtifactAffixEntry] = (),
+        spirit_power: SpiritPowerEntry | None = None,
         realm_index: int = 1,
         damage_dealt_basis_points: int = 0,
         damage_taken_basis_points: int = 0,
@@ -109,6 +116,7 @@ class CombatService:
             title,
             fate_name,
             tuple(affixes),
+            spirit_power,
             realm_index,
             damage_dealt_basis_points,
             damage_taken_basis_points,
@@ -140,6 +148,10 @@ class CombatService:
 
             for actor, target in ((first, second), (second, first)):
                 if actor.hp <= 0 or target.hp <= 0:
+                    continue
+                before_action_logs, can_act = self._trigger_before_action(round_no, actor)
+                logs.extend(before_action_logs)
+                if not can_act:
                     continue
                 logs.extend(self._resolve_action(round_no, actor, target, roller, scene))
                 if challenger_state.hp <= 0 or defender_state.hp <= 0:
@@ -221,28 +233,43 @@ class CombatService:
         damage = int(damage * (1 + self._damage_dealt_pct(actor) / 100))
         damage = int(damage * (1 + self._damage_taken_pct(target) / 100))
         damage = max(1, int(damage * max(0.05, 1 - (self._damage_reduction_pct(target) / 100))))
+        damage = int(damage * (1 + self._spirit_damage_bonus_pct(actor) / 100))
         damage = int(damage * (1 + actor.snapshot.damage_dealt_basis_points / 10_000))
         if target.snapshot.realm_index > actor.snapshot.realm_index:
             damage = int(damage * (1 + actor.snapshot.versus_higher_realm_damage_basis_points / 10_000))
         damage = int(damage * (1 + target.snapshot.damage_taken_basis_points / 10_000))
         damage = max(1, int(damage * max(0.05, 1 - (target.snapshot.damage_reduction_basis_points / 10_000))))
 
+        damage, pre_hit_logs = self._trigger_spirit_pre_hit(round_no, target, damage, roller)
+        logs.extend(pre_hit_logs)
+        hp_before = target.hp
         target.hp = max(0, target.hp - damage)
+        actual_damage = hp_before - target.hp
         target.hits_taken += 1
         low_hp_after_hit = target.hp
         self._consume_hit_reduction_statuses(target)
 
-        logs.append(ActionLog(round_no, actor.snapshot.name, target.snapshot.name, False, critical, damage, target.hp))
+        logs.append(ActionLog(round_no, actor.snapshot.name, target.snapshot.name, False, critical, actual_damage, target.hp))
         logs.extend(self._trigger_on_hit(round_no, actor, target, roller, scene))
         if critical:
             logs.extend(self._trigger_on_crit(round_no, actor, scene))
         logs.extend(self._trigger_on_be_hit(round_no, target, scene))
         logs.extend(self._trigger_on_low_hp(round_no, target, low_hp_after_hit, scene))
+        logs.extend(self._trigger_spirit_on_hit(round_no, actor, target, actual_damage, roller))
+        logs.extend(self._trigger_spirit_on_be_hit(round_no, actor, target, actual_damage, roller))
+        logs.extend(self._trigger_spirit_revive(round_no, target))
+        logs.extend(self._trigger_spirit_revive(round_no, actor))
 
         if logs:
             logs[0].target_hp_after = target.hp
         self._consume_attack_bonuses(actor)
         return logs
+
+    def _trigger_before_action(self, round_no: int, state: _CombatState) -> tuple[list[ActionLog], bool]:
+        if not state.skip_next_action:
+            return ([], True)
+        state.skip_next_action = False
+        return ([self._effect_log(round_no, state, f"{state.snapshot.name} 灵机一滞，此回合行动被封断。")], False)
 
     def _trigger_battle_start(self, round_no: int, state: _CombatState, scene: set[str]) -> list[ActionLog]:
         logs: list[ActionLog] = []
@@ -428,7 +455,145 @@ class CombatService:
                     f"{state.snapshot.name} 受灼烧侵蚀，损失 {actual_damage} 点生命。",
                 )
             )
+            logs.extend(self._trigger_spirit_revive(round_no, state))
         return logs
+
+    def _trigger_spirit_pre_hit(
+        self,
+        round_no: int,
+        target: _CombatState,
+        damage: int,
+        roller: random.Random,
+    ) -> tuple[int, list[ActionLog]]:
+        power = target.snapshot.spirit_power
+        if power is None or power.power_id != "xuanjia":
+            return damage, []
+        if target.block_used_round == round_no:
+            return damage, []
+        if roller.random() > (power.rolls["proc_pct"] / 100):
+            return damage, []
+        target.block_used_round = round_no
+        reduced = max(0, damage * max(0, 100 - power.rolls["reduce_pct"]) // 100)
+        return (
+            reduced,
+            [
+                self._effect_log(
+                    round_no,
+                    target,
+                    f"{target.snapshot.name} 的玄甲骤然张开，本次伤害减免 {power.rolls['reduce_pct']}%。",
+                )
+            ],
+        )
+
+    def _trigger_spirit_on_hit(
+        self,
+        round_no: int,
+        actor: _CombatState,
+        target: _CombatState,
+        actual_damage: int,
+        roller: random.Random,
+    ) -> list[ActionLog]:
+        power = actor.snapshot.spirit_power
+        if power is None or actual_damage <= 0:
+            return []
+
+        logs: list[ActionLog] = []
+        if power.power_id == "shisheng":
+            healed = self._heal_by_damage(actor, actual_damage, power.rolls["heal_pct"])
+            if healed > 0:
+                logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 借噬生吞回血气，回复了 {healed} 点生命。"))
+
+        if power.power_id == "jueming" and target.hp > 0 and target.hp * 100 <= target.snapshot.max_hp * power.rolls["execute_threshold_pct"]:
+            target.hp = 0
+            logs.append(
+                self._effect_log(
+                    round_no,
+                    target,
+                    f"{actor.snapshot.name} 以绝命断其残势，{target.snapshot.name} 当场被斩落。",
+                    actor_name=actor.snapshot.name,
+                )
+            )
+
+        if power.power_id == "jinmai" and target.hp > 0 and roller.random() <= (power.rolls["proc_pct"] / 100):
+            target.skip_next_action = True
+            logs.append(
+                self._effect_log(
+                    round_no,
+                    target,
+                    f"{actor.snapshot.name} 的禁脉透体而入，{target.snapshot.name} 下次行动将被封断。",
+                    actor_name=actor.snapshot.name,
+                )
+            )
+
+        if power.power_id == "xuekuang" and actor.hp * 100 <= actor.snapshot.max_hp * 25:
+            healed = self._heal_by_damage(actor, actual_damage, power.rolls["frenzy_lifesteal_pct"])
+            if healed > 0:
+                logs.append(
+                    self._effect_log(
+                        round_no,
+                        actor,
+                        f"{actor.snapshot.name} 狂血奔涌，借濒死杀势回复了 {healed} 点生命。",
+                    )
+                )
+        return logs
+
+    def _trigger_spirit_on_be_hit(
+        self,
+        round_no: int,
+        actor: _CombatState,
+        target: _CombatState,
+        actual_damage: int,
+        roller: random.Random,
+    ) -> list[ActionLog]:
+        power = target.snapshot.spirit_power
+        if power is None or actual_damage <= 0:
+            return []
+
+        logs: list[ActionLog] = []
+        if power.power_id == "fanji" and actor.hp > 0:
+            reflect_damage = max(1, actual_damage * power.rolls["reflect_pct"] // 100)
+            reflect_damage = min(actor.hp, reflect_damage)
+            actor.hp -= reflect_damage
+            logs.append(
+                self._effect_log(
+                    round_no,
+                    actor,
+                    f"{target.snapshot.name} 的反棘回卷而出，反弹 {reflect_damage} 点伤害。",
+                    actor_name=target.snapshot.name,
+                )
+            )
+
+        if power.power_id == "guifeng" and target.hp > 0 and actor.hp > 0 and target.counter_used_round != round_no:
+            if roller.random() <= (power.rolls["proc_pct"] / 100):
+                target.counter_used_round = round_no
+                counter_damage = max(1, self._current_atk(target) * power.rolls["damage_pct"] // 100)
+                counter_damage = min(actor.hp, counter_damage)
+                actor.hp -= counter_damage
+                logs.append(
+                    self._effect_log(
+                        round_no,
+                        actor,
+                        f"{target.snapshot.name} 借归锋逆起一击，反击造成 {counter_damage} 点伤害。",
+                        actor_name=target.snapshot.name,
+                    )
+                )
+        return logs
+
+    def _trigger_spirit_revive(self, round_no: int, state: _CombatState) -> list[ActionLog]:
+        power = state.snapshot.spirit_power
+        if power is None or power.power_id != "niepan" or state.hp > 0 or state.revive_used:
+            return []
+        state.revive_used = True
+        heal_amount = max(1, int(state.snapshot.max_hp * power.rolls["heal_pct"] / 100))
+        state.hp = heal_amount
+        self._add_status(state, _StatusEffect("涅槃护体", damage_reduction_pct=power.rolls["reduce_pct"], remaining_hits=2))
+        return [
+            self._effect_log(
+                round_no,
+                state,
+                f"{state.snapshot.name} 于绝境中涅槃再起，回复 {heal_amount} 点生命，并得 2 次护体减伤。",
+            )
+        ]
 
     def _before_attack_bonus_pct(self, actor: _CombatState, target: _CombatState, scene: set[str]) -> int:
         total = 0
@@ -453,6 +618,17 @@ class CombatService:
 
     def _damage_dealt_pct(self, state: _CombatState) -> int:
         return sum(status.damage_dealt_pct for status in self._active_statuses(state))
+
+    def _spirit_damage_bonus_pct(self, state: _CombatState) -> int:
+        power = state.snapshot.spirit_power
+        if power is None or power.power_id != "xuekuang":
+            return 0
+        missing_pct = max(0, 100 - (state.hp * 100 // max(1, state.snapshot.max_hp)))
+        bonus = (missing_pct // 10) * power.rolls["per_lost_10_pct"]
+        bonus = min(bonus, power.rolls["max_bonus_pct"])
+        if state.hp * 100 <= state.snapshot.max_hp * 25:
+            bonus += power.rolls["frenzy_bonus_pct"]
+        return bonus
 
     def _damage_taken_pct(self, state: _CombatState) -> int:
         return sum(status.damage_taken_pct for status in self._active_statuses(state))
@@ -480,6 +656,14 @@ class CombatService:
 
     def _heal(self, state: _CombatState, heal_pct: int) -> int:
         amount = max(1, int(state.snapshot.max_hp * heal_pct / 100))
+        before = state.hp
+        state.hp = min(state.snapshot.max_hp, state.hp + amount)
+        return state.hp - before
+
+    def _heal_by_damage(self, state: _CombatState, damage: int, heal_pct: int) -> int:
+        if damage <= 0 or heal_pct <= 0:
+            return 0
+        amount = max(1, damage * heal_pct // 100)
         before = state.hp
         state.hp = min(state.snapshot.max_hp, state.hp + amount)
         return state.hp - before

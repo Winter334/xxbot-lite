@@ -14,6 +14,7 @@ from bot.views.panel import (
     PanelView,
     ReincarnationConfirmView,
     RetreatView,
+    SpiritOverviewView,
     TowerRunView,
     TravelView,
 )
@@ -44,6 +45,17 @@ async def test_views_respect_discord_component_limits() -> None:
         ArtifactOverviewView(1),
         ArtifactReinforceView(1),
         ArtifactRefineView(1, panel_state),
+        SpiritOverviewView(
+            1,
+            SimpleNamespace(
+                can_start_nurture=False,
+                can_start_reforge=True,
+                can_collect=False,
+                can_accept_pending=False,
+                can_discard_pending=False,
+                can_rename=True,
+            ),
+        ),
         RetreatView(1, is_retreating=False),
         TravelView(
             1,

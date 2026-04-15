@@ -20,7 +20,7 @@ def build_artifact_overview_embed(
         color=color or discord.Color.dark_gold(),
     )
     _add_overview_fields(embed, snapshot, panel_state)
-    embed.set_footer(text="从下方进入强化、洗炼或改名子面板。")
+    embed.set_footer(text="从下方进入强化、洗炼、器灵或改名子面板。")
     return embed
 
 
@@ -116,6 +116,8 @@ def _add_overview_fields(
             f"器魂：`{snapshot.soul_shards}`\n"
             f"总成长：`{format_big_number(snapshot.artifact_power)}`\n"
             f"当前尊号：**{snapshot.title}**\n"
+            f"器灵：`{snapshot.spirit_name}`{f' · {snapshot.spirit_tier_name}' if snapshot.spirit_tier_name else ''}\n"
+            f"神通：`{snapshot.spirit_power_name or '未显神通'}`\n"
             f"已解锁槽位：`{panel_state.unlocked_slots} / 5`"
         ),
         inline=False,

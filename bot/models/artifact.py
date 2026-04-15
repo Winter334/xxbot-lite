@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bot.models.base import IdentityMixin, Base, TimestampMixin
@@ -19,5 +21,11 @@ class Artifact(Base, IdentityMixin, TimestampMixin):
     soul_shards: Mapped[int] = mapped_column(BigInteger, default=0)
     affix_slots_json: Mapped[str] = mapped_column(Text, default="[]")
     affix_pending_json: Mapped[str] = mapped_column(Text, default="[]")
+    spirit_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    spirit_rename_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    spirit_json: Mapped[str] = mapped_column(Text, default="")
+    spirit_pending_json: Mapped[str] = mapped_column(Text, default="")
+    spirit_refining_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    spirit_refining_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     character = relationship("Character", back_populates="artifact")
