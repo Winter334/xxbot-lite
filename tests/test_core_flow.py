@@ -262,7 +262,7 @@ async def test_spirit_nurture_collects_after_unlock_and_boosts_artifact_power(se
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 1016, "灵工")
         character = creation.character
-        character.artifact.reinforce_level = 60
+        character.artifact.reinforce_level = 30
         character.artifact.atk_bonus = 12000
         character.artifact.def_bonus = 9000
         character.artifact.agi_bonus = 6000
@@ -287,7 +287,7 @@ async def test_panel_embed_shows_spirit_summary(session_factory, services) -> No
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 1017, "灵照")
         character = creation.character
-        character.artifact.reinforce_level = 60
+        character.artifact.reinforce_level = 30
         character.artifact.atk_bonus = 12000
         character.artifact.def_bonus = 9000
         character.artifact.agi_bonus = 6000

@@ -24,7 +24,7 @@ def build_spirit_panel_embed(
     if not panel_state.unlocked:
         embed.add_field(
             name="当前情况",
-            value=f"本命法宝需达 `+60`，方可孕育器灵。\n当前强化：`+{snapshot.artifact_level}`",
+            value=f"本命法宝需达 `+30`，方可孕育器灵。\n当前强化：`+{snapshot.artifact_level}`",
             inline=False,
         )
         return embed
