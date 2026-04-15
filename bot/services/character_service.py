@@ -66,6 +66,10 @@ class CharacterSnapshot:
     spirit_name: str
     spirit_tier_name: str
     spirit_power_name: str
+    sect_name: str
+    sect_role: str
+    sect_contribution_daily: int
+    lingshi: int
     soul_shards: int
     title: str
     faction_key: str
@@ -149,6 +153,7 @@ class CharacterService:
             .where(Player.discord_user_id == str(discord_user_id))
             .options(
                 selectinload(Character.player),
+                selectinload(Character.sect),
                 selectinload(Character.artifact),
                 selectinload(Character.ladder_record),
             )
@@ -164,6 +169,7 @@ class CharacterService:
             .where(Character.current_ladder_rank == rank)
             .options(
                 selectinload(Character.player),
+                selectinload(Character.sect),
                 selectinload(Character.artifact),
                 selectinload(Character.ladder_record),
             )
@@ -176,6 +182,7 @@ class CharacterService:
     async def list_characters(self, session: AsyncSession) -> list[Character]:
         statement = select(Character).options(
             selectinload(Character.player),
+            selectinload(Character.sect),
             selectinload(Character.artifact),
             selectinload(Character.ladder_record),
         )
@@ -222,6 +229,14 @@ class CharacterService:
             travel_def_pct=0,
             travel_agi_pct=0,
             last_qi_recovered_at=now,
+            sect_id=None,
+            sect_joined_at=None,
+            sect_last_left_at=None,
+            sect_contribution_total=0,
+            sect_contribution_weekly=0,
+            sect_contribution_daily=0,
+            sect_last_contribution_on=None,
+            lingshi=0,
             fate_key=fate.key,
             faction="neutral",
             virtue=0,
@@ -308,6 +323,8 @@ class CharacterService:
         *,
         title: str | None = None,
         faction_title: str = "",
+        sect_name: str = "",
+        sect_role: str = "",
         honor_tags: tuple[str, ...] = (),
         idle_minutes: int = 0,
         travel_minutes: int = 0,
@@ -349,6 +366,10 @@ class CharacterService:
             spirit_name=spirit_name,
             spirit_tier_name=spirit_tier_name,
             spirit_power_name=spirit_power_name,
+            sect_name=sect_name or (character.sect.name if character.sect is not None else ""),
+            sect_role=sect_role,
+            sect_contribution_daily=character.sect_contribution_daily or 0,
+            lingshi=character.lingshi or 0,
             soul_shards=(artifact.soul_shards or 0) if artifact else 0,
             title=title or character.title,
             faction_key=character.faction,
@@ -450,6 +471,14 @@ class CharacterService:
         character.travel_atk_pct = 0
         character.travel_def_pct = 0
         character.travel_agi_pct = 0
+        character.sect_id = None
+        character.sect_joined_at = None
+        character.sect_last_left_at = None
+        character.sect_contribution_total = 0
+        character.sect_contribution_weekly = 0
+        character.sect_contribution_daily = 0
+        character.sect_last_contribution_on = None
+        character.lingshi = 0
         character.last_qi_recovered_at = now
         character.fate_key = new_fate.key
         character.faction = "neutral"

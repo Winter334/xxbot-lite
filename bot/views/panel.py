@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 import discord
 
+from bot.utils.time_utils import ensure_shanghai, now_shanghai
 from bot.ui.artifact import (
     build_artifact_overview_embed,
     build_refine_panel_embed,
@@ -30,6 +32,7 @@ from bot.ui.panel import (
     build_travel_settlement_embed,
 )
 from bot.ui.ranking import build_leaderboard_embed
+from bot.ui.sect import build_sect_directory_embed, build_sect_overview_embed, build_site_board_embed
 from bot.ui.spirit import build_spirit_panel_embed
 from bot.services.faction_service import FactionTarget
 from bot.services.travel_service import TRAVEL_DURATION_CHOICES
@@ -57,11 +60,14 @@ async def _sync_snapshot(bot: XianBot, session, character) -> tuple:
     bot.faction_service.sync_character_state(character)
     bot.character_service.refresh_combat_power(character)
     title, honor_tags, faction_title = await bot.ranking_service.get_titles(session, character)
+    sect_name, sect_role = await bot.sect_service.get_member_identity(session, character)
     character.title = title
     snapshot = bot.character_service.build_snapshot(
         character,
         title=title,
         faction_title=faction_title,
+        sect_name=sect_name,
+        sect_role=sect_role,
         honor_tags=honor_tags,
         idle_minutes=bot.idle_service.current_idle_minutes(character),
         travel_minutes=bot.travel_service.current_travel_minutes(character),
@@ -77,6 +83,15 @@ async def _load_active_character(bot: XianBot, user_id: int, display_name: str):
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     return character.id, snapshot, broadcasts
+
+
+def _format_timedelta_hours(target_time) -> str:
+    remaining = ensure_shanghai(target_time) - now_shanghai()
+    total_minutes = max(0, int(remaining.total_seconds() // 60))
+    hours, minutes = divmod(total_minutes, 60)
+    if hours > 0:
+        return f"{hours}时{minutes}分"
+    return f"{minutes}分"
 
 
 async def build_panel_message(
@@ -722,6 +737,8 @@ async def build_bounty_hunt_message(bot: XianBot, owner_user_id: int, display_na
                 lines.append(f"目标：**{result.target_name}**")
             if result.soul_delta:
                 lines.append(f"器魂：`+{result.soul_delta}`")
+            if result.lingshi_delta:
+                lines.append(f"灵石：`+{result.lingshi_delta}`")
             if result.luck_delta:
                 lines.append(f"气运：`+{result.luck_delta}`")
             if result.virtue_delta:
@@ -764,6 +781,164 @@ async def build_robbery_message(bot: XianBot, owner_user_id: int, display_name: 
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts
+
+
+async def build_sect_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        settlement_notices = await bot.sect_service.settle_sites_if_needed(session)
+        snapshot = await _sync_snapshot(bot, session, character)
+        overview = await bot.sect_service.get_sect_overview(session, character)
+        if overview is None:
+            joinable = await bot.sect_service.list_joinable_sects(session, character)
+            leave_cooldown_text = None
+            if character.sect_last_left_at is not None:
+                leave_cooldown_text = _format_timedelta_hours(ensure_shanghai(character.sect_last_left_at) + timedelta(hours=24))
+            embed = build_sect_overview_embed(
+                snapshot,
+                overview=None,
+                joinable_sects=joinable,
+                leave_cooldown_text=leave_cooldown_text,
+                settlement_lines=None,
+            )
+            view = SectOverviewView(owner_user_id, has_sect=False, can_create=snapshot.realm_index >= 2, has_joinable=bool(joinable))
+        else:
+            embed = build_sect_overview_embed(
+                snapshot,
+                overview=overview,
+                joinable_sects=[],
+                settlement_lines=settlement_notices.get(character.id, []),
+            )
+            view = SectOverviewView(owner_user_id, has_sect=True, can_create=False, has_joinable=False)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return embed, view, broadcasts
+
+
+async def build_sect_directory_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        await bot.sect_service.settle_sites_if_needed(session)
+        snapshot = await _sync_snapshot(bot, session, character)
+        sects = await bot.sect_service.list_joinable_sects(session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return build_sect_directory_embed(snapshot, sects), SectDirectoryView(owner_user_id, sects), broadcasts
+
+
+async def create_sect_message(bot: XianBot, owner_user_id: int, display_name: str, sect_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        success, message = await bot.sect_service.create_sect(session, character, sect_name)
+        snapshot = await _sync_snapshot(bot, session, character)
+        overview = await bot.sect_service.get_sect_overview(session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = build_sect_overview_embed(
+        snapshot,
+        overview=overview,
+        joinable_sects=[],
+        settlement_lines=None,
+        message=message,
+        color=discord.Color.green() if success else discord.Color.orange(),
+    )
+    return embed, SectOverviewView(owner_user_id, has_sect=overview is not None, can_create=False, has_joinable=False), broadcasts
+
+
+async def join_sect_message(bot: XianBot, owner_user_id: int, display_name: str, sect_id: int):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        success, message = await bot.sect_service.join_sect(session, character, sect_id)
+        snapshot = await _sync_snapshot(bot, session, character)
+        overview = await bot.sect_service.get_sect_overview(session, character)
+        joinable = [] if overview is not None else await bot.sect_service.list_joinable_sects(session, character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = build_sect_overview_embed(
+        snapshot,
+        overview=overview,
+        joinable_sects=joinable,
+        settlement_lines=None,
+        message=message,
+        color=discord.Color.green() if success else discord.Color.orange(),
+    )
+    return embed, SectOverviewView(owner_user_id, has_sect=overview is not None, can_create=snapshot.realm_index >= 2, has_joinable=bool(joinable)), broadcasts
+
+
+async def leave_sect_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        success, message = await bot.sect_service.leave_sect(session, character)
+        snapshot = await _sync_snapshot(bot, session, character)
+        joinable = await bot.sect_service.list_joinable_sects(session, character)
+        leave_cooldown_text = _format_timedelta_hours(ensure_shanghai(character.sect_last_left_at) + timedelta(hours=24)) if character.sect_last_left_at else None
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = build_sect_overview_embed(
+        snapshot,
+        overview=None,
+        joinable_sects=joinable,
+        leave_cooldown_text=leave_cooldown_text,
+        settlement_lines=None,
+        message=message,
+        color=discord.Color.green() if success else discord.Color.orange(),
+    )
+    return embed, SectOverviewView(owner_user_id, has_sect=False, can_create=snapshot.realm_index >= 2, has_joinable=bool(joinable)), broadcasts
+
+
+async def build_site_board_message(bot: XianBot, owner_user_id: int, display_name: str, *, selected_site_id: int | None = None):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        await bot.sect_service.settle_sites_if_needed(session)
+        snapshot = await _sync_snapshot(bot, session, character)
+        overview = await bot.sect_service.get_sect_overview(session, character)
+        sites = await bot.sect_service.list_sites(session)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    if overview is None:
+        return _info_embed("未入宗门", "你尚未归于任何宗门，暂不能争夺地脉。"), None, broadcasts
+    selected = next((site for site in sites if site.site_id == selected_site_id), sites[0] if sites else None)
+    embed = build_site_board_embed(snapshot, overview, sites, selected_site=selected)
+    return embed, SectSiteActionView(owner_user_id, sites=sites, selected_site_id=selected.site_id if selected is not None else None), broadcasts
+
+
+async def act_site_message(bot: XianBot, owner_user_id: int, display_name: str, site_id: int, action_key: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        await bot.sect_service.settle_sites_if_needed(session)
+        result = await bot.sect_service.perform_site_action(session, character, site_id, action_key)
+        snapshot = await _sync_snapshot(bot, session, character)
+        overview = await bot.sect_service.get_sect_overview(session, character)
+        sites = await bot.sect_service.list_sites(session)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    if overview is None:
+        return _info_embed("未入宗门", "你尚未归于任何宗门，暂不能争夺地脉。"), None, broadcasts
+    selected = next((site for site in sites if site.site_id == site_id), sites[0] if sites else None)
+    action_lines = []
+    if result.site_name:
+        action_lines.append(f"地脉：**{result.site_name}** · `{result.site_type_name}`")
+    if result.contribution_gain:
+        action_lines.append(f"功绩：`+{result.contribution_gain}`")
+    if result.qi_before or result.qi_after or not result.success:
+        action_lines.append(f"气机：`{result.qi_before} -> {result.qi_after}`")
+    embed = build_site_board_embed(
+        snapshot,
+        overview,
+        sites,
+        selected_site=selected,
+        message=result.message,
+        action_lines=action_lines,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+    )
+    return embed, SectSiteActionView(owner_user_id, sites=sites, selected_site_id=selected.site_id if selected is not None else None), broadcasts
 
 
 async def run_private_ladder_sequence(
@@ -913,6 +1088,13 @@ class PanelView(OwnerLockedView):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
+    @discord.ui.button(label="宗门", style=discord.ButtonStyle.secondary, row=2)
+    async def sect_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await build_sect_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
+
 
 class ReincarnationConfirmView(OwnerLockedView):
     def __init__(self, owner_user_id: int) -> None:
@@ -1034,6 +1216,203 @@ class SpiritRenameModal(discord.ui.Modal, title="为器灵赐名"):
         embed, view, broadcasts = await rename_spirit_message(bot, interaction.user.id, interaction.user.display_name, str(self.spirit_name))
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
+
+
+class SectCreateModal(discord.ui.Modal, title="立下宗门"):
+    sect_name = discord.ui.TextInput(label="宗门名称", placeholder="请输入 2~12 个字符", max_length=12)
+
+    def __init__(self, owner_user_id: int) -> None:
+        super().__init__()
+        self.owner_user_id = owner_user_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await create_sect_message(bot, interaction.user.id, interaction.user.display_name, str(self.sect_name))
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
+
+
+class SectJoinSelect(discord.ui.Select):
+    def __init__(self, owner_user_id: int, *, sects) -> None:
+        self.owner_user_id = owner_user_id
+        options = [
+            discord.SelectOption(
+                label=sect.name[:100],
+                description=f"{sect.faction_name} · 门人 {sect.member_count} · 地脉 {sect.owner_site_count}"[:100],
+                value=str(sect.sect_id),
+            )
+            for sect in sects[:25]
+        ]
+        super().__init__(placeholder="选择要投身的宗门", options=options, row=1, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_user_id:
+            await interaction.response.send_message("这张面板并非为你而开。", ephemeral=True)
+            return
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await join_sect_message(bot, interaction.user.id, interaction.user.display_name, int(self.values[0]))
+        await interaction.response.edit_message(embed=embed, view=view)
+        await _send_broadcasts(bot, broadcasts)
+
+
+class SectOverviewView(OwnerLockedView):
+    def __init__(self, owner_user_id: int, *, has_sect: bool, can_create: bool, has_joinable: bool) -> None:
+        super().__init__(owner_user_id)
+        self._add_refresh_button()
+        if has_sect:
+            self._add_site_button()
+            self._add_leave_button()
+        else:
+            self._add_directory_button(disabled=not has_joinable)
+            self._add_create_button(disabled=not can_create)
+
+    def _add_refresh_button(self) -> None:
+        button = discord.ui.Button(label="刷新", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_sect_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_directory_button(self, *, disabled: bool) -> None:
+        button = discord.ui.Button(label="宗门名录", row=0, style=discord.ButtonStyle.primary, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_sect_directory_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_create_button(self, *, disabled: bool) -> None:
+        button = discord.ui.Button(label="立下宗门", row=0, style=discord.ButtonStyle.success, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            await interaction.response.send_modal(SectCreateModal(self.owner_user_id))
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_site_button(self) -> None:
+        button = discord.ui.Button(label="资源争夺", row=0, style=discord.ButtonStyle.primary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_site_board_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_leave_button(self) -> None:
+        button = discord.ui.Button(label="离开宗门", row=0, style=discord.ButtonStyle.danger)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await leave_sect_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+
+class SectDirectoryView(OwnerLockedView):
+    def __init__(self, owner_user_id: int, sects) -> None:
+        super().__init__(owner_user_id)
+        self._add_back_button()
+        if sects:
+            self.add_item(SectJoinSelect(owner_user_id, sects=sects))
+
+    def _add_back_button(self) -> None:
+        button = discord.ui.Button(label="返回", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_sect_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+
+class SectSiteSelect(discord.ui.Select):
+    def __init__(self, owner_user_id: int, *, sites, selected_site_id: int | None) -> None:
+        self.owner_user_id = owner_user_id
+        options = [
+            discord.SelectOption(
+                label=site.site_name[:100],
+                description=f"{site.site_type_name} · {site.owner_name}"[:100],
+                value=str(site.site_id),
+                default=site.site_id == selected_site_id,
+            )
+            for site in sites[:25]
+        ]
+        super().__init__(placeholder="选择要争夺的地脉", options=options, row=1, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_user_id:
+            await interaction.response.send_message("这张面板并非为你而开。", ephemeral=True)
+            return
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await build_site_board_message(
+            bot,
+            interaction.user.id,
+            interaction.user.display_name,
+            selected_site_id=int(self.values[0]),
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+        await _send_broadcasts(bot, broadcasts)
+
+
+class SectSiteActionView(OwnerLockedView):
+    def __init__(self, owner_user_id: int, *, sites, selected_site_id: int | None) -> None:
+        super().__init__(owner_user_id)
+        self.selected_site_id = selected_site_id
+        self._add_back_button()
+        if sites:
+            self.add_item(SectSiteSelect(owner_user_id, sites=sites, selected_site_id=selected_site_id))
+        self._add_action_button("contest", "强争", style=discord.ButtonStyle.danger, disabled=selected_site_id is None)
+        self._add_action_button("guard", "护持", style=discord.ButtonStyle.success, disabled=selected_site_id is None)
+        self._add_action_button("transport", "输运", style=discord.ButtonStyle.primary, disabled=selected_site_id is None)
+
+    def _add_back_button(self) -> None:
+        button = discord.ui.Button(label="返回", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_sect_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_action_button(self, action_key: str, label: str, *, style: discord.ButtonStyle, disabled: bool) -> None:
+        button = discord.ui.Button(label=label, row=0, style=style, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction, key: str = action_key) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await act_site_message(
+                bot,
+                interaction.user.id,
+                interaction.user.display_name,
+                self.selected_site_id or 0,
+                key,
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
 
 
 class ArtifactOverviewView(OwnerLockedView):

@@ -3,5 +3,7 @@ from bot.models.base import Base
 from bot.models.character import Character
 from bot.models.ladder_record import LadderRecord
 from bot.models.player import Player
+from bot.models.sect import Sect
+from bot.models.world_resource_site import WorldResourceSite
 
-__all__ = ["Artifact", "Base", "Character", "LadderRecord", "Player"]
+__all__ = ["Artifact", "Base", "Character", "LadderRecord", "Player", "Sect", "WorldResourceSite"]

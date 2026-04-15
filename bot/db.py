@@ -50,6 +50,14 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                 "last_robbery_at" not in character_columns,
                 "last_bounty_hunt_at" not in character_columns,
                 "last_bounty_defeated_on" not in character_columns,
+                "sect_id" not in character_columns,
+                "sect_joined_at" not in character_columns,
+                "sect_last_left_at" not in character_columns,
+                "sect_contribution_total" not in character_columns,
+                "sect_contribution_weekly" not in character_columns,
+                "sect_contribution_daily" not in character_columns,
+                "sect_last_contribution_on" not in character_columns,
+                "lingshi" not in character_columns,
                 "affix_slots_json" not in artifact_columns,
                 "affix_pending_json" not in artifact_columns,
                 "spirit_name" not in artifact_columns,
@@ -78,6 +86,14 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             needs_last_robbery_at,
             needs_last_bounty_hunt_at,
             needs_last_bounty_defeated_on,
+            needs_sect_id,
+            needs_sect_joined_at,
+            needs_sect_last_left_at,
+            needs_sect_contribution_total,
+            needs_sect_contribution_weekly,
+            needs_sect_contribution_daily,
+            needs_sect_last_contribution_on,
+            needs_lingshi,
             needs_affix_slots,
             needs_affix_pending,
             needs_spirit_name,
@@ -122,6 +138,22 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN last_bounty_hunt_at DATETIME"))
         if needs_last_bounty_defeated_on:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN last_bounty_defeated_on DATE"))
+        if needs_sect_id:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_id INTEGER"))
+        if needs_sect_joined_at:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_joined_at DATETIME"))
+        if needs_sect_last_left_at:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_last_left_at DATETIME"))
+        if needs_sect_contribution_total:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_contribution_total BIGINT NOT NULL DEFAULT 0"))
+        if needs_sect_contribution_weekly:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_contribution_weekly BIGINT NOT NULL DEFAULT 0"))
+        if needs_sect_contribution_daily:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_contribution_daily BIGINT NOT NULL DEFAULT 0"))
+        if needs_sect_last_contribution_on:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_last_contribution_on DATE"))
+        if needs_lingshi:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN lingshi BIGINT NOT NULL DEFAULT 0"))
         if needs_affix_slots:
             await connection.execute(text("ALTER TABLE artifacts ADD COLUMN affix_slots_json TEXT NOT NULL DEFAULT '[]'"))
         if needs_affix_pending:

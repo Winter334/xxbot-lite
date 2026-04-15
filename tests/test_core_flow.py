@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import select
 
 from bot.data.spirits import SpiritPowerEntry
+from bot.models.world_resource_site import WorldResourceSite
 from bot.services.travel_service import TravelService
 from bot.ui.panel import build_ladder_round_embed, build_panel_embed
 from bot.utils.time_utils import now_shanghai
@@ -319,6 +321,94 @@ async def test_niepan_spirit_power_revives_once_in_combat(session_factory, servi
     result = services.combat.run_battle(attacker, defender, rng=roller)
 
     assert any(log.text and "涅槃再起" in log.text for log in result.logs)
+
+
+@pytest.mark.asyncio
+async def test_create_and_join_sect_tracks_identity(session_factory, services) -> None:
+    async with session_factory() as session:
+        creator = (await services.character.get_or_create_character(session, 8001, "宗主")).character
+        creator.realm_key = "zhuji"
+        creator.realm_index = 2
+        creator.stage_key = "early"
+        creator.stage_index = 1
+        success, _ = await services.sect.create_sect(session, creator, "青岚宗")
+        member = (await services.character.get_or_create_character(session, 8002, "门徒")).character
+        join_success, _ = await services.sect.join_sect(session, member, creator.sect_id)
+        sect_name, sect_role = await services.sect.get_member_identity(session, creator)
+        await session.commit()
+
+        assert success is True
+        assert join_success is True
+        assert sect_name == "青岚宗"
+        assert sect_role == "宗主"
+        assert member.sect_id == creator.sect_id
+
+
+@pytest.mark.asyncio
+async def test_sect_site_action_consumes_qi_and_grants_contribution(session_factory, services) -> None:
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 8003, "争地")).character
+        character.realm_key = "zhuji"
+        character.realm_index = 2
+        character.stage_key = "early"
+        character.stage_index = 1
+        await services.sect.create_sect(session, character, "断岳门")
+        await services.sect.ensure_sites(session)
+        site = (await session.scalars(select(WorldResourceSite).limit(1))).one()
+
+        result = await services.sect.perform_site_action(session, character, site.id, "transport")
+        await session.commit()
+
+        assert result.success is True
+        assert result.qi_before == 6
+        assert result.qi_after == 5
+        assert character.sect_contribution_daily > 0
+
+
+@pytest.mark.asyncio
+async def test_sect_settlement_rewards_lingshi_and_soul(session_factory, services) -> None:
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 8004, "矿守")).character
+        character.realm_key = "zhuji"
+        character.realm_index = 2
+        character.stage_key = "early"
+        character.stage_index = 1
+        await services.sect.create_sect(session, character, "玄石门")
+        await services.sect.ensure_sites(session)
+        site = (await session.scalars(select(WorldResourceSite).where(WorldResourceSite.site_type == "lingshi"))).first()
+        assert site is not None
+        state = {"sect_scores": {str(character.sect_id): 100}}
+        site.state_json = services.sect._dump_state(state)
+        site.settlement_day = now_shanghai().date() - timedelta(days=1)
+        character.sect_contribution_daily = 50
+        character.sect_last_contribution_on = now_shanghai().date() - timedelta(days=1)
+        character.sect_joined_at = now_shanghai() - timedelta(days=2)
+
+        notices = await services.sect.settle_sites_if_needed(session)
+        await session.commit()
+
+        assert notices.get(character.id)
+        assert character.lingshi >= 200
+        assert character.artifact.soul_shards >= 10
+
+
+@pytest.mark.asyncio
+async def test_bounty_hunt_grants_lingshi(session_factory, services) -> None:
+    async with session_factory() as session:
+        hunter = (await services.character.get_or_create_character(session, 8005, "悬赏客")).character
+        target = (await services.character.get_or_create_character(session, 8006, "悬首")).character
+        services.faction.join_faction(hunter, "righteous")
+        services.faction.join_faction(target, "demonic")
+        hunter.realm_key = "zhuji"
+        hunter.realm_index = 2
+        target.bounty_soul = 12
+
+        result = services.faction.challenge_bounty(hunter, target)
+        await session.commit()
+
+        assert result.success is True
+        assert result.lingshi_delta == 120
+        assert hunter.lingshi >= 120
 
 
 @pytest.mark.asyncio
