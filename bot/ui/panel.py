@@ -39,6 +39,7 @@ def build_panel_embed(
             f"🔭 命格：`{RARITY_BADGES[snapshot.fate_rarity]}` **{snapshot.fate_name}** · {snapshot.fate_summary}\n"
             f"☯ 阵营：**{snapshot.faction_name}**"
             f"{f' · {snapshot.faction_title}' if snapshot.faction_title else ''}\n"
+            f"🏯 宗门：**{snapshot.sect_name or '散修'}**{f' · {snapshot.sect_role}' if snapshot.sect_role else ''}\n"
             f"🎖 荣誉：{honor_line}"
         ),
         color=RARITY_COLORS[snapshot.fate_rarity],

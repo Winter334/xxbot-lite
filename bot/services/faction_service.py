@@ -37,6 +37,7 @@ class FactionActionResult:
     message: str
     battle: BattleResult | None
     soul_delta: int = 0
+    lingshi_delta: int = 0
     luck_delta: int = 0
     virtue_delta: int = 0
     infamy_delta: int = 0
@@ -206,8 +207,11 @@ class FactionService:
             return FactionActionResult(False, "你此番讨伐未能成事，悬赏仍在对方头上。", battle, target_name=target.player.display_name)
 
         reward_soul = target.bounty_soul or 0
+        reward_lingshi = reward_soul * 10
         if hunter.artifact is not None and reward_soul > 0:
             hunter.artifact.soul_shards += reward_soul
+        if reward_lingshi > 0:
+            hunter.lingshi += reward_lingshi
         hunter.virtue += reward_soul
         hunter.luck += 10
         target.bounty_soul = 0
@@ -219,6 +223,7 @@ class FactionService:
             "讨伐得手，对方悬赏已全部兑现。",
             battle,
             soul_delta=reward_soul,
+            lingshi_delta=reward_lingshi,
             luck_delta=10,
             virtue_delta=reward_soul,
             bounty_delta=-reward_soul,
