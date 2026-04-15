@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+bot/__init__.py
+bot/config.py
+bot/db.py
+bot/main.py
+tests/test_artifact_affixes.py
+tests/test_core_flow.py
+tests/test_discord_component_limits.py
+xxbot.egg-info/PKG-INFO
+xxbot.egg-info/SOURCES.txt
+xxbot.egg-info/dependency_links.txt
+xxbot.egg-info/requires.txt
+xxbot.egg-info/top_level.txt
