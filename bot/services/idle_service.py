@@ -18,6 +18,7 @@ class IdleSettlement:
     recovered_qi: int
     gained_soul: int
     gained_luck: int
+    retreat_mode: str
 
 
 class IdleService:
@@ -25,6 +26,8 @@ class IdleService:
     idle_cap_hours = 24
     qi_recover_minutes = 20
     soul_drop_chance_per_cycle = 0.25
+    soul_focus_soul_per_cycle = 5
+    soul_focus_cultivation_ratio = 0.1
 
     def __init__(self, fate_service: FateService, rng: random.Random | None = None) -> None:
         self.fate_service = fate_service
@@ -47,11 +50,16 @@ class IdleService:
         current_time = ensure_shanghai(now or now_shanghai())
         recovered_qi = self._recover_qi(character, current_time)
         if not character.is_retreating:
-            return IdleSettlement(0, 0, 0, recovered_qi, 0, 0)
+            return IdleSettlement(0, 0, 0, recovered_qi, 0, 0, getattr(character, "retreat_mode", "cultivation"))
         gained_cultivation, cycles, minutes = self._settle_idle(character, current_time)
-        gained_soul = self._roll_idle_soul(character, cycles)
+        retreat_mode = getattr(character, "retreat_mode", "cultivation")
+        if retreat_mode == "soul":
+            gained_soul = self._settle_soul_focus(character, cycles)
+            gained_cultivation = self._trim_soul_focus_cultivation(character, gained_cultivation)
+        else:
+            gained_soul = self._roll_idle_soul(character, cycles)
         gained_luck = self._settle_luck(character, minutes)
-        return IdleSettlement(gained_cultivation, cycles, minutes, recovered_qi, gained_soul, gained_luck)
+        return IdleSettlement(gained_cultivation, cycles, minutes, recovered_qi, gained_soul, gained_luck, retreat_mode)
 
     def current_idle_minutes(self, character: Character, *, now=None) -> int:
         if not character.is_retreating:
@@ -109,6 +117,24 @@ class IdleService:
         if gained > 0:
             character.artifact.soul_shards += gained
         return gained
+
+    def _settle_soul_focus(self, character: Character, cycles: int) -> int:
+        if cycles <= 0 or character.artifact is None:
+            return 0
+        gained = cycles * self.soul_focus_soul_per_cycle
+        gained = self.fate_service.apply_system_soul_modifier(character.fate_key, gained)
+        if gained > 0:
+            character.artifact.soul_shards += gained
+        return gained
+
+    def _trim_soul_focus_cultivation(self, character: Character, gained_cultivation: int) -> int:
+        if gained_cultivation <= 0:
+            return 0
+        current_stage = get_stage(character.realm_key, character.stage_key)
+        target = max(1, int(gained_cultivation * self.soul_focus_cultivation_ratio))
+        actual = min(target, max(0, current_stage.cultivation_max - character.cultivation + gained_cultivation))
+        character.cultivation = max(0, character.cultivation - (gained_cultivation - actual))
+        return actual
 
     def _settle_luck(self, character: Character, settled_minutes: int) -> int:
         if settled_minutes <= 0 or character.faction != "righteous":

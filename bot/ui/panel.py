@@ -27,7 +27,8 @@ def build_panel_embed(
     if snapshot.is_traveling:
         state_text = f"游历中 · {format_duration_minutes(snapshot.travel_minutes)} / {format_duration_minutes(snapshot.travel_duration_minutes)}"
     elif snapshot.is_retreating:
-        state_text = f"闭关中 · {format_duration_minutes(snapshot.idle_minutes)}"
+        state_prefix = "炼魂中" if snapshot.retreat_mode == "soul" else "闭关中"
+        state_text = f"{state_prefix} · {format_duration_minutes(snapshot.idle_minutes)}"
     else:
         state_text = "未在闭关/游历"
 
@@ -214,10 +215,16 @@ def build_breakthrough_embed(snapshot: CharacterSnapshot, result: BreakthroughRe
 
 
 def build_retreat_embed(snapshot: CharacterSnapshot) -> discord.Embed:
-    status = "闭关中" if snapshot.is_retreating else "未闭关"
-    description = "闭关期间可论道、看榜、锻宝，但不可登塔。" if snapshot.is_retreating else "可在此入洞府闭关，出关时统一结算修为与器魂。"
+    mode_name = "炼魂" if snapshot.retreat_mode == "soul" else "修炼"
+    status = f"{mode_name}中" if snapshot.is_retreating else "静室空悬"
+    if snapshot.is_retreating and snapshot.retreat_mode == "soul":
+        description = "地火在炉腹深处缓缓吞吐，本命灵韵被一点点逼出，凝作可触可见的器魂星芒。"
+    elif snapshot.is_retreating:
+        description = "洞府石门紧闭，四壁灵纹缓缓明灭，周身灵气沿着经脉往复流转，心海渐归寂定。"
+    else:
+        description = "洞府深处灯影幽微，一侧蒲团承接灵息，一侧古炉温养本命，静待你择一法门入定。"
     embed = discord.Embed(
-        title=f"{snapshot.player_name} · 洞府修炼",
+        title=f"{snapshot.player_name} · 洞府",
         description=description,
         color=discord.Color.teal() if snapshot.is_retreating else discord.Color.blurple(),
     )
@@ -226,30 +233,31 @@ def build_retreat_embed(snapshot: CharacterSnapshot) -> discord.Embed:
         value=(
             f"状态：`{status}`\n"
             f"累计时长：`{format_duration_minutes(snapshot.idle_minutes)}`\n"
-            f"收益封顶：`24 小时`"
+            f"本命器魂：`{snapshot.soul_shards}`"
         ),
         inline=False,
     )
-    embed.add_field(
-        name="闭关说明",
-        value=(
-            "- 闭关中无法登塔\n"
-            "- 可正常论道、看榜、锻宝\n"
-            "- 气机会照常自行恢复"
-        ),
-        inline=False,
-    )
+    if snapshot.is_retreating:
+        flavor_value = (
+            "炉火如豆，映得本命灵光轻颤不止。"
+            if snapshot.retreat_mode == "soul"
+            else "灵息沿经脉回环不绝，丹田中已有潮汐起伏。"
+        )
+    else:
+        flavor_value = "蒲团未暖，古炉犹温，静室之中仍留着上一轮吐纳后的余香。"
+    embed.add_field(name="洞府气象", value=flavor_value, inline=False)
     return embed
 
 
 def build_retreat_settlement_embed(snapshot: CharacterSnapshot, settlement: IdleSettlement, message: str) -> discord.Embed:
+    mode_name = "炼魂" if settlement.retreat_mode == "soul" else "闭关"
     embed = discord.Embed(
         title=f"{snapshot.player_name} · 出关",
         description=message,
         color=discord.Color.green(),
     )
     embed.add_field(
-        name="本次闭关",
+        name=f"本次{mode_name}",
         value=(
             f"时长：`{format_duration_minutes(settlement.settled_minutes)}`\n"
             f"修为：`+{format_big_number(settlement.gained_cultivation)}`\n"

@@ -22,6 +22,7 @@ class Character(Base, IdentityMixin, TimestampMixin):
     current_qi: Mapped[int] = mapped_column(Integer, default=6)
     qi_max: Mapped[int] = mapped_column(Integer, default=6)
     is_retreating: Mapped[bool] = mapped_column(Boolean, default=False)
+    retreat_mode: Mapped[str] = mapped_column(String(16), default="cultivation")
     is_traveling: Mapped[bool] = mapped_column(Boolean, default=False)
     last_idle_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     travel_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

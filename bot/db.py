@@ -34,6 +34,7 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             artifact_columns = {column["name"] for column in inspector.get_columns("artifacts")} if "artifacts" in table_names else set()
             return (
                 "is_retreating" not in character_columns,
+                "retreat_mode" not in character_columns,
                 "is_traveling" not in character_columns,
                 "travel_started_at" not in character_columns,
                 "travel_duration_minutes" not in character_columns,
@@ -70,6 +71,7 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
 
         (
             needs_retreat_column,
+            needs_retreat_mode,
             needs_traveling_column,
             needs_travel_started_at,
             needs_travel_duration,
@@ -105,6 +107,8 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
         ) = await connection.run_sync(_collect_missing_columns)
         if needs_retreat_column:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN is_retreating BOOLEAN NOT NULL DEFAULT 0"))
+        if needs_retreat_mode:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN retreat_mode VARCHAR(16) NOT NULL DEFAULT 'cultivation'"))
         if needs_traveling_column:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN is_traveling BOOLEAN NOT NULL DEFAULT 0"))
         if needs_travel_started_at:

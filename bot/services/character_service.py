@@ -88,6 +88,7 @@ class CharacterSnapshot:
     daily_pvp_attempts_left: int
     idle_minutes: int
     is_retreating: bool
+    retreat_mode: str
     is_traveling: bool
     travel_minutes: int
     travel_duration_minutes: int
@@ -131,6 +132,11 @@ class RetreatActionResult:
 
 
 class CharacterService:
+    RETREAT_MODE_NAMES = {
+        "cultivation": "修炼",
+        "soul": "炼魂",
+    }
+
     def __init__(self, fate_service: FateService, artifact_service: ArtifactService, spirit_service: SpiritService) -> None:
         self.fate_service = fate_service
         self.artifact_service = artifact_service
@@ -143,6 +149,8 @@ class CharacterService:
             character.luck = self.fate_service.random_initial_luck()
         if not character.faction:
             character.faction = "neutral"
+        if not getattr(character, "retreat_mode", ""):
+            character.retreat_mode = "cultivation"
         if character.artifact is not None:
             self.spirit_service.ensure_compatibility(character.artifact)
 
@@ -220,6 +228,7 @@ class CharacterService:
             current_qi=6,
             qi_max=6,
             is_retreating=False,
+            retreat_mode="cultivation",
             is_traveling=False,
             last_idle_at=now,
             travel_started_at=now,
@@ -388,6 +397,7 @@ class CharacterService:
             daily_pvp_attempts_left=max(0, 5 - character.daily_pvp_attempts_used),
             idle_minutes=idle_minutes,
             is_retreating=character.is_retreating,
+            retreat_mode=character.retreat_mode,
             is_traveling=character.is_traveling,
             travel_minutes=travel_minutes,
             travel_duration_minutes=character.travel_duration_minutes,
@@ -420,21 +430,32 @@ class CharacterService:
     def can_reincarnate_today(self, character: Character) -> bool:
         return character.last_reincarnated_on != today_shanghai()
 
-    def start_retreat(self, character: Character) -> RetreatActionResult:
+    def retreat_mode_name(self, retreat_mode: str) -> str:
+        return self.RETREAT_MODE_NAMES.get(retreat_mode, "修炼")
+
+    def start_retreat(self, character: Character, mode: str = "cultivation") -> RetreatActionResult:
         if character.is_retreating:
             return RetreatActionResult(False, "你已在洞府闭关中，无需再次入定。")
         if character.is_traveling:
             return RetreatActionResult(False, "你仍在外游历，需先归来结算，方可再入洞府。")
+        if mode not in self.RETREAT_MODE_NAMES:
+            return RetreatActionResult(False, "此等闭关法门尚未悟透。")
         now = now_shanghai()
         character.is_retreating = True
+        character.retreat_mode = mode
         character.last_idle_at = now
+        if mode == "soul":
+            character.last_highlight_text = "方才封炉静坐，引本命灵韵淬炼器魂。"
+            return RetreatActionResult(True, "你已合拢洞府石门，炉火微明，开始炼魂。")
         character.last_highlight_text = "方才入洞府闭关，静候灵气归体。"
         return RetreatActionResult(True, "你已封闭洞府，开始闭关修炼。")
 
     def stop_retreat(self, character: Character, settlement: IdleSettlement) -> RetreatActionResult:
         if not character.is_retreating:
             return RetreatActionResult(False, "你当前并未闭关，无需强行出关。", settlement)
+        mode = character.retreat_mode
         character.is_retreating = False
+        character.retreat_mode = "cultivation"
         if settlement.gained_cultivation > 0 or settlement.gained_soul > 0 or settlement.gained_luck > 0:
             pieces: list[str] = []
             if settlement.gained_cultivation > 0:
@@ -443,9 +464,12 @@ class CharacterService:
                 pieces.append(f"器魂凝成 {settlement.gained_soul}")
             if settlement.gained_luck > 0:
                 pieces.append(f"气运增长 {settlement.gained_luck}")
-            character.last_highlight_text = f"方才出关，{'，'.join(pieces)}。"
+            prefix = "方才开炉" if mode == "soul" else "方才出关"
+            character.last_highlight_text = f"{prefix}，{'，'.join(pieces)}。"
         else:
             character.last_highlight_text = "方才出关，却觉灵气未满一周天。"
+        if mode == "soul":
+            return RetreatActionResult(True, "你已熄去炉火，此番炼魂所得已尽数归入本命。", settlement)
         return RetreatActionResult(True, "你已出关，此番闭关所得已尽数归体。", settlement)
 
     async def reincarnate(self, session: AsyncSession, character: Character) -> ReincarnationResult:
@@ -463,6 +487,7 @@ class CharacterService:
         character.highest_floor = 0
         character.current_qi = character.qi_max
         character.is_retreating = False
+        character.retreat_mode = "cultivation"
         character.is_traveling = False
         character.last_idle_at = now
         character.travel_started_at = now

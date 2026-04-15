@@ -48,7 +48,16 @@ async def test_views_respect_discord_component_limits() -> None:
         ArtifactOverviewView(1),
         ArtifactReinforceView(1),
         ArtifactRefineView(1, panel_state),
-        SectOverviewView(1, has_sect=False, can_create=True, has_joinable=True),
+        SectOverviewView(1, has_sect=False, can_create=True, has_joinable=True, overview=None),
+        SectOverviewView(
+            1,
+            has_sect=True,
+            can_create=False,
+            has_joinable=False,
+            overview=SimpleNamespace(
+                members=[SimpleNamespace(character_id=1, display_name=f"门人{i}", role_name="弟子", realm_display="筑基前期", contribution_weekly=10) for i in range(1, 6)]
+            ),
+        ),
         SectDirectoryView(1, [SimpleNamespace(sect_id=1, name="青岚宗", faction_name="中立", member_count=3, owner_site_count=1)]),
         SectSiteActionView(1, sites=[SimpleNamespace(site_id=1, site_name="青云灵矿", site_type_name="灵矿", owner_name="青岚宗")], selected_site_id=1),
         SpiritOverviewView(
@@ -62,7 +71,7 @@ async def test_views_respect_discord_component_limits() -> None:
                 can_rename=True,
             ),
         ),
-        RetreatView(1, is_retreating=False),
+        RetreatView(1, snapshot=SimpleNamespace(is_retreating=False)),
         TravelView(
             1,
             snapshot=SimpleNamespace(

@@ -519,7 +519,7 @@ async def build_retreat_message(bot: XianBot, owner_user_id: int, display_name: 
         snapshot = await _sync_snapshot(bot, session, character)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return build_retreat_embed(snapshot), RetreatView(owner_user_id, is_retreating=snapshot.is_retreating), broadcasts
+    return build_retreat_embed(snapshot), RetreatView(owner_user_id, snapshot=snapshot), broadcasts
 
 
 async def build_travel_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -573,18 +573,18 @@ async def stop_travel_message(bot: XianBot, owner_user_id: int, display_name: st
     return build_travel_settlement_embed(snapshot, settlement), TravelView(owner_user_id, snapshot=snapshot), broadcasts
 
 
-async def start_retreat_message(bot: XianBot, owner_user_id: int, display_name: str):
+async def start_retreat_message(bot: XianBot, owner_user_id: int, display_name: str, mode: str = "cultivation"):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         character = creation.character
         await _refresh_resources(bot, character)
-        result = bot.character_service.start_retreat(character)
+        result = bot.character_service.start_retreat(character, mode=mode)
         snapshot = await _sync_snapshot(bot, session, character)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     embed = build_retreat_embed(snapshot)
     embed.description = result.message
-    return embed, RetreatView(owner_user_id, is_retreating=snapshot.is_retreating), broadcasts
+    return embed, RetreatView(owner_user_id, snapshot=snapshot), broadcasts
 
 
 async def stop_retreat_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -595,8 +595,8 @@ async def stop_retreat_message(bot: XianBot, owner_user_id: int, display_name: s
         result = bot.character_service.stop_retreat(character, settlement)
         snapshot = await _sync_snapshot(bot, session, character)
         await session.commit()
-    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return build_retreat_settlement_embed(snapshot, settlement, result.message), RetreatView(owner_user_id, is_retreating=snapshot.is_retreating), broadcasts
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []    
+    return build_retreat_settlement_embed(snapshot, settlement, result.message), RetreatView(owner_user_id, snapshot=snapshot), broadcasts
 
 
 async def rename_artifact_message(bot: XianBot, owner_user_id: int, display_name: str, new_name: str):
@@ -784,6 +784,10 @@ async def build_robbery_message(bot: XianBot, owner_user_id: int, display_name: 
 
 
 async def build_sect_message(bot: XianBot, owner_user_id: int, display_name: str):
+    return await build_sect_message_for_member(bot, owner_user_id, display_name, selected_member_id=None)
+
+
+async def build_sect_message_for_member(bot: XianBot, owner_user_id: int, display_name: str, *, selected_member_id: int | None):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         character = creation.character
@@ -804,13 +808,15 @@ async def build_sect_message(bot: XianBot, owner_user_id: int, display_name: str
             )
             view = SectOverviewView(owner_user_id, has_sect=False, can_create=snapshot.realm_index >= 2, has_joinable=bool(joinable))
         else:
+            selected_member = next((member for member in overview.members if member.character_id == selected_member_id), None)
             embed = build_sect_overview_embed(
                 snapshot,
                 overview=overview,
                 joinable_sects=[],
                 settlement_lines=settlement_notices.get(character.id, []),
+                selected_member=selected_member,
             )
-            view = SectOverviewView(owner_user_id, has_sect=True, can_create=False, has_joinable=False)
+            view = SectOverviewView(owner_user_id, has_sect=True, can_create=False, has_joinable=False, overview=overview)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     return embed, view, broadcasts
@@ -845,7 +851,7 @@ async def create_sect_message(bot: XianBot, owner_user_id: int, display_name: st
         message=message,
         color=discord.Color.green() if success else discord.Color.orange(),
     )
-    return embed, SectOverviewView(owner_user_id, has_sect=overview is not None, can_create=False, has_joinable=False), broadcasts
+    return embed, SectOverviewView(owner_user_id, has_sect=overview is not None, can_create=False, has_joinable=False, overview=overview), broadcasts
 
 
 async def join_sect_message(bot: XianBot, owner_user_id: int, display_name: str, sect_id: int):
@@ -866,7 +872,7 @@ async def join_sect_message(bot: XianBot, owner_user_id: int, display_name: str,
         message=message,
         color=discord.Color.green() if success else discord.Color.orange(),
     )
-    return embed, SectOverviewView(owner_user_id, has_sect=overview is not None, can_create=snapshot.realm_index >= 2, has_joinable=bool(joinable)), broadcasts
+    return embed, SectOverviewView(owner_user_id, has_sect=overview is not None, can_create=snapshot.realm_index >= 2, has_joinable=bool(joinable), overview=overview), broadcasts
 
 
 async def leave_sect_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -1039,7 +1045,7 @@ class PanelView(OwnerLockedView):
         await interaction.response.send_message(embed=embed, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
-    @discord.ui.button(label="修炼", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="闭关", style=discord.ButtonStyle.secondary, row=0)
     async def retreat_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_retreat_message(bot, interaction.user.id, interaction.user.display_name)
@@ -1256,12 +1262,14 @@ class SectJoinSelect(discord.ui.Select):
 
 
 class SectOverviewView(OwnerLockedView):
-    def __init__(self, owner_user_id: int, *, has_sect: bool, can_create: bool, has_joinable: bool) -> None:
+    def __init__(self, owner_user_id: int, *, has_sect: bool, can_create: bool, has_joinable: bool, overview=None) -> None:
         super().__init__(owner_user_id)
         self._add_refresh_button()
         if has_sect:
             self._add_site_button()
             self._add_leave_button()
+            if overview is not None and getattr(overview, "members", None):
+                self.add_item(SectMemberSelect(owner_user_id, members=overview.members))
         else:
             self._add_directory_button(disabled=not has_joinable)
             self._add_create_button(disabled=not can_create)
@@ -1342,6 +1350,34 @@ class SectDirectoryView(OwnerLockedView):
 
         button.callback = callback
         self.add_item(button)
+
+
+class SectMemberSelect(discord.ui.Select):
+    def __init__(self, owner_user_id: int, *, members) -> None:
+        self.owner_user_id = owner_user_id
+        options = [
+            discord.SelectOption(
+                label=member.display_name[:100],
+                description=f"{member.role_name} · {member.realm_display} · 周功绩 {member.contribution_weekly}"[:100],
+                value=str(member.character_id),
+            )
+            for member in members[:25]
+        ]
+        super().__init__(placeholder="翻看门人录", options=options, row=1, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_user_id:
+            await interaction.response.send_message("这张面板并非为你而开。", ephemeral=True)
+            return
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await build_sect_message_for_member(
+            bot,
+            interaction.user.id,
+            interaction.user.display_name,
+            selected_member_id=int(self.values[0]),
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+        await _send_broadcasts(bot, broadcasts)
 
 
 class SectSiteSelect(discord.ui.Select):
@@ -1642,17 +1678,33 @@ class SpiritOverviewView(OwnerLockedView):
 
 
 class RetreatView(OwnerLockedView):
-    def __init__(self, owner_user_id: int, *, is_retreating: bool) -> None:
+    def __init__(self, owner_user_id: int, *, snapshot) -> None:
         super().__init__(owner_user_id)
-        self._add_start_button(disabled=is_retreating)
-        self._add_stop_button(disabled=not is_retreating)
+        if snapshot.is_retreating:
+            self._add_refresh_button()
+            self._add_stop_button(disabled=False)
+            return
+        self._add_start_button("修炼", "cultivation", style=discord.ButtonStyle.primary)
+        self._add_start_button("炼魂", "soul", style=discord.ButtonStyle.secondary)
 
-    def _add_start_button(self, *, disabled: bool) -> None:
-        button = discord.ui.Button(label="开始闭关", row=0, style=discord.ButtonStyle.primary, disabled=disabled)
+    def _add_start_button(self, label: str, mode: str, *, style: discord.ButtonStyle) -> None:
+        button = discord.ui.Button(label=label, row=0, style=style)
 
         async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
-            embed, view, broadcasts = await start_retreat_message(bot, interaction.user.id, interaction.user.display_name)
+            embed, view, broadcasts = await start_retreat_message(bot, interaction.user.id, interaction.user.display_name, mode=mode)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_refresh_button(self) -> None:
+        button = discord.ui.Button(label="凝神观照", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_retreat_message(bot, interaction.user.id, interaction.user.display_name)
             await interaction.response.edit_message(embed=embed, view=view)
             await _send_broadcasts(bot, broadcasts)
 
