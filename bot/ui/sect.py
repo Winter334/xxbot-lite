@@ -3,7 +3,7 @@ from __future__ import annotations
 import discord
 
 from bot.services.character_service import CharacterSnapshot
-from bot.services.sect_service import ResourceSiteView, SectOverview, SectSummary
+from bot.services.sect_service import ResourceSiteView, SectMemberView, SectOverview, SectSummary
 from bot.utils.formatters import format_big_number, format_qi
 
 
@@ -16,6 +16,7 @@ def build_sect_overview_embed(
     settlement_lines: list[str] | None = None,
     message: str | None = None,
     color: discord.Color | None = None,
+    selected_member: SectMemberView | None = None,
 ) -> discord.Embed:
     description = message
     if description is None:
@@ -48,6 +49,10 @@ def build_sect_overview_embed(
     embed.add_field(name="宗门牌面", value="\n".join(sect_lines), inline=False)
     owned_value = "、".join(overview.owned_site_names) if overview.owned_site_names else "今朝尚未握得地脉。"
     embed.add_field(name="门下地脉", value=owned_value, inline=False)
+    embed.add_field(name="门人录", value=_render_members(overview.members), inline=False)
+    focus_member = selected_member or (overview.members[0] if overview.members else None)
+    if focus_member is not None:
+        embed.add_field(name="当前所观", value=_render_member_detail(focus_member), inline=False)
     if settlement_lines:
         embed.add_field(name="昨夜分润", value="\n".join(settlement_lines), inline=False)
     return embed
@@ -116,3 +121,23 @@ def _render_sites(sites: list[ResourceSiteView]) -> str:
 
 def overview_today_contribution(snapshot: CharacterSnapshot) -> str:
     return format_big_number(getattr(snapshot, "sect_contribution_daily", 0))
+
+
+def _render_members(members: tuple[SectMemberView, ...]) -> str:
+    if not members:
+        return "山门冷清，暂未见门人踪影。"
+    return "\n".join(
+        f"{index}. **{member.display_name}** · `{member.role_name}` · {member.realm_display}"
+        for index, member in enumerate(members[:10], start=1)
+    )
+
+
+def _render_member_detail(member: SectMemberView) -> str:
+    return (
+        f"道号：**{member.display_name}**\n"
+        f"职司：`{member.role_name}`\n"
+        f"境界：`{member.realm_display}`\n"
+        f"今日功绩：`{format_big_number(member.contribution_daily)}`\n"
+        f"本周功绩：`{format_big_number(member.contribution_weekly)}`\n"
+        f"累计功绩：`{format_big_number(member.contribution_total)}`"
+    )

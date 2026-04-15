@@ -8,7 +8,7 @@ from sqlalchemy import select
 from bot.data.spirits import SpiritPowerEntry
 from bot.models.world_resource_site import WorldResourceSite
 from bot.services.travel_service import TravelService
-from bot.ui.panel import build_ladder_round_embed, build_panel_embed
+from bot.ui.panel import build_ladder_round_embed, build_panel_embed, build_retreat_embed
 from bot.utils.time_utils import now_shanghai
 
 
@@ -141,6 +141,27 @@ async def test_manual_retreat_blocks_tower_until_exit(session_factory, services)
 
 
 @pytest.mark.asyncio
+async def test_soul_retreat_grants_30_soul_per_hour_and_a_bit_of_cultivation(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1018, "熔星")
+        character = creation.character
+        now = now_shanghai()
+        start = services.character.start_retreat(character, mode="soul")
+        character.last_idle_at = now - timedelta(hours=1)
+        settlement = services.idle.settle_retreat(character, now=now)
+        stop = services.character.stop_retreat(character, settlement)
+        await session.commit()
+
+        assert start.success is True
+        assert settlement.retreat_mode == "soul"
+        assert settlement.gained_soul == 30
+        assert settlement.gained_cultivation > 0
+        assert settlement.gained_cultivation < 30
+        assert "炼魂" in stop.message
+        assert character.retreat_mode == "cultivation"
+
+
+@pytest.mark.asyncio
 async def test_travel_and_retreat_are_mutually_exclusive(session_factory, services) -> None:
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 1010, "游客")
@@ -260,6 +281,24 @@ async def test_panel_embed_shows_travel_marks(session_factory, services) -> None
 
 
 @pytest.mark.asyncio
+async def test_panel_embed_shows_soul_retreat_state(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1019, "照炉")
+        character = creation.character
+        character.is_retreating = True
+        character.retreat_mode = "soul"
+        snapshot = services.character.build_snapshot(character, idle_minutes=60)
+        embed = build_panel_embed(snapshot)
+        retreat_embed = build_retreat_embed(snapshot)
+        await session.commit()
+
+        artifact_field = next(field for field in embed.fields if field.name == "🗿 本命")
+        assert "炼魂中" in artifact_field.value
+        assert retreat_embed.title.endswith("洞府")
+        assert retreat_embed.fields[1].name == "洞府气象"
+
+
+@pytest.mark.asyncio
 async def test_spirit_nurture_collects_after_unlock_and_boosts_artifact_power(session_factory, services) -> None:
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 1016, "灵工")
@@ -342,6 +381,29 @@ async def test_create_and_join_sect_tracks_identity(session_factory, services) -
         assert sect_name == "青岚宗"
         assert sect_role == "宗主"
         assert member.sect_id == creator.sect_id
+
+
+@pytest.mark.asyncio
+async def test_sect_overview_contains_top_25_members(session_factory, services) -> None:
+    async with session_factory() as session:
+        leader = (await services.character.get_or_create_character(session, 8100, "宗主甲")).character
+        leader.realm_key = "zhuji"
+        leader.realm_index = 2
+        leader.stage_key = "early"
+        leader.stage_index = 1
+        success, _ = await services.sect.create_sect(session, leader, "太玄门")
+        assert success is True
+        for index in range(26):
+            member = (await services.character.get_or_create_character(session, 8101 + index, f"门徒{index:02d}")).character
+            await services.sect.join_sect(session, member, leader.sect_id)
+            member.sect_contribution_weekly = 100 - index
+            member.sect_contribution_total = 1000 - index
+        overview = await services.sect.get_sect_overview(session, leader)
+        await session.commit()
+
+        assert overview is not None
+        assert len(overview.members) == 25
+        assert overview.members[0].display_name == "宗主甲"
 
 
 @pytest.mark.asyncio

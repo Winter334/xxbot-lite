@@ -69,6 +69,18 @@ class SectOverview:
     member_count: int
     owner_site_count: int
     owned_site_names: tuple[str, ...]
+    members: tuple["SectMemberView", ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SectMemberView:
+    character_id: int
+    display_name: str
+    role_name: str
+    realm_display: str
+    contribution_daily: int
+    contribution_weekly: int
+    contribution_total: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +258,7 @@ class SectService:
             return None
         sect_name, role_name = await self.get_member_identity(session, character)
         owned_sites = tuple(site.site_name for site in sect.resource_sites if site.owner_sect_id == sect.id)
+        member_views = self._build_member_views(sect)
         return SectOverview(
             sect_id=sect.id,
             name=sect_name or sect.name,
@@ -254,6 +267,7 @@ class SectService:
             member_count=len(sect.members),
             owner_site_count=len(owned_sites),
             owned_site_names=owned_sites,
+            members=member_views,
         )
 
     async def join_sect(self, session: AsyncSession, character: Character, sect_id: int) -> tuple[bool, str]:
@@ -334,6 +348,44 @@ class SectService:
         if any(entry.id == character.id for entry in others[1:4]):
             return (sect.name, "长老")
         return (sect.name, "弟子")
+
+    def _build_member_views(self, sect: Sect) -> tuple[SectMemberView, ...]:
+        members = list(sect.members)
+        members.sort(
+            key=lambda entry: (
+                0 if entry.id == sect.founder_character_id else 1,
+                -(entry.sect_contribution_weekly or 0),
+                -(entry.sect_contribution_total or 0),
+                entry.id,
+            )
+        )
+        views: list[SectMemberView] = []
+        founder_id = sect.founder_character_id
+        others = [entry for entry in members if entry.id != founder_id]
+        vice_id = others[0].id if others else None
+        elder_ids = {entry.id for entry in others[1:4]}
+        for member in members[:25]:
+            if member.id == founder_id:
+                role_name = "宗主"
+            elif vice_id is not None and member.id == vice_id:
+                role_name = "副宗主"
+            elif member.id in elder_ids:
+                role_name = "长老"
+            else:
+                role_name = "弟子"
+            stage = get_stage(member.realm_key, member.stage_key)
+            views.append(
+                SectMemberView(
+                    character_id=member.id,
+                    display_name=member.player.display_name,
+                    role_name=role_name,
+                    realm_display=stage.display_name,
+                    contribution_daily=member.sect_contribution_daily or 0,
+                    contribution_weekly=member.sect_contribution_weekly or 0,
+                    contribution_total=member.sect_contribution_total or 0,
+                )
+            )
+        return tuple(views)
 
     async def list_sites(self, session: AsyncSession) -> list[ResourceSiteView]:
         await self.ensure_sites(session)
