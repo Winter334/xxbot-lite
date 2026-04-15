@@ -19,7 +19,7 @@ from bot.data.spirits import (
 from bot.models.artifact import Artifact
 from bot.utils.time_utils import ensure_shanghai, now_shanghai
 
-SPIRIT_UNLOCK_LEVEL = 60
+SPIRIT_UNLOCK_LEVEL = 30
 SPIRIT_NURTURE_COST = 80
 SPIRIT_REFORGE_COST = 60
 SPIRIT_NURTURE_MINUTES = 60
