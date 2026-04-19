@@ -5,6 +5,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
+from bot.data.realms import get_stage
 from bot.data.spirits import SpiritPowerEntry
 from bot.models.world_resource_site import WorldResourceSite
 from bot.services.travel_service import TravelService
@@ -40,6 +41,14 @@ class CombatRoller:
 
     def random(self) -> float:
         return next(self._random_values)
+
+
+def _set_stage(character, realm_key: str, stage_key: str) -> None:
+    stage = get_stage(realm_key, stage_key)
+    character.realm_key = stage.realm_key
+    character.realm_index = stage.realm_index
+    character.stage_key = stage.stage_key
+    character.stage_index = stage.stage_index
 
 
 @pytest.mark.asyncio
@@ -366,10 +375,7 @@ async def test_niepan_spirit_power_revives_once_in_combat(session_factory, servi
 async def test_create_and_join_sect_tracks_identity(session_factory, services) -> None:
     async with session_factory() as session:
         creator = (await services.character.get_or_create_character(session, 8001, "宗主")).character
-        creator.realm_key = "zhuji"
-        creator.realm_index = 2
-        creator.stage_key = "early"
-        creator.stage_index = 1
+        _set_stage(creator, "zhuji", "early")
         success, _ = await services.sect.create_sect(session, creator, "青岚宗")
         member = (await services.character.get_or_create_character(session, 8002, "门徒")).character
         join_success, _ = await services.sect.join_sect(session, member, creator.sect_id)
@@ -387,10 +393,7 @@ async def test_create_and_join_sect_tracks_identity(session_factory, services) -
 async def test_sect_overview_contains_top_25_members(session_factory, services) -> None:
     async with session_factory() as session:
         leader = (await services.character.get_or_create_character(session, 8100, "宗主甲")).character
-        leader.realm_key = "zhuji"
-        leader.realm_index = 2
-        leader.stage_key = "early"
-        leader.stage_index = 1
+        _set_stage(leader, "zhuji", "early")
         success, _ = await services.sect.create_sect(session, leader, "太玄门")
         assert success is True
         for index in range(26):
@@ -407,51 +410,126 @@ async def test_sect_overview_contains_top_25_members(session_factory, services) 
 
 
 @pytest.mark.asyncio
-async def test_sect_site_action_consumes_qi_and_grants_contribution(session_factory, services) -> None:
+async def test_sect_site_action_consumes_qi_and_claims_unowned_site(session_factory, services) -> None:
     async with session_factory() as session:
         character = (await services.character.get_or_create_character(session, 8003, "争地")).character
-        character.realm_key = "zhuji"
-        character.realm_index = 2
-        character.stage_key = "early"
-        character.stage_index = 1
+        _set_stage(character, "zhuji", "early")
         await services.sect.create_sect(session, character, "断岳门")
         await services.sect.ensure_sites(session)
         site = (await session.scalars(select(WorldResourceSite).limit(1))).one()
 
-        result = await services.sect.perform_site_action(session, character, site.id, "transport")
+        first = await services.sect.perform_site_action(session, character, site.id, "contest")
+        second = await services.sect.perform_site_action(session, character, site.id, "contest")
         await session.commit()
 
-        assert result.success is True
-        assert result.qi_before == 6
-        assert result.qi_after == 5
+        assert first.success is True
+        assert second.success is True
+        assert first.qi_before == 6
+        assert first.qi_after == 5
+        assert second.qi_before == 5
+        assert second.qi_after == 4
+        assert site.owner_sect_id == character.sect_id
+        assert character.sect_bound_site_id == site.id
+        assert character.sect_bound_site_role == "guard"
         assert character.sect_contribution_daily > 0
 
 
 @pytest.mark.asyncio
-async def test_sect_settlement_rewards_lingshi_and_soul(session_factory, services) -> None:
+async def test_sect_switching_sites_moves_bound_role(session_factory, services) -> None:
     async with session_factory() as session:
-        character = (await services.character.get_or_create_character(session, 8004, "矿守")).character
-        character.realm_key = "zhuji"
-        character.realm_index = 2
-        character.stage_key = "early"
-        character.stage_index = 1
+        character = (await services.character.get_or_create_character(session, 8004, "换位")).character
+        _set_stage(character, "zhuji", "early")
         await services.sect.create_sect(session, character, "玄石门")
         await services.sect.ensure_sites(session)
-        site = (await session.scalars(select(WorldResourceSite).where(WorldResourceSite.site_type == "lingshi"))).first()
+        sites = list((await session.scalars(select(WorldResourceSite).order_by(WorldResourceSite.id.asc()))).all())
+        assert len(sites) >= 2
+        first_site, second_site = sites[:2]
+        first_site.owner_sect_id = character.sect_id
+        second_site.owner_sect_id = character.sect_id
+
+        first_result = await services.sect.perform_site_action(session, character, first_site.id, "transport")
+        second_result = await services.sect.perform_site_action(session, character, second_site.id, "guard")
+        await session.commit()
+
+        first_state = services.sect._load_state(first_site.state_json)
+        second_state = services.sect._load_state(second_site.state_json)
+
+        assert first_result.success is True
+        assert second_result.success is True
+        assert character.sect_bound_site_id == second_site.id
+        assert character.sect_bound_site_role == "guard"
+        assert character.id not in first_state["transport_member_ids"]
+        assert character.id in second_state["guard_member_ids"]
+
+
+@pytest.mark.asyncio
+async def test_enemy_site_progress_is_tracked_per_sect(session_factory, services) -> None:
+    async with session_factory() as session:
+        defender = (await services.character.get_or_create_character(session, 8007, "守脉者")).character
+        attacker_a = (await services.character.get_or_create_character(session, 8008, "夺旗甲")).character
+        attacker_b = (await services.character.get_or_create_character(session, 8009, "夺旗乙")).character
+        _set_stage(defender, "zhuji", "early")
+        _set_stage(attacker_a, "dujie", "perfect")
+        _set_stage(attacker_b, "dujie", "perfect")
+        await services.sect.create_sect(session, defender, "守山门")
+        await services.sect.create_sect(session, attacker_a, "裂空门")
+        await services.sect.create_sect(session, attacker_b, "照夜门")
+        await services.sect.ensure_sites(session)
+        site = (await session.scalars(select(WorldResourceSite).limit(1))).one()
+        site.owner_sect_id = defender.sect_id
+
+        guard_result = await services.sect.perform_site_action(session, defender, site.id, "guard")
+        attack_a_result = await services.sect.perform_site_action(session, attacker_a, site.id, "contest")
+        attack_b_result = await services.sect.perform_site_action(session, attacker_b, site.id, "contest")
+        await session.commit()
+
+        state = services.sect._load_state(site.state_json)
+
+        assert guard_result.success is True
+        assert attack_a_result.success is True
+        assert attack_b_result.success is True
+        assert state["attack_progress"][attacker_a.sect_id] == 1
+        assert state["attack_progress"][attacker_b.sect_id] == 1
+
+
+@pytest.mark.asyncio
+async def test_sect_settlement_rewards_use_transport_bonus(session_factory, services) -> None:
+    async with session_factory() as session:
+        guarder = (await services.character.get_or_create_character(session, 8010, "矿守")).character
+        transporter = (await services.character.get_or_create_character(session, 8011, "运石")).character
+        _set_stage(guarder, "zhuji", "early")
+        _set_stage(transporter, "zhuji", "early")
+        await services.sect.create_sect(session, guarder, "玄石门")
+        await services.sect.join_sect(session, transporter, guarder.sect_id)
+        await services.sect.ensure_sites(session)
+        site = (await session.scalars(select(WorldResourceSite).order_by(WorldResourceSite.id.asc()))).first()
         assert site is not None
-        state = {"sect_scores": {str(character.sect_id): 100}}
-        site.state_json = services.sect._dump_state(state)
+        site.site_type = "lingshi"
+        site.owner_sect_id = guarder.sect_id
         site.settlement_day = now_shanghai().date() - timedelta(days=1)
-        character.sect_contribution_daily = 50
-        character.sect_last_contribution_on = now_shanghai().date() - timedelta(days=1)
-        character.sect_joined_at = now_shanghai() - timedelta(days=2)
+        guarder.sect_joined_at = now_shanghai() - timedelta(days=2)
+        transporter.sect_joined_at = now_shanghai() - timedelta(days=2)
+        guarder.sect_bound_site_id = site.id
+        guarder.sect_bound_site_role = "guard"
+        transporter.sect_bound_site_id = site.id
+        transporter.sect_bound_site_role = "transport"
+        site.state_json = services.sect._dump_state(
+            {
+                "attack_progress": {},
+                "attack_members": {},
+                "guard_member_ids": [guarder.id],
+                "transport_member_ids": [transporter.id],
+            }
+        )
 
         notices = await services.sect.settle_sites_if_needed(session)
         await session.commit()
 
-        assert notices.get(character.id)
-        assert character.lingshi >= 200
-        assert character.artifact.soul_shards >= 10
+        assert notices.get(guarder.id)
+        assert guarder.lingshi == 220
+        assert guarder.artifact.soul_shards == 11
+        assert transporter.lingshi == 220
+        assert transporter.artifact.soul_shards == 11
 
 
 @pytest.mark.asyncio

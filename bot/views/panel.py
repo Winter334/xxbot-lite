@@ -33,6 +33,7 @@ from bot.ui.panel import (
 )
 from bot.ui.ranking import build_leaderboard_embed
 from bot.ui.sect import build_sect_directory_embed, build_sect_overview_embed, build_site_board_embed
+from bot.ui.sect import build_sect_help_embed
 from bot.ui.spirit import build_spirit_panel_embed
 from bot.services.faction_service import FactionTarget
 from bot.services.travel_service import TRAVEL_DURATION_CHOICES
@@ -904,7 +905,7 @@ async def build_site_board_message(bot: XianBot, owner_user_id: int, display_nam
         await bot.sect_service.settle_sites_if_needed(session)
         snapshot = await _sync_snapshot(bot, session, character)
         overview = await bot.sect_service.get_sect_overview(session, character)
-        sites = await bot.sect_service.list_sites(session)
+        sites = await bot.sect_service.list_sites(session, character)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     if overview is None:
@@ -922,17 +923,13 @@ async def act_site_message(bot: XianBot, owner_user_id: int, display_name: str, 
         result = await bot.sect_service.perform_site_action(session, character, site_id, action_key)
         snapshot = await _sync_snapshot(bot, session, character)
         overview = await bot.sect_service.get_sect_overview(session, character)
-        sites = await bot.sect_service.list_sites(session)
+        sites = await bot.sect_service.list_sites(session, character)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     if overview is None:
         return _info_embed("未入宗门", "你尚未归于任何宗门，暂不能争夺地脉。"), None, broadcasts
     selected = next((site for site in sites if site.site_id == site_id), sites[0] if sites else None)
-    action_lines = []
-    if result.site_name:
-        action_lines.append(f"地脉：**{result.site_name}** · `{result.site_type_name}`")
-    if result.contribution_gain:
-        action_lines.append(f"功绩：`+{result.contribution_gain}`")
+    action_lines = list(result.detail_lines)
     if result.qi_before or result.qi_after or not result.success:
         action_lines.append(f"气机：`{result.qi_before} -> {result.qi_after}`")
     embed = build_site_board_embed(
@@ -1265,6 +1262,7 @@ class SectOverviewView(OwnerLockedView):
     def __init__(self, owner_user_id: int, *, has_sect: bool, can_create: bool, has_joinable: bool, overview=None) -> None:
         super().__init__(owner_user_id)
         self._add_refresh_button()
+        self._add_help_button()
         if has_sect:
             self._add_site_button()
             self._add_leave_button()
@@ -1282,6 +1280,20 @@ class SectOverviewView(OwnerLockedView):
             embed, view, broadcasts = await build_sect_message(bot, interaction.user.id, interaction.user.display_name)
             await interaction.response.edit_message(embed=embed, view=view)
             await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_help_button(self) -> None:
+        button = discord.ui.Button(label="玩法说明", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            async with bot.session_factory() as session:
+                creation = await bot.character_service.get_or_create_character(session, interaction.user.id, interaction.user.display_name)
+                snapshot = await _sync_snapshot(bot, session, creation.character)
+                await session.commit()
+            await interaction.response.send_message(embed=build_sect_help_embed(snapshot), ephemeral=True)
 
         button.callback = callback
         self.add_item(button)
