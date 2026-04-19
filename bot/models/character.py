@@ -39,6 +39,8 @@ class Character(Base, IdentityMixin, TimestampMixin):
     sect_contribution_weekly: Mapped[int] = mapped_column(BigInteger, default=0)
     sect_contribution_daily: Mapped[int] = mapped_column(BigInteger, default=0)
     sect_last_contribution_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    sect_bound_site_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sect_bound_site_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
     lingshi: Mapped[int] = mapped_column(BigInteger, default=0)
     fate_key: Mapped[str] = mapped_column(String(64))
     faction: Mapped[str] = mapped_column(String(16), default="neutral")

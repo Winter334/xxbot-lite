@@ -32,6 +32,7 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             table_names = inspector.get_table_names()
             character_columns = {column["name"] for column in inspector.get_columns("characters")} if "characters" in table_names else set()
             artifact_columns = {column["name"] for column in inspector.get_columns("artifacts")} if "artifacts" in table_names else set()
+            resource_site_columns = {column["name"] for column in inspector.get_columns("world_resource_sites")} if "world_resource_sites" in table_names else set()
             return (
                 "is_retreating" not in character_columns,
                 "retreat_mode" not in character_columns,
@@ -58,7 +59,11 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                 "sect_contribution_weekly" not in character_columns,
                 "sect_contribution_daily" not in character_columns,
                 "sect_last_contribution_on" not in character_columns,
+                "sect_bound_site_id" not in character_columns,
+                "sect_bound_site_role" not in character_columns,
                 "lingshi" not in character_columns,
+                "spawned_on" not in resource_site_columns,
+                "expires_on" not in resource_site_columns,
                 "affix_slots_json" not in artifact_columns,
                 "affix_pending_json" not in artifact_columns,
                 "spirit_name" not in artifact_columns,
@@ -95,7 +100,11 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             needs_sect_contribution_weekly,
             needs_sect_contribution_daily,
             needs_sect_last_contribution_on,
+            needs_sect_bound_site_id,
+            needs_sect_bound_site_role,
             needs_lingshi,
+            needs_site_spawned_on,
+            needs_site_expires_on,
             needs_affix_slots,
             needs_affix_pending,
             needs_spirit_name,
@@ -156,8 +165,18 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_contribution_daily BIGINT NOT NULL DEFAULT 0"))
         if needs_sect_last_contribution_on:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_last_contribution_on DATE"))
+        if needs_sect_bound_site_id:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_bound_site_id INTEGER"))
+        if needs_sect_bound_site_role:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_bound_site_role VARCHAR(16)"))
         if needs_lingshi:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN lingshi BIGINT NOT NULL DEFAULT 0"))
+        if needs_site_spawned_on:
+            await connection.execute(text("ALTER TABLE world_resource_sites ADD COLUMN spawned_on DATE"))
+            await connection.execute(text("UPDATE world_resource_sites SET spawned_on = COALESCE(spawned_on, settlement_day, DATE('now'))"))
+        if needs_site_expires_on:
+            await connection.execute(text("ALTER TABLE world_resource_sites ADD COLUMN expires_on DATE"))
+            await connection.execute(text("UPDATE world_resource_sites SET expires_on = COALESCE(expires_on, DATE(COALESCE(spawned_on, settlement_day, DATE('now')), '+2 day'))"))
         if needs_affix_slots:
             await connection.execute(text("ALTER TABLE artifacts ADD COLUMN affix_slots_json TEXT NOT NULL DEFAULT '[]'"))
         if needs_affix_pending:

@@ -15,6 +15,8 @@ class WorldResourceSite(Base, IdentityMixin, TimestampMixin):
     site_name: Mapped[str] = mapped_column(String(64))
     site_type: Mapped[str] = mapped_column(String(16))
     owner_sect_id: Mapped[int | None] = mapped_column(ForeignKey("sects.id", ondelete="SET NULL"), nullable=True)
+    spawned_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expires_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     settlement_day: Mapped[date | None] = mapped_column(Date, nullable=True)
     state_json: Mapped[str] = mapped_column(Text, default="")
 

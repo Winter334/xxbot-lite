@@ -1,25 +1,46 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True, slots=True)
-class ResourceSiteDefinition:
-    site_key: str
-    site_name: str
-    site_type: str
-
-
 SITE_TYPE_NAMES = {
     "lingshi": "灵矿",
     "soul": "魂脉",
     "cultivation": "灵泉",
 }
 
-RESOURCE_SITE_DEFINITIONS = (
-    ResourceSiteDefinition("qingyun_lingkuang", "青云灵矿", "lingshi"),
-    ResourceSiteDefinition("cangyan_lingkuang", "苍岩灵矿", "lingshi"),
-    ResourceSiteDefinition("xuanming_hunmai", "玄冥魂脉", "soul"),
-    ResourceSiteDefinition("taiyi_lingquan", "太乙灵泉", "cultivation"),
-    ResourceSiteDefinition("luoxia_lingquan", "落霞灵泉", "cultivation"),
+SITE_TYPE_WEIGHTS = (
+    ("lingshi", 2),
+    ("cultivation", 2),
+    ("soul", 1),
 )
+
+SITE_NAME_POOLS = {
+    "lingshi": (
+        "青云灵矿",
+        "苍岩灵矿",
+        "赤霄灵矿",
+        "玄岳灵矿",
+        "寒汐灵矿",
+        "坠星灵矿",
+        "流霞灵矿",
+        "照夜灵矿",
+    ),
+    "soul": (
+        "玄冥魂脉",
+        "太阴魂脉",
+        "惊澜魂脉",
+        "紫魄魂脉",
+        "流火魂脉",
+        "九幽魂脉",
+        "鸣雷魂脉",
+        "青魄魂脉",
+    ),
+    "cultivation": (
+        "太乙灵泉",
+        "落霞灵泉",
+        "玉衡灵泉",
+        "天璃灵泉",
+        "听潮灵泉",
+        "赤华灵泉",
+        "清虚灵泉",
+        "扶风灵泉",
+    ),
+}

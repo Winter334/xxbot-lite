@@ -58,6 +58,35 @@ def build_sect_overview_embed(
     return embed
 
 
+def build_sect_help_embed(snapshot: CharacterSnapshot) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 地脉札记",
+        description="山门争地，只看眼前这几步落子。",
+        color=discord.Color.dark_gold(),
+    )
+    embed.add_field(
+        name="寻脉",
+        value="每日会有新地脉现身。\n每处地脉最多留世 `3` 日。",
+        inline=False,
+    )
+    embed.add_field(
+        name="落子",
+        value="一人同一时刻只可守 `1` 处地脉。\n强争夺旗，护持守门，输运养脉。",
+        inline=False,
+    )
+    embed.add_field(
+        name="夺脉",
+        value="无主地脉连下 `2` 手即可立旗。\n已有旗主的地脉，要连破 `4` 阵。",
+        inline=False,
+    )
+    embed.add_field(
+        name="输运",
+        value="每名输运门人，让该地脉分润再涨 `10%`。",
+        inline=False,
+    )
+    return embed
+
+
 def build_sect_directory_embed(snapshot: CharacterSnapshot, sects: list[SectSummary], *, message: str | None = None) -> discord.Embed:
     embed = discord.Embed(
         title=f"{snapshot.player_name} · 宗门名录",
@@ -78,7 +107,7 @@ def build_site_board_embed(
     action_lines: list[str] | None = None,
     color: discord.Color | None = None,
 ) -> discord.Embed:
-    description = message or "诸宗争地，昼夜不休，落子之处，便是门中今日所争。"
+    description = message or "诸宗旗号都压在地脉上，你这一手，会把门中旗子落在哪里。"
     embed = discord.Embed(
         title=f"{snapshot.player_name} · 资源争夺",
         description=description,
@@ -96,9 +125,23 @@ def build_site_board_embed(
     )
     embed.add_field(name="地脉名录", value=_render_sites(sites), inline=False)
     if selected_site is not None:
+        detail_lines = [
+            f"旗主：**{selected_site.owner_name}**",
+            f"灵机：`还余 {selected_site.days_left} 日`",
+        ]
+        if selected_site.guard_count > 0 or selected_site.owner_name != "无主":
+            detail_lines.append(f"护持：`{selected_site.guard_count}`人")
+        if selected_site.transport_count > 0:
+            detail_lines.append(f"输运：`{selected_site.transport_count}`人")
+        if selected_site.player_role_name:
+            detail_lines.append(f"你在此地：`{selected_site.player_role_name}`")
+        if selected_site.player_progress_required > 0:
+            detail_lines.append(f"本门占势：`{selected_site.player_progress}/{selected_site.player_progress_required}`")
+        if selected_site.attack_summaries:
+            detail_lines.append(f"来犯：{' · '.join(selected_site.attack_summaries)}")
         embed.add_field(
             name="当前选中",
-            value=f"**{selected_site.site_name}** · `{selected_site.site_type_name}` · 现归 **{selected_site.owner_name}**",
+            value=f"**{selected_site.site_name}** · `{selected_site.site_type_name}`\n" + "\n".join(detail_lines),
             inline=False,
         )
     if action_lines:
@@ -116,7 +159,12 @@ def _render_joinable_sects(sects: list[SectSummary]) -> str:
 
 
 def _render_sites(sites: list[ResourceSiteView]) -> str:
-    return "\n".join(f"**{site.site_name}** · `{site.site_type_name}` · {site.owner_name}" for site in sites)
+    if not sites:
+        return "这一刻四野沉静，暂未见可争之脉。"
+    return "\n".join(
+        f"**{site.site_name}** · `{site.site_type_name}` · {site.owner_name} · 余 `{site.days_left}` 日"
+        for site in sites
+    )
 
 
 def overview_today_contribution(snapshot: CharacterSnapshot) -> str:
