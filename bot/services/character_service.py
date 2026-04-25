@@ -191,6 +191,22 @@ class CharacterService:
             self._ensure_character_compatibility(character)
         return character
 
+    async def get_character_by_id(self, session: AsyncSession, character_id: int) -> Character | None:
+        statement = (
+            select(Character)
+            .where(Character.id == character_id)
+            .options(
+                selectinload(Character.player),
+                selectinload(Character.sect),
+                selectinload(Character.artifact),
+                selectinload(Character.ladder_record),
+            )
+        )
+        character = await session.scalar(statement)
+        if character is not None:
+            self._ensure_character_compatibility(character)
+        return character
+
     async def list_characters(self, session: AsyncSession) -> list[Character]:
         statement = select(Character).options(
             selectinload(Character.player),

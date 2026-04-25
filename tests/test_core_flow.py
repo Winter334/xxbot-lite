@@ -10,7 +10,15 @@ from bot.data.realms import get_stage
 from bot.data.spirits import SpiritPowerEntry
 from bot.models.world_resource_site import WorldResourceSite
 from bot.services.travel_service import TravelService
-from bot.ui.panel import build_ladder_round_embed, build_panel_embed, build_retreat_embed
+from bot.ui.panel import (
+    build_arena_battle_embed,
+    build_arena_claim_embed,
+    build_ladder_battle_embed,
+    build_ladder_round_embed,
+    build_panel_embed,
+    build_retreat_embed,
+    build_spar_battle_embed,
+)
 from bot.utils.time_utils import now_shanghai
 
 
@@ -688,6 +696,103 @@ async def test_ladder_challenge_swaps_rank_on_victory(session_factory, services)
         assert result.battle.challenger_won is True
         assert challenger.current_ladder_rank == 1
         assert defender.current_ladder_rank == 2
+
+
+@pytest.mark.asyncio
+async def test_spar_does_not_change_ranks_and_uses_full_pvp_report(session_factory, services) -> None:
+    async with session_factory() as session:
+        challenger = (await services.character.get_or_create_character(session, 2003, "切磋客")).character
+        defender = (await services.character.get_or_create_character(session, 2004, "守势客")).character
+        _set_stage(challenger, "jiedan", "early")
+        _set_stage(defender, "zhuji", "early")
+        challenger_rank_before = challenger.current_ladder_rank
+        defender_rank_before = defender.current_ladder_rank
+
+        result = services.pvp.spar(challenger, defender)
+        challenger_snapshot = services.character.build_snapshot(challenger)
+        defender_snapshot = services.character.build_snapshot(defender)
+        spar_embed = build_spar_battle_embed(challenger_snapshot, defender_snapshot, result)
+        ladder_defender = (await services.character.get_or_create_character(session, 2005, "论道守")).character
+        ladder_challenger = (await services.character.get_or_create_character(session, 2006, "论道攻")).character
+        _set_stage(ladder_challenger, "jiedan", "early")
+        ladder_result = await services.ladder.challenge(session, ladder_challenger, ladder_defender.current_ladder_rank)
+        ladder_challenger_snapshot = services.character.build_snapshot(ladder_challenger)
+        ladder_defender_snapshot = services.character.build_snapshot(ladder_defender)
+        ladder_embed = build_ladder_battle_embed(ladder_challenger_snapshot, ladder_defender_snapshot, ladder_result)
+        await session.commit()
+
+        assert result.success is True
+        assert result.battle is not None
+        assert challenger.current_ladder_rank == challenger_rank_before
+        assert defender.current_ladder_rank == defender_rank_before
+        assert any(field.name.startswith("完整战报") for field in spar_embed.fields)
+        assert any(field.name.startswith("完整战报") for field in ladder_embed.fields)
+
+
+@pytest.mark.asyncio
+async def test_arena_open_challenge_claim_and_report(session_factory, services) -> None:
+    async with session_factory() as session:
+        defender = (await services.character.get_or_create_character(session, 2101, "擂主")).character
+        challenger = (await services.character.get_or_create_character(session, 2102, "攻擂者")).character
+        defender.artifact.soul_shards = 200
+        challenger.artifact.soul_shards = 200
+        _set_stage(challenger, "jiedan", "early")
+        _set_stage(defender, "zhuji", "early")
+        services.character.refresh_combat_power(challenger)
+        services.character.refresh_combat_power(defender)
+
+        open_result = await services.pvp.open_arena(session, defender, 100)
+        challenge_result = await services.pvp.challenge_arena(session, challenger)
+        arena_status, champion = await services.pvp.get_arena_status(session)
+        challenger_snapshot = services.character.build_snapshot(challenger)
+        defender_snapshot = services.character.build_snapshot(defender)
+        battle_embed = build_arena_battle_embed(challenger_snapshot, defender_snapshot, challenge_result)
+        claim_result = await services.pvp.claim_arena(session, challenger)
+        claim_snapshot = services.character.build_snapshot(challenger)
+        claim_embed = build_arena_claim_embed(claim_snapshot, claim_result)
+        final_status, final_champion = await services.pvp.get_arena_status(session)
+        await session.commit()
+
+        assert open_result.success is True
+        assert challenge_result.success is True
+        assert challenge_result.battle is not None
+        assert challenge_result.champion_changed is True
+        assert challenge_result.current_champion_name == "攻擂者"
+        assert challenge_result.pot_soul == 200
+        assert arena_status.has_champion is True
+        assert champion is not None
+        assert champion.id == challenger.id
+        assert any(field.name.startswith("完整战报") for field in battle_embed.fields)
+        assert claim_result.success is True
+        assert claim_result.claimed_soul == 200
+        assert challenger.artifact.soul_shards == 300
+        assert "收擂离场" in claim_embed.description
+        assert final_status.has_champion is False
+        assert final_champion is None
+
+
+@pytest.mark.asyncio
+async def test_arena_forfeit_prevents_stuck_ring_when_defender_is_busy(session_factory, services) -> None:
+    async with session_factory() as session:
+        defender = (await services.character.get_or_create_character(session, 2103, "闭关擂主")).character
+        challenger = (await services.character.get_or_create_character(session, 2104, "接擂者")).character
+        defender.artifact.soul_shards = 150
+        challenger.artifact.soul_shards = 150
+
+        open_result = await services.pvp.open_arena(session, defender, 100)
+        defender.is_retreating = True
+        challenge_result = await services.pvp.challenge_arena(session, challenger)
+        arena_status, champion = await services.pvp.get_arena_status(session)
+        await session.commit()
+
+        assert open_result.success is True
+        assert challenge_result.success is True
+        assert challenge_result.battle is None
+        assert challenge_result.champion_changed is True
+        assert challenge_result.current_champion_name == "接擂者"
+        assert arena_status.has_champion is True
+        assert champion is not None
+        assert champion.id == challenger.id
 
 
 @pytest.mark.asyncio

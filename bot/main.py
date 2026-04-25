@@ -17,6 +17,7 @@ from bot.services.fate_service import FateService
 from bot.services.faction_service import FactionService
 from bot.services.idle_service import IdleService
 from bot.services.ladder_service import LadderService
+from bot.services.pvp_service import PvpService
 from bot.services.ranking_service import RankingService
 from bot.services.sect_service import SectService
 from bot.services.spirit_service import SpiritService
@@ -43,6 +44,7 @@ class XianBot(commands.Bot):
         self.tower_service = TowerService(self.character_service, self.combat_service, self.fate_service, rng)
         self.breakthrough_service = BreakthroughService(self.character_service)
         self.ladder_service = LadderService(self.character_service, self.combat_service)
+        self.pvp_service = PvpService(self.character_service, self.combat_service)
         self.ranking_service = RankingService(self.character_service, self.artifact_service, self.spirit_service, self.faction_service)
         self.travel_service = TravelService(self.fate_service, rng)
         self.broadcast_service = BroadcastService(settings)

@@ -14,6 +14,9 @@ from bot.ui.artifact import (
 )
 from bot.ui.panel import (
     _battle_excerpt,
+    build_arena_battle_embed,
+    build_arena_claim_embed,
+    build_arena_embed,
     build_breakthrough_embed,
     build_faction_action_embed,
     build_faction_embed,
@@ -22,6 +25,8 @@ from bot.ui.panel import (
     build_ladder_battle_embed,
     build_ladder_round_embed,
     build_panel_embed,
+    build_spar_battle_embed,
+    build_spar_request_embed,
     build_reincarnation_confirm_embed,
     build_reincarnation_embed,
     build_retreat_embed,
@@ -132,6 +137,165 @@ async def build_leaderboard_message(
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     return build_leaderboard_embed(leaderboard, viewer_snapshot), LeaderboardView(owner_user_id, category, targets), broadcasts
+
+
+async def _build_arena_board_components(bot: XianBot, session, viewer, *, message: str | None = None):
+    viewer_snapshot = await _sync_snapshot(bot, session, viewer)
+    arena_status, champion = await bot.pvp_service.get_arena_status(session)
+    champion_snapshot = None
+    if champion is not None:
+        champion_snapshot = viewer_snapshot if champion.id == viewer.id else await _sync_snapshot(bot, session, champion)
+    embed = build_arena_embed(viewer_snapshot, arena_status, champion_snapshot, message=message)
+    view = ArenaBoardView(bot, has_champion=arena_status.has_champion)
+    return embed, view
+
+
+async def build_arena_message(
+    bot: XianBot,
+    owner_user_id: int,
+    display_name: str,
+) -> tuple[discord.Embed, discord.ui.View | None, list[str]]:
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        embed, view = await _build_arena_board_components(bot, session, creation.character)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return embed, view, broadcasts
+
+
+async def build_open_arena_message(
+    bot: XianBot,
+    owner_user_id: int,
+    display_name: str,
+    stake_soul: int,
+):
+    async with bot.pvp_service.arena_lock:
+        async with bot.session_factory() as session:
+            creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+            challenger = creation.character
+            await _refresh_resources(bot, challenger)
+            result = await bot.pvp_service.open_arena(session, challenger, stake_soul)
+            embed, view = await _build_arena_board_components(bot, session, challenger, message=result.message)
+            await session.commit()
+        broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    return embed, view, broadcasts, result.success
+
+
+async def build_arena_challenge_message(
+    bot: XianBot,
+    owner_user_id: int,
+    display_name: str,
+):
+    async with bot.pvp_service.arena_lock:
+        async with bot.session_factory() as session:
+            creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+            challenger = creation.character
+            await _refresh_resources(bot, challenger)
+            _, defender_before = await bot.pvp_service.get_arena_status(session)
+            if defender_before is not None and defender_before.id != challenger.id:
+                await _refresh_resources(bot, defender_before)
+            result = await bot.pvp_service.challenge_arena(session, challenger)
+            broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+            if result.success and defender_before is not None:
+                challenger_snapshot = await _sync_snapshot(bot, session, challenger)
+                defender_snapshot = challenger_snapshot if defender_before.id == challenger.id else await _sync_snapshot(bot, session, defender_before)
+                arena_status, _ = await bot.pvp_service.get_arena_status(session)
+                embed = build_arena_battle_embed(challenger_snapshot, defender_snapshot, result)
+                view = ArenaBoardView(bot, has_champion=arena_status.has_champion)
+            else:
+                embed, view = await _build_arena_board_components(bot, session, challenger, message=result.message)
+            await session.commit()
+    return embed, view, broadcasts, result.success
+
+
+async def build_arena_claim_message(
+    bot: XianBot,
+    owner_user_id: int,
+    display_name: str,
+):
+    async with bot.pvp_service.arena_lock:
+        async with bot.session_factory() as session:
+            creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+            challenger = creation.character
+            result = await bot.pvp_service.claim_arena(session, challenger)
+            broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+            if result.success:
+                snapshot = await _sync_snapshot(bot, session, challenger)
+                embed = build_arena_claim_embed(snapshot, result)
+                view = ArenaBoardView(bot, has_champion=False)
+            else:
+                embed, view = await _build_arena_board_components(bot, session, challenger, message=result.message)
+            await session.commit()
+    return embed, view, broadcasts, result.success
+
+
+async def build_spar_request_message(
+    bot: XianBot,
+    owner_user_id: int,
+    display_name: str,
+    target_user_id: int,
+    target_display_name: str,
+):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        challenger = creation.character
+        defender = await bot.character_service.get_character_by_discord_id(session, target_user_id)
+        broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+        if defender is None:
+            await session.commit()
+            return _info_embed("未见道友", "对方尚未踏入仙途，暂不可切磋。"), None, broadcasts, None
+        if challenger.player.discord_user_id == defender.player.discord_user_id:
+            await session.commit()
+            return _info_embed("不可切磋", "你还不至于自己和自己切磋。"), None, broadcasts, None
+
+        allowed, reason = bot.pvp_service.can_spar(challenger, actor_label="你")
+        if not allowed:
+            await session.commit()
+            return _info_embed("当前无法切磋", reason or "你当前不可切磋。"), None, broadcasts, None
+        allowed, reason = bot.pvp_service.can_spar(defender, actor_label="对方")
+        if not allowed:
+            await session.commit()
+            return _info_embed("当前无法切磋", reason or "对方当前不可切磋。"), None, broadcasts, None
+
+        challenger_snapshot = await _sync_snapshot(bot, session, challenger)
+        defender_snapshot = await _sync_snapshot(bot, session, defender)
+        await session.commit()
+    view = SparInviteView(
+        bot,
+        challenger_user_id=owner_user_id,
+        challenger_display_name=display_name,
+        defender_user_id=target_user_id,
+        defender_display_name=target_display_name,
+    )
+    content = f"<@{target_user_id}>，<@{owner_user_id}> 向你发起了切磋。"
+    return build_spar_request_embed(challenger_snapshot, defender_snapshot, timeout_seconds=int(view.timeout or 60)), view, broadcasts, content
+
+
+async def build_spar_battle_message(
+    bot: XianBot,
+    challenger_user_id: int,
+    challenger_display_name: str,
+    defender_user_id: int,
+):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, challenger_user_id, challenger_display_name)
+        challenger = creation.character
+        defender = await bot.character_service.get_character_by_discord_id(session, defender_user_id)
+        broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+        if defender is None:
+            await session.commit()
+            return _info_embed("切磋作废", "对方已不在此间，无法完成此次切磋。"), None, broadcasts
+
+        await _refresh_resources(bot, challenger)
+        await _refresh_resources(bot, defender)
+        result = bot.pvp_service.spar(challenger, defender)
+        challenger_snapshot = await _sync_snapshot(bot, session, challenger)
+        defender_snapshot = await _sync_snapshot(bot, session, defender)
+        await session.commit()
+
+    if not result.success:
+        return _info_embed("当前无法切磋", result.message), None, broadcasts
+    return build_spar_battle_embed(challenger_snapshot, defender_snapshot, result), None, broadcasts
 
 
 async def _load_tower_run(bot: XianBot, owner_user_id: int, display_name: str):
@@ -944,24 +1108,7 @@ async def run_private_ladder_sequence(
     target_rank: int,
 ) -> None:
     embed, view, broadcasts = await build_challenge_message(bot, owner_user_id, display_name, target_rank)
-    result = view.result
-    challenger = view.challenger_snapshot
-    defender = view.defender_snapshot
-
-    preview_embed = build_ladder_round_embed(challenger, defender, result, preview=True)
-    await interaction.response.send_message(embed=preview_embed, ephemeral=True)
-    battle = result.battle
-    if battle is None:
-        await interaction.edit_original_response(embed=embed, view=view)
-        await _send_broadcasts(bot, broadcasts)
-        return
-
-    for round_no in range(1, battle.rounds + 1):
-        await asyncio.sleep(1.3)
-        final = round_no == battle.rounds
-        round_embed = build_ladder_round_embed(challenger, defender, result, preview=False, round_no=round_no, final=final)
-        await interaction.edit_original_response(embed=round_embed, view=view if final else None)
-
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     await _send_broadcasts(bot, broadcasts)
 
 
@@ -1086,6 +1233,13 @@ class PanelView(OwnerLockedView):
     async def sect_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_sect_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_broadcasts(bot, broadcasts)
+
+    @discord.ui.button(label="擂台", style=discord.ButtonStyle.secondary, row=2)
+    async def arena_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await build_arena_message(bot, interaction.user.id, interaction.user.display_name)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
@@ -1768,6 +1922,135 @@ class TravelView(OwnerLockedView):
             embed, view, broadcasts = await stop_travel_message(bot, interaction.user.id, interaction.user.display_name)
             await interaction.response.edit_message(embed=embed, view=view)
             await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+
+class ArenaBoardView(discord.ui.View):
+    def __init__(self, bot: XianBot, *, has_champion: bool, timeout: float = 10 * 60) -> None:
+        super().__init__(timeout=timeout)
+        self.bot = bot
+        self._add_refresh_button()
+        self._add_challenge_button(disabled=not has_champion)
+        self._add_claim_button(disabled=not has_champion)
+
+    def _add_refresh_button(self) -> None:
+        button = discord.ui.Button(label="刷新擂台", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            embed, view, broadcasts = await build_arena_message(self.bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_broadcasts(self.bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_challenge_button(self, *, disabled: bool) -> None:
+        button = discord.ui.Button(label="攻擂", row=0, style=discord.ButtonStyle.danger, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            embed, view, broadcasts, success = await build_arena_challenge_message(self.bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=not success)
+            await _send_broadcasts(self.bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_claim_button(self, *, disabled: bool) -> None:
+        button = discord.ui.Button(label="收擂离场", row=0, style=discord.ButtonStyle.success, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            embed, view, broadcasts, success = await build_arena_claim_message(self.bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=not success)
+            await _send_broadcasts(self.bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+
+class SparInviteView(discord.ui.View):
+    def __init__(
+        self,
+        bot: XianBot,
+        *,
+        challenger_user_id: int,
+        challenger_display_name: str,
+        defender_user_id: int,
+        defender_display_name: str,
+        timeout: float = 60,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.bot = bot
+        self.challenger_user_id = challenger_user_id
+        self.challenger_display_name = challenger_display_name
+        self.defender_user_id = defender_user_id
+        self.defender_display_name = defender_display_name
+        self.bound_message: discord.Message | None = None
+        self.resolved = False
+        self._add_accept_button()
+        self._add_reject_button()
+
+    def bind_message(self, message: discord.Message) -> None:
+        self.bound_message = message
+
+    def _release_pending(self) -> None:
+        self.bot.pvp_service.release_spar_request(self.challenger_user_id, self.defender_user_id)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.defender_user_id:
+            return True
+        await interaction.response.send_message("这场切磋正在等待被挑战者回应。", ephemeral=True)
+        return False
+
+    async def on_timeout(self) -> None:
+        if self.resolved:
+            return
+        self.resolved = True
+        self._release_pending()
+        self.stop()
+        if self.bound_message is not None:
+            await self.bound_message.edit(
+                content=f"<@{self.defender_user_id}> 未在限时内应战。",
+                embed=_info_embed("切磋作废", "对方未在时限内回应，此次切磋已自动作废。"),
+                view=None,
+            )
+
+    def _add_accept_button(self) -> None:
+        button = discord.ui.Button(label="接受切磋", row=0, style=discord.ButtonStyle.success)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            self.resolved = True
+            self._release_pending()
+            self.stop()
+            embed, _, broadcasts = await build_spar_battle_message(
+                self.bot,
+                self.challenger_user_id,
+                self.challenger_display_name,
+                self.defender_user_id,
+            )
+            await interaction.response.edit_message(
+                content=f"<@{self.challenger_user_id}> 与 <@{self.defender_user_id}> 的切磋已结算。",
+                embed=embed,
+                view=None,
+            )
+            await _send_broadcasts(self.bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_reject_button(self) -> None:
+        button = discord.ui.Button(label="拒绝", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            self.resolved = True
+            self._release_pending()
+            self.stop()
+            await interaction.response.edit_message(
+                content=f"<@{self.defender_user_id}> 已拒绝此次切磋。",
+                embed=_info_embed("切磋未成", "对方婉拒了这次切磋。"),
+                view=None,
+            )
 
         button.callback = callback
         self.add_item(button)

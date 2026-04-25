@@ -7,6 +7,7 @@ from bot.services.character_service import CharacterSnapshot
 from bot.services.combat_service import CombatService
 from bot.services.idle_service import IdleSettlement
 from bot.services.ladder_service import LadderChallengeResult
+from bot.services.pvp_service import ArenaChallengeResult, ArenaClaimResult, ArenaStatus, SparChallengeResult
 from bot.services.tower_service import TowerFloorResult, TowerRunResult
 from bot.services.travel_service import TravelSettlement
 from bot.utils.formatters import RARITY_BADGES, RARITY_COLORS, format_big_number, format_duration_minutes, format_progress, format_qi
@@ -531,7 +532,84 @@ def build_faction_action_embed(snapshot: CharacterSnapshot, title: str, message:
     return embed
 
 
-def _ladder_hp_after_round(challenger: CharacterSnapshot, defender: CharacterSnapshot, battle, round_no: int) -> tuple[int, int]:
+def _format_battle_log_line(action, *, include_round: bool) -> str:
+    prefix = f"第 {action.round_no} 回合 | " if include_round else ""
+    if action.text:
+        return f"{prefix}{action.text}"
+    if action.dodged:
+        return f"{prefix}{action.actor_name} 一击落空，被 {action.target_name} 避开。"
+    critical = "暴击" if action.critical else "命中"
+    return f"{prefix}{action.actor_name} {critical} {action.target_name}，造成 {format_big_number(action.damage)} 点伤害。"
+
+
+def _format_pvp_log_line(action) -> str:
+    if action.text:
+        return action.text
+    if action.dodged:
+        return f"{action.actor_name} 攻势落空，被 {action.target_name} 避开。"
+    critical = "暴击" if action.critical else "命中"
+    return (
+        f"{action.actor_name} {critical} {action.target_name}，"
+        f"造成 {format_big_number(action.damage)} 点伤害，"
+        f"{action.target_name} 余血 {format_big_number(action.target_hp_after)}。"
+    )
+
+
+def _battle_round_blocks(battle) -> list[str]:
+    blocks: list[str] = []
+    for round_no in range(1, battle.rounds + 1):
+        lines = []
+        for action in battle.logs:
+            if action.round_no != round_no:
+                continue
+            lines.append(_format_pvp_log_line(action))
+        body = "\n".join(lines) if lines else "这一回合杀机未成。"
+        blocks.append(f"**第 {round_no} 回合**\n{body}")
+    if battle.reached_round_limit:
+        blocks.append(f"**终局判定**\n战至 {MAX_BATTLE_ROUNDS} 回合上限，主动挑战方判负。")
+    return blocks
+
+
+def _append_pvp_report_fields(embed: discord.Embed, battle) -> None:
+    blocks = _battle_round_blocks(battle)
+    current: list[str] = []
+    current_length = 0
+    field_index = 1
+    for block in blocks:
+        extra = len(block) + (2 if current else 0)
+        if current and current_length + extra > 1000:
+            name = "完整战报" if field_index == 1 else f"完整战报 {field_index}"
+            embed.add_field(name=name, value="\n\n".join(current), inline=False)
+            field_index += 1
+            current = [block]
+            current_length = len(block)
+            continue
+        current.append(block)
+        current_length += extra
+    if current:
+        name = "完整战报" if field_index == 1 else f"完整战报 {field_index}"
+        embed.add_field(name=name, value="\n\n".join(current), inline=False)
+
+
+def _first_striker_name(battle) -> str:
+    for action in battle.logs:
+        if action.text:
+            continue
+        return action.actor_name
+    return "未出手"
+
+
+def _build_pvp_participant_text(snapshot: CharacterSnapshot, *, current_hp: int, max_hp: int) -> str:
+    status_line = "💥 已落败" if current_hp <= 0 else f"❤ 血量：`{format_big_number(current_hp)} / {format_big_number(max_hp)}`"
+    return (
+        f"**{snapshot.player_name}** · {snapshot.realm_display}\n"
+        f"称号：**{snapshot.title}**\n"
+        f"战力：`{format_big_number(snapshot.combat_power)}`\n"
+        f"{status_line}"
+    )
+
+
+def _hp_after_round(challenger: CharacterSnapshot, defender: CharacterSnapshot, battle, round_no: int) -> tuple[int, int]:
     challenger_hp = battle.challenger_max_hp
     defender_hp = battle.defender_max_hp
     for action in battle.logs:
@@ -544,23 +622,193 @@ def _ladder_hp_after_round(challenger: CharacterSnapshot, defender: CharacterSna
     return challenger_hp, defender_hp
 
 
-def _format_battle_log_line(action, *, include_round: bool) -> str:
-    prefix = f"第 {action.round_no} 回合 | " if include_round else ""
-    if action.text:
-        return f"{prefix}{action.text}"
-    if action.dodged:
-        return f"{prefix}{action.actor_name} 一击落空，被 {action.target_name} 避开。"
-    critical = "暴击" if action.critical else "命中"
-    return f"{prefix}{action.actor_name} {critical} {action.target_name}，造成 {format_big_number(action.damage)} 点伤害。"
-
-
-def _ladder_round_report(battle, round_no: int) -> str:
+def _round_report(battle, round_no: int) -> str:
     lines = []
     for action in battle.logs:
         if action.round_no != round_no:
             continue
-        lines.append(_format_battle_log_line(action, include_round=False))
+        lines.append(_format_pvp_log_line(action))
     return "\n".join(lines) if lines else "这一回合杀机未成。"
+
+
+def build_pvp_battle_embed(
+    challenger: CharacterSnapshot,
+    defender: CharacterSnapshot,
+    *,
+    title: str,
+    description: str,
+    battle,
+    summary_lines: list[str],
+    footer_text: str | None = None,
+) -> discord.Embed:
+    color = discord.Color.green() if battle and battle.challenger_won else discord.Color.orange()
+    embed = discord.Embed(title=title, description=description, color=color)
+    if battle is None:
+        embed.add_field(name="当前状态", value="\n".join(summary_lines) if summary_lines else "此战尚未真正开始。", inline=False)
+        return embed
+
+    embed.add_field(
+        name="🧑 挑战方",
+        value=_build_pvp_participant_text(challenger, current_hp=battle.challenger_hp_after, max_hp=battle.challenger_max_hp),
+        inline=True,
+    )
+    embed.add_field(
+        name="👤 应战方",
+        value=_build_pvp_participant_text(defender, current_hp=battle.defender_hp_after, max_hp=battle.defender_max_hp),
+        inline=True,
+    )
+    overview_lines = [
+        f"先手：`{_first_striker_name(battle)}`",
+        f"回合：`{battle.rounds}`",
+        f"胜者：**{battle.winner_name}**",
+        f"{challenger.player_name} 终局血量：`{format_big_number(battle.challenger_hp_after)}`",
+        f"{defender.player_name} 终局血量：`{format_big_number(battle.defender_hp_after)}`",
+    ]
+    overview_lines.extend(summary_lines)
+    embed.add_field(name="战斗总览", value="\n".join(overview_lines), inline=False)
+    _append_pvp_report_fields(embed, battle)
+    if footer_text:
+        embed.set_footer(text=footer_text)
+    return embed
+
+
+def build_arena_embed(
+    viewer: CharacterSnapshot,
+    arena_status: ArenaStatus,
+    champion: CharacterSnapshot | None,
+    *,
+    message: str | None = None,
+) -> discord.Embed:
+    if champion is None:
+        description = message or "当前单擂台无人镇守。输入 `/开擂 器魂:数量` 即可先坐上去。"
+        embed = discord.Embed(title="单擂台", description=description, color=discord.Color.blurple())
+        embed.add_field(
+            name="当前状态",
+            value=(
+                "擂主：`暂无`\n"
+                "当前擂池：`0`\n"
+                "等额押注：`暂无`\n"
+                "当前连胜：`0`"
+            ),
+            inline=True,
+        )
+    else:
+        description = message or f"{champion.player_name} 正在守擂。攻擂需等额押上 {arena_status.stake_soul} 器魂。"
+        embed = discord.Embed(title="单擂台", description=description, color=discord.Color.dark_gold())
+        embed.add_field(
+            name="👑 当前擂主",
+            value=(
+                f"**{champion.player_name}** · {champion.realm_display}\n"
+                f"称号：**{champion.title}**\n"
+                f"战力：`{format_big_number(champion.combat_power)}`"
+            ),
+            inline=True,
+        )
+        viewer_tip = "你当前就是擂主，可随时收擂离场。" if viewer.character_id == champion.character_id else "你可点击攻擂，按当前押注等额入场。"
+        embed.add_field(
+            name="🏺 擂台状态",
+            value=(
+                f"等额押注：`{arena_status.stake_soul}`\n"
+                f"当前擂池：`{arena_status.pot_soul}`\n"
+                f"当前连胜：`{arena_status.win_streak}`\n"
+                f"{viewer_tip}"
+            ),
+            inline=True,
+        )
+    embed.add_field(
+        name="🧑 你",
+        value=(
+            f"当前器魂：`{viewer.soul_shards}`\n"
+            f"当前论道：`#{viewer.current_ladder_rank}`\n"
+            f"当前行藏：`{'游历中' if viewer.is_traveling else ('闭关中' if viewer.is_retreating else '可出战')}`"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="擂台规则",
+        value=(
+            "- 单公共擂台\n"
+            "- 攻擂需等额押注当前器魂\n"
+            "- 胜者接过擂台与全部擂池\n"
+            "- 擂主可随时收擂带走全部擂池\n"
+            "- 不改论道名次"
+        ),
+        inline=False,
+    )
+    return embed
+
+
+def build_arena_battle_embed(challenger: CharacterSnapshot, defender: CharacterSnapshot, result: ArenaChallengeResult) -> discord.Embed:
+    return build_pvp_battle_embed(
+        challenger,
+        defender,
+        title=f"{challenger.player_name} · 擂台战",
+        description=result.message,
+        battle=result.battle,
+        summary_lines=[
+            "模式：`擂台`",
+            f"等额押注：`{result.stake_soul}`",
+            f"当前擂池：`{result.pot_soul}`",
+            f"当前擂主：**{result.current_champion_name or '暂无'}**",
+            f"当前连胜：`{result.win_streak}`",
+        ],
+    )
+
+
+def build_arena_claim_embed(snapshot: CharacterSnapshot, result: ArenaClaimResult) -> discord.Embed:
+    color = discord.Color.green() if result.success else discord.Color.orange()
+    embed = discord.Embed(
+        title=f"{snapshot.player_name} · 收擂",
+        description=result.message,
+        color=color,
+    )
+    embed.add_field(
+        name="本次结算",
+        value=(
+            f"带走器魂：`{result.claimed_soul}`\n"
+            f"结算前连胜：`{result.win_streak}`"
+        ),
+        inline=False,
+    )
+    embed.add_field(name="当前器魂", value=f"`{snapshot.soul_shards}`", inline=False)
+    return embed
+
+
+def build_spar_request_embed(challenger: CharacterSnapshot, defender: CharacterSnapshot, *, timeout_seconds: int) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{challenger.player_name} · 切磋邀约",
+        description=f"{challenger.player_name} 向 {defender.player_name} 发起切磋，请对方在限时内决定是否应战。",
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(
+        name="发起者",
+        value=(
+            f"境界：`{challenger.realm_display}`\n"
+            f"称号：**{challenger.title}**\n"
+            f"战力：`{format_big_number(challenger.combat_power)}`"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="应战者",
+        value=(
+            f"境界：`{defender.realm_display}`\n"
+            f"称号：**{defender.title}**\n"
+            f"战力：`{format_big_number(defender.combat_power)}`"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="切磋规则",
+        value=(
+            "- 不改论道名次\n"
+            "- 不消耗论道次数\n"
+            "- 不发放奖励\n"
+            f"- `{timeout_seconds}` 秒内未回应则自动作废"
+        ),
+        inline=False,
+    )
+    return embed
 
 
 def build_ladder_round_embed(
@@ -585,8 +833,8 @@ def build_ladder_round_embed(
         defender_hp = defender.total_def * 10
         report_text = "双方灵机相引，尚未真正出手。"
     else:
-        challenger_hp, defender_hp = _ladder_hp_after_round(challenger, defender, battle, round_no)
-        report_text = _ladder_round_report(battle, round_no)
+        challenger_hp, defender_hp = _hp_after_round(challenger, defender, battle, round_no)
+        report_text = _round_report(battle, round_no)
 
     challenger_state = (
         f"**{challenger.player_name}** · {challenger.realm_display}\n"
@@ -619,20 +867,34 @@ def build_ladder_round_embed(
 
 
 def build_ladder_battle_embed(challenger: CharacterSnapshot, defender: CharacterSnapshot, result: LadderChallengeResult) -> discord.Embed:
-    color = discord.Color.green() if result.battle and result.battle.challenger_won else discord.Color.orange()
-    embed = discord.Embed(title=f"{challenger.player_name} · 论道", description=result.message, color=color)
-    embed.add_field(
-        name="双方牌面",
-        value=(
-            f"你：`#{result.challenger_rank_before} -> #{result.challenger_rank_after}` · {challenger.realm_display} · 战力 {format_big_number(challenger.combat_power)}\n"
-            f"对手：`#{result.defender_rank_before} -> #{result.defender_rank_after}` · {defender.player_name} · {defender.realm_display} · 战力 {format_big_number(defender.combat_power)}"
-        ),
-        inline=False,
+    return build_pvp_battle_embed(
+        challenger,
+        defender,
+        title=f"{challenger.player_name} · 论道",
+        description=result.message,
+        battle=result.battle,
+        summary_lines=[
+            f"你：`#{result.challenger_rank_before} -> #{result.challenger_rank_after}`",
+            f"对手：`#{result.defender_rank_before} -> #{result.defender_rank_after}`",
+            f"剩余挑战：`{result.remaining_attempts}` 次",
+        ],
+        footer_text=f"今日剩余论道次数：{result.remaining_attempts}",
     )
-    if result.battle is not None:
-        embed.add_field(name="战报截取", value=_battle_excerpt(result.battle, limit=6), inline=False)
-        embed.set_footer(text=f"今日剩余论道次数：{result.remaining_attempts}")
-    return embed
+
+
+def build_spar_battle_embed(challenger: CharacterSnapshot, defender: CharacterSnapshot, result: SparChallengeResult) -> discord.Embed:
+    return build_pvp_battle_embed(
+        challenger,
+        defender,
+        title=f"{challenger.player_name} · 切磋",
+        description=result.message,
+        battle=result.battle,
+        summary_lines=[
+            "模式：`切磋`",
+            "名次：`不变`",
+            "奖励：`无`",
+        ],
+    )
 
 
 def _tower_reward_text(floor_result: TowerFloorResult) -> str:

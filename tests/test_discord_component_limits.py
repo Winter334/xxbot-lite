@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from bot.views.panel import (
+    ArenaBoardView,
     ArtifactOverviewView,
     ArtifactRefineView,
     ArtifactReinforceView,
@@ -17,6 +18,7 @@ from bot.views.panel import (
     SectDirectoryView,
     SectOverviewView,
     SectSiteActionView,
+    SparInviteView,
     SpiritOverviewView,
     TowerRunView,
     TravelView,
@@ -78,6 +80,14 @@ async def test_views_respect_discord_component_limits() -> None:
                 is_traveling=False,
                 travel_selected_duration_minutes=120,
             ),
+        ),
+        ArenaBoardView(SimpleNamespace(), has_champion=True),
+        SparInviteView(
+            SimpleNamespace(pvp_service=SimpleNamespace(release_spar_request=lambda *_: None)),
+            challenger_user_id=1,
+            challenger_display_name="甲",
+            defender_user_id=2,
+            defender_display_name="乙",
         ),
         FactionView(
             1,
