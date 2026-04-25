@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bot.models.base import IdentityMixin, Base, TimestampMixin, utcnow
@@ -43,6 +44,7 @@ class Character(Base, IdentityMixin, TimestampMixin):
     sect_bound_site_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
     lingshi: Mapped[int] = mapped_column(BigInteger, default=0)
     fate_key: Mapped[str] = mapped_column(String(64))
+    honor_tags_json: Mapped[str] = mapped_column(Text, default="[]")
     faction: Mapped[str] = mapped_column(String(16), default="neutral")
     virtue: Mapped[int] = mapped_column(BigInteger, default=0)
     infamy: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -66,3 +68,35 @@ class Character(Base, IdentityMixin, TimestampMixin):
     sect = relationship("Sect", back_populates="members", foreign_keys=[sect_id])
     artifact = relationship("Artifact", back_populates="character", uselist=False, cascade="all, delete-orphan")
     ladder_record = relationship("LadderRecord", back_populates="character", uselist=False, cascade="all, delete-orphan")
+
+    def stored_honor_tags(self) -> tuple[str, ...]:
+        raw = getattr(self, "honor_tags_json", "[]") or "[]"
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = []
+        if not isinstance(parsed, list):
+            return ()
+        deduped: list[str] = []
+        for item in parsed:
+            tag = str(item).strip()
+            if tag and tag not in deduped:
+                deduped.append(tag)
+        return tuple(deduped)
+
+    def set_honor_tags(self, tags: list[str] | tuple[str, ...]) -> None:
+        deduped: list[str] = []
+        for item in tags:
+            tag = str(item).strip()
+            if tag and tag not in deduped:
+                deduped.append(tag)
+        self.honor_tags_json = json.dumps(deduped, ensure_ascii=False)
+
+    def add_honor_tag(self, tag: str) -> bool:
+        current = list(self.stored_honor_tags())
+        normalized = tag.strip()
+        if not normalized or normalized in current:
+            return False
+        current.append(normalized)
+        self.set_honor_tags(current)
+        return True

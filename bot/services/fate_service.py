@@ -16,6 +16,9 @@ class FateService:
     def has_fate(self, fate_key: str) -> bool:
         return fate_key in FATES_BY_KEY
 
+    def is_easter_egg_fate(self, fate_key: str) -> bool:
+        return self.get_fate(fate_key).is_easter_egg
+
     def random_initial_luck(self) -> int:
         return self.rng.randint(1, 99)
 

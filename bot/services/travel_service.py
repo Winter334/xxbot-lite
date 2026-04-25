@@ -29,6 +29,9 @@ class TravelEventDefinition:
     def_pct_max: int = 0
     agi_pct_min: int = 0
     agi_pct_max: int = 0
+    honor_tag: str = ""
+    fate_key: str = ""
+    honor_duplicate_soul: int = 0
     no_gain: bool = False
 
 
@@ -42,6 +45,10 @@ class TravelEventLog:
     atk_pct_delta: int
     def_pct_delta: int
     agi_pct_delta: int
+    honor_tag: str = ""
+    honor_gained: bool = False
+    gained_fate_name: str = ""
+    broadcast_text: str = ""
 
 
 @dataclass(slots=True)
@@ -58,6 +65,9 @@ class TravelSettlement:
     total_agi_pct: int
     completed: bool
     logs: tuple[TravelEventLog, ...]
+    gained_honor_tags: tuple[str, ...] = ()
+    gained_fate_names: tuple[str, ...] = ()
+    broadcast_texts: tuple[str, ...] = ()
 
 
 class TravelService:
@@ -130,12 +140,16 @@ class TravelService:
         current_time = ensure_shanghai(now or now_shanghai())
         elapsed_minutes = self.current_travel_minutes(character, now=current_time)
         settled_events = min(self.max_events_per_trip, elapsed_minutes // self.event_interval_minutes)
-        logs = tuple(self._resolve_event(character) for _ in range(settled_events))
+        trip_gained_fate_keys: set[str] = set()
+        logs = tuple(self._resolve_event(character, trip_gained_fate_keys=trip_gained_fate_keys) for _ in range(settled_events))
         total_soul = sum(log.soul_delta for log in logs)
         total_cultivation = sum(log.cultivation_delta for log in logs)
         total_atk_pct = sum(log.atk_pct_delta for log in logs)
         total_def_pct = sum(log.def_pct_delta for log in logs)
         total_agi_pct = sum(log.agi_pct_delta for log in logs)
+        gained_honor_tags = tuple(log.honor_tag for log in logs if log.honor_gained)
+        gained_fate_names = tuple(log.gained_fate_name for log in logs if log.gained_fate_name)
+        broadcast_texts = tuple(log.broadcast_text for log in logs if log.broadcast_text)
         completed = elapsed_minutes >= character.travel_duration_minutes
         settled_minutes = settled_events * self.event_interval_minutes
 
@@ -153,6 +167,10 @@ class TravelService:
             for label, delta in (("杀伐", total_atk_pct), ("护体", total_def_pct), ("身法", total_agi_pct)):
                 if delta:
                     pieces.append(f"{label} {'+' if delta > 0 else ''}{delta}%")
+            if gained_honor_tags:
+                pieces.append("得荣誉「" + "」「".join(gained_honor_tags) + "」")
+            if gained_fate_names:
+                pieces.append("得命格「" + "」「".join(gained_fate_names) + "」")
             character.last_highlight_text = f"方才游历归来，{'，'.join(pieces)}。"
         elif completed:
             character.last_highlight_text = "方才游历归来，此行虽无所得，却也算见过山海。"
@@ -179,17 +197,48 @@ class TravelService:
             total_agi_pct,
             completed,
             logs,
+            gained_honor_tags,
+            gained_fate_names,
+            broadcast_texts,
         )
 
-    def _resolve_event(self, character: Character) -> TravelEventLog:
+    def _resolve_event(self, character: Character, *, trip_gained_fate_keys: set[str] | None = None) -> TravelEventLog:
         event = self._roll_event()
-        soul_delta = self._roll_range(event.soul_min, event.soul_max)
+        base_soul_delta = self._roll_range(event.soul_min, event.soul_max)
         cultivation_delta = self._roll_cultivation(character, event.cultivation_pct_min, event.cultivation_pct_max)
-        if soul_delta > 0:
-            soul_delta = self.fate_service.apply_system_soul_modifier(character.fate_key, soul_delta)
         atk_pct_delta = self._roll_range(event.atk_pct_min, event.atk_pct_max)
         def_pct_delta = self._roll_range(event.def_pct_min, event.def_pct_max)
         agi_pct_delta = self._roll_range(event.agi_pct_min, event.agi_pct_max)
+        gained_honor_tag = ""
+        honor_gained = False
+        duplicate_honor_bonus_soul = 0
+        gained_fate_name = ""
+        broadcast_text = ""
+        if event.honor_tag:
+            # 荣誉只负责牌面展示；若重复触发，则改发额外器魂，避免彩蛋事件空转。
+            honor_gained = character.add_honor_tag(event.honor_tag)
+            if honor_gained:
+                gained_honor_tag = event.honor_tag
+            else:
+                duplicate_honor_bonus_soul = max(0, event.honor_duplicate_soul)
+        if event.fate_key:
+            target_fate = self.fate_service.get_fate(event.fate_key)
+            current_fate_is_other_easter_egg = (
+                self.fate_service.is_easter_egg_fate(character.fate_key) and character.fate_key != target_fate.key
+            )
+            trip_already_granted_fate = bool(trip_gained_fate_keys)
+            if not current_fate_is_other_easter_egg and not trip_already_granted_fate and character.fate_key != target_fate.key:
+                character.fate_key = target_fate.key
+                gained_fate_name = target_fate.name
+                if trip_gained_fate_keys is not None:
+                    trip_gained_fate_keys.add(target_fate.key)
+                player_name = getattr(getattr(character, "player", None), "display_name", "")
+                if target_fate.broadcast_on_obtain and player_name:
+                    broadcast_text = f"【天命奇遇】{player_name} 游历归来，于「{event.title}」机缘中得彩蛋命格「{target_fate.name}」。"
+
+        soul_delta = base_soul_delta + duplicate_honor_bonus_soul
+        if soul_delta > 0:
+            soul_delta = self.fate_service.apply_system_soul_modifier(character.fate_key, soul_delta)
 
         if soul_delta and character.artifact is not None:
             character.artifact.soul_shards = max(0, (character.artifact.soul_shards or 0) + soul_delta)
@@ -198,16 +247,31 @@ class TravelService:
         character.travel_atk_pct += atk_pct_delta
         character.travel_def_pct += def_pct_delta
         character.travel_agi_pct += agi_pct_delta
+        result_text = self._format_result_text(
+            soul_delta,
+            cultivation_delta,
+            atk_pct_delta,
+            def_pct_delta,
+            agi_pct_delta,
+            honor_tag=gained_honor_tag,
+            gained_fate_name=gained_fate_name,
+            duplicate_honor_bonus_soul=duplicate_honor_bonus_soul,
+            no_gain=event.no_gain,
+        )
 
         return TravelEventLog(
             title=event.title,
             flavor_text=event.flavor_text,
-            result_text=self._format_result_text(soul_delta, cultivation_delta, atk_pct_delta, def_pct_delta, agi_pct_delta, no_gain=event.no_gain),
+            result_text=result_text,
             soul_delta=soul_delta,
             cultivation_delta=cultivation_delta,
             atk_pct_delta=atk_pct_delta,
             def_pct_delta=def_pct_delta,
             agi_pct_delta=agi_pct_delta,
+            honor_tag=gained_honor_tag or event.honor_tag,
+            honor_gained=honor_gained,
+            gained_fate_name=gained_fate_name,
+            broadcast_text=broadcast_text,
         )
 
     def _roll_event(self) -> TravelEventDefinition:
@@ -255,23 +319,39 @@ class TravelService:
         def_pct_delta: int,
         agi_pct_delta: int,
         *,
+        honor_tag: str = "",
+        gained_fate_name: str = "",
+        duplicate_honor_bonus_soul: int = 0,
         no_gain: bool,
     ) -> str:
         if no_gain:
-            return "本次结算无收益"
+            base_text = "本次结算无收益"
+        else:
+            parts: list[str] = []
+            if soul_delta:
+                parts.append(f"器魂 {'+' if soul_delta > 0 else ''}{soul_delta}")
+            if cultivation_delta:
+                parts.append(f"修为 {'+' if cultivation_delta > 0 else ''}{cultivation_delta}")
+            if atk_pct_delta:
+                parts.append(f"杀伐 {'+' if atk_pct_delta > 0 else ''}{atk_pct_delta}%")
+            if def_pct_delta:
+                parts.append(f"护体 {'+' if def_pct_delta > 0 else ''}{def_pct_delta}%")
+            if agi_pct_delta:
+                parts.append(f"身法 {'+' if agi_pct_delta > 0 else ''}{agi_pct_delta}%")
+            base_text = "，".join(parts) if parts else "本次结算无收益"
 
-        parts: list[str] = []
-        if soul_delta:
-            parts.append(f"器魂 {'+' if soul_delta > 0 else ''}{soul_delta}")
-        if cultivation_delta:
-            parts.append(f"修为 {'+' if cultivation_delta > 0 else ''}{cultivation_delta}")
-        if atk_pct_delta:
-            parts.append(f"杀伐 {'+' if atk_pct_delta > 0 else ''}{atk_pct_delta}%")
-        if def_pct_delta:
-            parts.append(f"护体 {'+' if def_pct_delta > 0 else ''}{def_pct_delta}%")
-        if agi_pct_delta:
-            parts.append(f"身法 {'+' if agi_pct_delta > 0 else ''}{agi_pct_delta}%")
-        return "，".join(parts) if parts else "本次结算无收益"
+        extra_parts: list[str] = []
+        if honor_tag:
+            extra_parts.append(f"得荣誉「{honor_tag}」")
+        if gained_fate_name:
+            extra_parts.append(f"得命格「{gained_fate_name}」")
+        if duplicate_honor_bonus_soul > 0:
+            extra_parts.append("旧誉再逢，转为额外器魂")
+        if not extra_parts:
+            return base_text
+        if base_text == "本次结算无收益":
+            return "，".join(extra_parts)
+        return f"{base_text}，" + "，".join(extra_parts)
 
     def _build_event_pool(self) -> tuple[TravelEventDefinition, ...]:
         return (
@@ -296,4 +376,45 @@ class TravelService:
             TravelEventDefinition("bad_2", "邪风蚀骨", "荒野邪风透骨而过，你强撑片刻，仍觉道躯某处隐隐受损。", 6, def_pct_min=-2, def_pct_max=-1),
             TravelEventDefinition("bad_3", "贼修掠魂", "夜半忽有贼修窥伺，你虽将其惊退，却还是被顺走几缕器魂。", 5, soul_min=-4, soul_max=-2),
             TravelEventDefinition("bad_4", "岔路迷行", "你在群山迷雾中绕行许久，直到天色将晚，才发现这一路几乎一无所获。", 5, no_gain=True),
+            TravelEventDefinition(
+                "honor_tianbei",
+                "天碑留名",
+                "云崖尽头的古碑忽然映出你的影子，一缕旧时代的道痕在碑面上为你停了一息。",
+                2,
+                soul_min=8,
+                soul_max=12,
+                cultivation_pct_min=3,
+                cultivation_pct_max=5,
+                honor_tag="见过天碑",
+                fate_key="taigubeiling",
+                honor_duplicate_soul=8,
+            ),
+            TravelEventDefinition(
+                "honor_dongtian",
+                "洞天过客",
+                "你误入一角残缺洞天，离去前回首，只见门扉上竟留下一道与你气息相合的印痕。",
+                2,
+                soul_min=10,
+                soul_max=16,
+                def_pct_min=1,
+                def_pct_max=2,
+                honor_tag="洞天过客",
+                fate_key="dongxuantaixi",
+                honor_duplicate_soul=10,
+            ),
+            TravelEventDefinition(
+                "honor_fenglei",
+                "风雷照胆",
+                "山巅风雷同时压下，你竟在那一瞬站稳脚跟，胸中胆意被天地亲手刻下一笔。",
+                1,
+                soul_min=6,
+                soul_max=10,
+                atk_pct_min=2,
+                atk_pct_max=3,
+                agi_pct_min=1,
+                agi_pct_max=2,
+                honor_tag="风雷照胆",
+                fate_key="fengleiminggu",
+                honor_duplicate_soul=8,
+            ),
         )
