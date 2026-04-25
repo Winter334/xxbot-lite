@@ -176,7 +176,7 @@ async def test_travel_and_retreat_are_mutually_exclusive(session_factory, servic
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 1010, "游客")
         character = creation.character
-        travel_start = services.travel.start_travel(character, 60)
+        travel_start = services.travel.start_travel(character)
         retreat_start = services.character.start_retreat(character)
         tower_result = services.tower.run_tower(character)
         await session.commit()
@@ -188,19 +188,19 @@ async def test_travel_and_retreat_are_mutually_exclusive(session_factory, servic
 
 
 @pytest.mark.asyncio
-async def test_travel_settlement_uses_30_minute_cycles_and_caps_at_10(session_factory, services) -> None:
+async def test_travel_settlement_uses_10_minute_cycles_and_caps_at_12(session_factory, services) -> None:
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 1011, "远行")
         character = creation.character
         now = now_shanghai()
-        services.travel.start_travel(character, 300, now=now)
+        services.travel.start_travel(character, now=now)
         character.travel_started_at = now - timedelta(hours=8)
         settlement = services.travel.stop_travel(character, now=now)
         await session.commit()
 
         assert settlement.success is True
-        assert settlement.settled_events == 10
-        assert settlement.settled_minutes == 300
+        assert settlement.settled_events == 12
+        assert settlement.settled_minutes == 120
         assert character.is_traveling is False
 
 
@@ -227,13 +227,13 @@ async def test_travel_negative_event_can_apply(session_factory, services) -> Non
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 1013, "逢厄")
         character = creation.character
-        services.travel.start_travel(character, 30)
-        character.travel_started_at = now_shanghai() - timedelta(minutes=30)
+        services.travel.start_travel(character)
+        character.travel_started_at = now_shanghai() - timedelta(minutes=10)
         found_negative = False
         for _ in range(20):
             character.is_traveling = True
-            character.travel_duration_minutes = 30
-            character.travel_started_at = now_shanghai() - timedelta(minutes=30)
+            character.travel_duration_minutes = services.travel.travel_cap_minutes
+            character.travel_started_at = now_shanghai() - timedelta(minutes=10)
             settlement = services.travel.stop_travel(character)
             if any(
                 log.soul_delta < 0
@@ -278,8 +278,8 @@ async def test_travel_honor_event_grants_persistent_honor_and_rewards(session_fa
         character.fate_key = "jinshicangfeng"
         honor_service = TravelService(services.fate, rng=TravelRoller([0.99], ["honor_tianbei"], [10, 3]))
         now = now_shanghai()
-        honor_service.start_travel(character, 30, now=now)
-        character.travel_started_at = now - timedelta(minutes=30)
+        honor_service.start_travel(character, now=now)
+        character.travel_started_at = now - timedelta(minutes=10)
         settlement = honor_service.stop_travel(character, now=now)
         title, honor_tags, faction_title = await services.ranking.get_titles(session, character)
         snapshot = services.character.build_snapshot(character, title=title, faction_title=faction_title, honor_tags=honor_tags)
@@ -308,8 +308,8 @@ async def test_travel_duplicate_honor_converts_to_extra_soul(session_factory, se
         character.add_honor_tag("见过天碑")
         honor_service = TravelService(services.fate, rng=TravelRoller([0.99], ["honor_tianbei"], [10, 3]))
         now = now_shanghai()
-        honor_service.start_travel(character, 30, now=now)
-        character.travel_started_at = now - timedelta(minutes=30)
+        honor_service.start_travel(character, now=now)
+        character.travel_started_at = now - timedelta(minutes=10)
         settlement = honor_service.stop_travel(character, now=now)
         await session.commit()
 
@@ -330,8 +330,8 @@ async def test_travel_easter_egg_event_does_not_overwrite_existing_other_easter_
         character.fate_key = "dongxuantaixi"
         honor_service = TravelService(services.fate, rng=TravelRoller([0.99], ["honor_tianbei"], [10, 3]))
         now = now_shanghai()
-        honor_service.start_travel(character, 30, now=now)
-        character.travel_started_at = now - timedelta(minutes=30)
+        honor_service.start_travel(character, now=now)
+        character.travel_started_at = now - timedelta(minutes=10)
         settlement = honor_service.stop_travel(character, now=now)
         await session.commit()
 
