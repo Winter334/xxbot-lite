@@ -7,10 +7,15 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.views.panel import (
+    build_arena_challenge_message,
+    build_arena_claim_message,
+    build_arena_message,
+    build_open_arena_message,
     build_breakthrough_message,
     build_leaderboard_message,
     build_panel_message,
     build_reincarnation_confirm_message,
+    build_spar_request_message,
     build_travel_message,
     run_private_tower_sequence,
 )
@@ -51,6 +56,12 @@ class XianCommands(commands.Cog):
         for content in broadcasts:
             await self.bot.broadcast_service.broadcast(self.bot, content)
 
+    async def _send_action_with_broadcasts(self, interaction: discord.Interaction, payload) -> None:
+        embed, view, broadcasts, success = payload
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=not success)
+        for content in broadcasts:
+            await self.bot.broadcast_service.broadcast(self.bot, content)
+
     @app_commands.command(name="修仙", description="打开你的修仙主面板。")
     async def panel(self, interaction: discord.Interaction) -> None:
         await self._send_with_broadcasts(
@@ -76,7 +87,7 @@ class XianCommands(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="\u6e38\u5386", description="\u6253\u5f00\u6e38\u5386\u9762\u677f\uff0c\u9009\u62e9\u65f6\u957f\u540e\u5916\u51fa\u649e\u673a\u7f18\u3002")
+    @app_commands.command(name="\u6e38\u5386", description="\u6253\u5f00\u6e38\u5386\u9762\u677f\uff0c\u76f4\u63a5\u5916\u51fa\u649e\u673a\u7f18\u3002")
     async def travel(self, interaction: discord.Interaction) -> None:
         await self._send_with_broadcasts(
             interaction,
@@ -103,6 +114,36 @@ class XianCommands(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.command(name="擂台", description="查看当前公共擂台。")
+    async def arena(self, interaction: discord.Interaction) -> None:
+        await self._send_with_broadcasts(
+            interaction,
+            await build_arena_message(self.bot, interaction.user.id, interaction.user.display_name),
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="开擂", description="押上器魂，成为当前公共擂台的擂主。")
+    @app_commands.describe(soul="要押上的器魂数量")
+    async def open_arena(self, interaction: discord.Interaction, soul: app_commands.Range[int, 1]) -> None:
+        await self._send_action_with_broadcasts(
+            interaction,
+            await build_open_arena_message(self.bot, interaction.user.id, interaction.user.display_name, soul),
+        )
+
+    @app_commands.command(name="攻擂", description="按当前擂台的等额押注挑战擂主。")
+    async def challenge_arena(self, interaction: discord.Interaction) -> None:
+        await self._send_action_with_broadcasts(
+            interaction,
+            await build_arena_challenge_message(self.bot, interaction.user.id, interaction.user.display_name),
+        )
+
+    @app_commands.command(name="收擂", description="当前擂主带走全部擂池并离场。")
+    async def claim_arena(self, interaction: discord.Interaction) -> None:
+        await self._send_action_with_broadcasts(
+            interaction,
+            await build_arena_claim_message(self.bot, interaction.user.id, interaction.user.display_name),
+        )
+
     @app_commands.command(name="面板", description="查看其他修士的公开面板。")
     @app_commands.describe(user="要查看的道友")
     async def inspect_panel(self, interaction: discord.Interaction, user: discord.Member) -> None:
@@ -117,6 +158,45 @@ class XianCommands(commands.Cog):
             ),
             delete_after=PUBLIC_PANEL_DELETE_AFTER,
         )
+
+    @app_commands.command(name="切磋", description="向其他修士发起一场无奖励的切磋。")
+    @app_commands.describe(user="要切磋的道友")
+    async def spar(self, interaction: discord.Interaction, user: discord.Member) -> None:
+        if user.bot:
+            await interaction.response.send_message("不能向灵傀发起切磋。", ephemeral=True)
+            return
+        if user.id == interaction.user.id:
+            await interaction.response.send_message("你还不至于自己和自己切磋。", ephemeral=True)
+            return
+        if not self.bot.pvp_service.reserve_spar_request(interaction.user.id, user.id):
+            await interaction.response.send_message("你或对方已有待回应的切磋邀请，请先等当前邀请结束。", ephemeral=True)
+            return
+
+        try:
+            embed, view, broadcasts, content = await build_spar_request_message(
+                self.bot,
+                interaction.user.id,
+                interaction.user.display_name,
+                user.id,
+                user.display_name,
+            )
+            if view is None:
+                self.bot.pvp_service.release_spar_request(interaction.user.id, user.id)
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+            await interaction.response.send_message(
+                content=content,
+                embed=embed,
+                view=view,
+                allowed_mentions=discord.AllowedMentions(users=True),
+            )
+            message = await interaction.original_response()
+            view.bind_message(message)
+            for broadcast in broadcasts:
+                await self.bot.broadcast_service.broadcast(self.bot, broadcast)
+        except Exception:
+            self.bot.pvp_service.release_spar_request(interaction.user.id, user.id)
+            raise
 
     @app_commands.command(name="轮回", description="舍弃当前主线进度，轮回重修。")
     async def reincarnate(self, interaction: discord.Interaction) -> None:

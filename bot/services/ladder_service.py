@@ -85,7 +85,7 @@ class LadderService:
         defender_snapshot = self.character_service.build_snapshot(defender)
         challenger_fighter = self.character_service.build_combatant(challenger, title=challenger_snapshot.title)
         defender_fighter = self.character_service.build_combatant(defender, title=defender_snapshot.title)
-        battle = self.combat_service.run_battle(challenger_fighter, defender_fighter, scene_tags=("scene_ladder",))
+        battle = self.combat_service.run_battle(challenger_fighter, defender_fighter, scene_tags=("scene_ladder", "scene_pvp"))
 
         challenger.daily_pvp_attempts_used += 1
         challenger.last_pvp_reset_on = today_shanghai()

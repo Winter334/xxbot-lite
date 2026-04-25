@@ -16,6 +16,7 @@ from bot.services.fate_service import FateService
 from bot.services.faction_service import FactionService
 from bot.services.idle_service import IdleService
 from bot.services.ladder_service import LadderService
+from bot.services.pvp_service import PvpService
 from bot.services.ranking_service import RankingService
 from bot.services.sect_service import SectService
 from bot.services.spirit_service import SpiritService
@@ -36,6 +37,7 @@ class ServiceBundle:
     tower: TowerService
     breakthrough: BreakthroughService
     ladder: LadderService
+    pvp: PvpService
     ranking: RankingService
     travel: TravelService
 
@@ -68,6 +70,7 @@ def services() -> ServiceBundle:
     tower = TowerService(character, combat, fate, rng)
     breakthrough = BreakthroughService(character)
     ladder = LadderService(character, combat)
+    pvp = PvpService(character, combat)
     ranking = RankingService(character, artifact, spirit, faction)
     travel = TravelService(fate, rng)
-    return ServiceBundle(fate, artifact, spirit, sect, character, idle, combat, faction, tower, breakthrough, ladder, ranking, travel)
+    return ServiceBundle(fate, artifact, spirit, sect, character, idle, combat, faction, tower, breakthrough, ladder, pvp, ranking, travel)
