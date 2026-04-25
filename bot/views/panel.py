@@ -36,7 +36,6 @@ from bot.ui.sect import build_sect_directory_embed, build_sect_overview_embed, b
 from bot.ui.sect import build_sect_help_embed
 from bot.ui.spirit import build_spirit_panel_embed
 from bot.services.faction_service import FactionTarget
-from bot.services.travel_service import TRAVEL_DURATION_CHOICES
 
 if TYPE_CHECKING:
     from bot.main import XianBot
@@ -532,20 +531,6 @@ async def build_travel_message(bot: XianBot, owner_user_id: int, display_name: s
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
     return build_travel_embed(snapshot), TravelView(owner_user_id, snapshot=snapshot), broadcasts
-
-
-async def cycle_travel_duration_message(bot: XianBot, owner_user_id: int, display_name: str):
-    async with bot.session_factory() as session:
-        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
-        character = creation.character
-        next_minutes = bot.travel_service.cycle_selected_duration(character)
-        snapshot = await _sync_snapshot(bot, session, character)
-        await session.commit()
-    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    embed = build_travel_embed(snapshot)
-    embed.description = f"已将本次行程调整为 {next_minutes} 分钟。"
-    return embed, TravelView(owner_user_id, snapshot=snapshot), broadcasts
-
 
 async def start_travel_message(bot: XianBot, owner_user_id: int, display_name: str, duration_minutes: int | None = None):
     async with bot.session_factory() as session:
@@ -1749,20 +1734,7 @@ class TravelView(OwnerLockedView):
             self._add_refresh_button(row=0)
             self._add_stop_button(row=0, disabled=False)
         else:
-            self._add_cycle_button(snapshot.travel_selected_duration_minutes, row=0)
             self._add_start_button(row=0)
-
-    def _add_cycle_button(self, current_minutes: int, *, row: int) -> None:
-        button = discord.ui.Button(label=f"切换时长（当前 {current_minutes}分）", row=row, style=discord.ButtonStyle.secondary)
-
-        async def callback(interaction: discord.Interaction) -> None:
-            bot: XianBot = interaction.client  # type: ignore[assignment]
-            embed, view, broadcasts = await cycle_travel_duration_message(bot, interaction.user.id, interaction.user.display_name)
-            await interaction.response.edit_message(embed=embed, view=view)
-            await _send_broadcasts(bot, broadcasts)
-
-        button.callback = callback
-        self.add_item(button)
 
     def _add_start_button(self, *, row: int) -> None:
         button = discord.ui.Button(label="开始游历", row=row, style=discord.ButtonStyle.primary)

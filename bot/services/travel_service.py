@@ -71,9 +71,9 @@ class TravelSettlement:
 
 
 class TravelService:
-    event_interval_minutes = 30
-    max_events_per_trip = 10
-    stat_event_chance = 0.08
+    event_interval_minutes = 10
+    max_events_per_trip = 12
+    stat_event_chance = 0.04
 
     def __init__(self, fate_service: FateService, rng: random.Random | None = None) -> None:
         self.fate_service = fate_service
@@ -82,12 +82,16 @@ class TravelService:
         self._stat_events = tuple(event for event in self._events if self._is_stat_event(event))
         self._non_stat_events = tuple(event for event in self._events if not self._is_stat_event(event))
 
+    @property
+    def travel_cap_minutes(self) -> int:
+        return self.event_interval_minutes * self.max_events_per_trip
+
     def current_travel_minutes(self, character: Character, *, now=None) -> int:
         if not character.is_traveling:
             return 0
         current_time = ensure_shanghai(now or now_shanghai())
         elapsed = current_time - ensure_shanghai(character.travel_started_at)
-        capped = min(elapsed, timedelta(minutes=character.travel_duration_minutes))
+        capped = min(elapsed, timedelta(minutes=character.travel_duration_minutes or self.travel_cap_minutes))
         return max(0, int(capped.total_seconds() // 60))
 
     def next_duration_choice(self, current_minutes: int) -> int:
@@ -104,9 +108,6 @@ class TravelService:
         return next_minutes
 
     def start_travel(self, character: Character, duration_minutes: int | None = None, *, now=None) -> TravelSettlement:
-        actual_duration = duration_minutes or character.travel_selected_duration_minutes or TRAVEL_DURATION_CHOICES[0]
-        if actual_duration not in TRAVEL_DURATION_CHOICES:
-            return TravelSettlement(False, "该游历时长尚未列入一期行程。", 0, 0, 0, 0, 0, 0, 0, 0, False, ())
         if character.is_traveling:
             return TravelSettlement(False, "你已在外游历，暂不可再启新程。", 0, 0, 0, 0, 0, 0, 0, 0, False, ())
         if character.is_retreating:
@@ -115,12 +116,11 @@ class TravelService:
         current_time = ensure_shanghai(now or now_shanghai())
         character.is_traveling = True
         character.travel_started_at = current_time
-        character.travel_duration_minutes = actual_duration
-        character.travel_selected_duration_minutes = actual_duration
-        character.last_highlight_text = f"方才离山游历，预计行程 {actual_duration} 分钟。"
+        character.travel_duration_minutes = self.travel_cap_minutes
+        character.last_highlight_text = "方才离山游历，准备在山海之间撞一场机缘。"
         return TravelSettlement(
             True,
-            f"你已离开山门，踏上 {actual_duration} 分钟的游历行程。",
+            f"你已离开山门，开始游历。每满 {self.event_interval_minutes} 分钟可结算 1 次奇遇，最多记 {self.max_events_per_trip} 次。",
             0,
             0,
             0,
@@ -155,9 +155,7 @@ class TravelService:
 
         character.is_traveling = False
         character.travel_started_at = current_time
-        previous_duration = character.travel_duration_minutes
         character.travel_duration_minutes = 0
-        character.travel_selected_duration_minutes = previous_duration or character.travel_selected_duration_minutes
         if logs:
             pieces: list[str] = []
             if total_soul:
@@ -178,9 +176,9 @@ class TravelService:
             character.last_highlight_text = "方才中途折返，此次游历尚未来得及撞上真正机缘。"
 
         if completed:
-            message = f"你已按原定 {previous_duration} 分钟行程归来，本次游历共结算 {settled_events} 次奇遇。"
+            message = f"你游历归来，本次已触及当前可结算上限，共结算 {settled_events} 次奇遇。"
         elif settled_events > 0:
-            message = f"你中途折返，已按已走完的 {settled_minutes} 分钟路程结算 {settled_events} 次奇遇。未满 30 分钟的路程不计收益。"
+            message = f"你中途折返，已按已走完的 {settled_minutes} 分钟路程结算 {settled_events} 次奇遇。未满 {self.event_interval_minutes} 分钟的路程不计收益。"
         else:
             message = "你中途折返，此行未满一个结算周期，故未有实际收益。"
 
@@ -380,7 +378,7 @@ class TravelService:
                 "honor_tianbei",
                 "天碑留名",
                 "云崖尽头的古碑忽然映出你的影子，一缕旧时代的道痕在碑面上为你停了一息。",
-                2,
+                1,
                 soul_min=8,
                 soul_max=12,
                 cultivation_pct_min=3,
@@ -393,7 +391,7 @@ class TravelService:
                 "honor_dongtian",
                 "洞天过客",
                 "你误入一角残缺洞天，离去前回首，只见门扉上竟留下一道与你气息相合的印痕。",
-                2,
+                1,
                 soul_min=10,
                 soul_max=16,
                 def_pct_min=1,

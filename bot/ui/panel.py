@@ -25,7 +25,7 @@ def build_panel_embed(
     percent = int((snapshot.cultivation / snapshot.cultivation_max) * 100) if snapshot.cultivation_max else 0
     honor_line = " · ".join(f"`{tag}`" for tag in snapshot.honor_tags) if snapshot.honor_tags else "暂无额外荣誉"
     if snapshot.is_traveling:
-        state_text = f"游历中 · {format_duration_minutes(snapshot.travel_minutes)} / {format_duration_minutes(snapshot.travel_duration_minutes)}"
+        state_text = f"游历中 · {format_duration_minutes(snapshot.travel_minutes)}（最多计入 {format_duration_minutes(snapshot.travel_duration_minutes)}）"
     elif snapshot.is_retreating:
         state_prefix = "炼魂中" if snapshot.retreat_mode == "soul" else "闭关中"
         state_text = f"{state_prefix} · {format_duration_minutes(snapshot.idle_minutes)}"
@@ -281,13 +281,13 @@ def build_retreat_settlement_embed(snapshot: CharacterSnapshot, settlement: Idle
 
 def build_travel_embed(snapshot: CharacterSnapshot) -> discord.Embed:
     status = "游历中" if snapshot.is_traveling else "未动身"
-    selected_duration = snapshot.travel_duration_minutes if snapshot.is_traveling else snapshot.travel_selected_duration_minutes
-    remaining_minutes = max(0, selected_duration - snapshot.travel_minutes) if snapshot.is_traveling else selected_duration
-    estimated_events = min(10, selected_duration // 30) if selected_duration else 0
+    cap_minutes = snapshot.travel_duration_minutes if snapshot.travel_duration_minutes else 120
+    remaining_minutes = max(0, cap_minutes - snapshot.travel_minutes) if snapshot.is_traveling else cap_minutes
+    settled_events = min(12, snapshot.travel_minutes // 10) if snapshot.is_traveling else 0
     description = (
-        "你正在山海之间寻机撞缘。行程按预定时长推进，每满 30 分钟结算 1 次奇遇。"
+        "你正在山海之间寻机撞缘。每满 10 分钟结算 1 次奇遇，最多计入 12 次。"
         if snapshot.is_traveling
-        else "可先定下本次行程，再启程游历。游历与闭关互斥，中途归来只结算完整的 30 分钟路程。"
+        else "动身后便会持续游历，直到你主动归来结算。游历与闭关互斥，中途归来只结算完整的 10 分钟路程。"
     )
     embed = discord.Embed(
         title=f"{snapshot.player_name} · 游历与奇遇",
@@ -298,19 +298,19 @@ def build_travel_embed(snapshot: CharacterSnapshot) -> discord.Embed:
         name="当前状态",
         value=(
             f"状态：`{status}`\n"
-            f"本次行程：`{format_duration_minutes(selected_duration) if selected_duration else '未设定'}`\n"
             f"已行时长：`{format_duration_minutes(snapshot.travel_minutes)}`\n"
-            f"剩余时长：`{format_duration_minutes(remaining_minutes)}`\n"
-            f"预计结算：`{estimated_events}` 次"
+            f"剩余有效时长：`{format_duration_minutes(remaining_minutes)}`\n"
+            f"当前可结算：`{settled_events}` 次\n"
+            f"最多计入：`12` 次"
         ),
         inline=False,
     )
     embed.add_field(
         name="游历说明",
         value=(
-            "- 先切换时长，再开始游历\n"
-            "- 每 30 分钟结算 1 次事件\n"
-            "- 单次游历最多结算 10 次\n"
+            "- 直接开始游历，无需先选时长\n"
+            "- 每 10 分钟结算 1 次事件\n"
+            "- 单次游历最多结算 12 次\n"
             "- 游历与闭关互斥"
         ),
         inline=False,
