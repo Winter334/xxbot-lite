@@ -44,6 +44,7 @@ class FactionActionResult:
     bounty_delta: int = 0
     target_name: str = ""
     same_faction_halved: bool = False
+    defeated_penalty_applied: bool = False
 
 
 @dataclass(slots=True)
@@ -123,13 +124,25 @@ class FactionService:
     def can_rob(self, character: Character, *, now=None) -> tuple[bool, str | None]:
         if character.faction != "demonic":
             return False, "唯有魔道中人，方可行劫掠之举。"
-        if character.last_bounty_defeated_on == today_shanghai():
-            return False, "你今日方被正道讨伐，余威未散，暂不可再起劫掠。"
         remaining = self.robbery_cooldown_remaining(character, now=now)
         if remaining is not None:
             minutes = max(1, int(remaining.total_seconds() // 60))
             return False, f"劫掠余波未平，还需再等 {minutes} 分钟。"
         return True, None
+
+    def robbery_defeat_penalty_active(self, character: Character, *, now=None) -> bool:
+        if character.last_bounty_defeated_on is None:
+            return False
+        current_time = ensure_shanghai(now or now_shanghai())
+        return character.last_bounty_defeated_on == current_time.date()
+
+    def robbery_bonus_soul(self, target: Character, *, same_faction_halved: bool, defeated_penalty: bool) -> int:
+        bonus_soul = max(2, INFAMY_BY_REALM.get(target.realm_key, 3) // 2)
+        if same_faction_halved:
+            bonus_soul //= 2
+        if defeated_penalty:
+            bonus_soul //= 2
+        return bonus_soul
 
     def can_bounty_hunt(self, character: Character, *, now=None) -> tuple[bool, str | None]:
         if character.faction != "righteous":
@@ -245,6 +258,7 @@ class FactionService:
             scene_tags=("scene_robbery",),
         )
         same_faction_halved = target.faction == "demonic"
+        defeated_penalty_applied = self.robbery_defeat_penalty_active(robber, now=current_time)
         if not battle.challenger_won:
             robber.infamy += 3
             robber.last_highlight_text = f"方才劫掠 {target.player.display_name} 失手。"
@@ -255,6 +269,7 @@ class FactionService:
                 infamy_delta=3,
                 target_name=target.player.display_name,
                 same_faction_halved=same_faction_halved,
+                defeated_penalty_applied=defeated_penalty_applied,
             )
 
         target_soul = (target.artifact.soul_shards or 0) if target.artifact is not None else 0
@@ -267,14 +282,26 @@ class FactionService:
             stolen_soul //= 2
             stolen_luck //= 2
 
+        actual_stolen_soul = 0
         if stolen_soul > 0 and target.artifact is not None and robber.artifact is not None:
             target.artifact.soul_shards -= stolen_soul
             robber.artifact.soul_shards += stolen_soul
+            actual_stolen_soul = stolen_soul
         if stolen_luck > 0:
             target.luck -= stolen_luck
             robber.luck += stolen_luck
 
         infamy_gain = INFAMY_BY_REALM.get(target.realm_key, 3)
+        # 魔道强化优先补系统额外器魂，不继续放大受害者被扣走的份额。
+        bonus_soul = self.robbery_bonus_soul(
+            target,
+            same_faction_halved=same_faction_halved,
+            defeated_penalty=defeated_penalty_applied,
+        )
+        actual_bonus_soul = 0
+        if bonus_soul > 0 and robber.artifact is not None:
+            robber.artifact.soul_shards += bonus_soul
+            actual_bonus_soul = bonus_soul
         robber.infamy += infamy_gain
         robber.last_highlight_text = f"方才劫掠 {target.player.display_name} 得手。"
         target.last_highlight_text = f"方才遭 {robber.player.display_name} 劫掠。"
@@ -282,9 +309,10 @@ class FactionService:
             True,
             "劫掠得手，所夺资源已尽归己身。",
             battle,
-            soul_delta=stolen_soul,
+            soul_delta=actual_stolen_soul + actual_bonus_soul,
             luck_delta=stolen_luck,
             infamy_delta=infamy_gain,
             target_name=target.player.display_name,
             same_faction_halved=same_faction_halved,
+            defeated_penalty_applied=defeated_penalty_applied,
         )

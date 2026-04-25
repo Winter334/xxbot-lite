@@ -147,6 +147,10 @@ class CharacterService:
             character.fate_key = self.fate_service.roll_fate().key
         if (character.luck or 0) <= 0:
             character.luck = self.fate_service.random_initial_luck()
+        if not getattr(character, "honor_tags_json", ""):
+            character.honor_tags_json = "[]"
+        else:
+            character.set_honor_tags(character.stored_honor_tags())
         if not character.faction:
             character.faction = "neutral"
         if not getattr(character, "retreat_mode", ""):
@@ -247,6 +251,7 @@ class CharacterService:
             sect_last_contribution_on=None,
             lingshi=0,
             fate_key=fate.key,
+            honor_tags_json="[]",
             faction="neutral",
             virtue=0,
             infamy=0,

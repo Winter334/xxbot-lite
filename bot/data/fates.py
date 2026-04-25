@@ -40,6 +40,7 @@ class FateDefinition:
     damage_reduction_basis_points: int = 0
     versus_higher_realm_damage_basis_points: int = 0
     broadcast_on_obtain: bool = False
+    is_easter_egg: bool = False
     enabled: bool = True
 
     @property
@@ -129,6 +130,41 @@ FATE_DEFINITIONS = (
     FateDefinition("taiyuechenyuan", "太岳沉渊", "rare", "命沉如岳，临战承势更稳。", damage_reduction_basis_points=1800),
     FateDefinition("tianhechaoying", "天河照影", "rare", "天河映影，出手时自带几分天光杀机。", damage_dealt_basis_points=1800),
     FateDefinition("nishuixingzhou", "逆水行舟", "epic", "越是强敌压境，越能逼出命中那点逆流之势。", versus_higher_realm_damage_basis_points=3000),
+    FateDefinition(
+        "taigubeiling",
+        "太古碑灵",
+        "legendary",
+        "古碑深处似有前朝命灵应你而醒，三脉在那一瞬被一并拓开。",
+        atk_basis_points=2200,
+        def_basis_points=2200,
+        agi_basis_points=2200,
+        broadcast_on_obtain=True,
+        is_easter_egg=True,
+        enabled=False,
+    ),
+    FateDefinition(
+        "dongxuantaixi",
+        "洞玄胎息",
+        "legendary",
+        "残缺洞天中残留的一缕胎息落入命宫，自此修行与养宝两道皆得深根。",
+        idle_cultivation_basis_points=4500,
+        system_soul_basis_points=4500,
+        broadcast_on_obtain=True,
+        is_easter_egg=True,
+        enabled=False,
+    ),
+    FateDefinition(
+        "fengleiminggu",
+        "风雷命骨",
+        "legendary",
+        "风雷在骨上刻下一道新命，你出手更疾，杀意也更重。",
+        atk_basis_points=2800,
+        agi_basis_points=2800,
+        damage_dealt_basis_points=800,
+        broadcast_on_obtain=True,
+        is_easter_egg=True,
+        enabled=False,
+    ),
 )
 
 FATES_BY_KEY = {fate.key: fate for fate in FATE_DEFINITIONS}

@@ -353,6 +353,18 @@ def build_travel_settlement_embed(snapshot: CharacterSnapshot, settlement: Trave
         ),
         inline=False,
     )
+    if settlement.gained_honor_tags:
+        embed.add_field(
+            name="新得荣誉",
+            value="\n".join(f"`{tag}`" for tag in settlement.gained_honor_tags),
+            inline=False,
+        )
+    if settlement.gained_fate_names:
+        embed.add_field(
+            name="命格异变",
+            value="\n".join(f"**{name}**" for name in settlement.gained_fate_names),
+            inline=False,
+        )
     if settlement.logs:
         lines = [
             f"**【{log.title}】**\n{log.flavor_text}\n**结果：** {log.result_text}"

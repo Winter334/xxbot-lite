@@ -5,6 +5,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
+from bot.data.fates import FATE_DEFINITIONS
 from bot.data.realms import get_stage
 from bot.data.spirits import SpiritPowerEntry
 from bot.models.world_resource_site import WorldResourceSite
@@ -267,6 +268,85 @@ async def test_travel_stat_events_use_low_probability_gate(session_factory, serv
 
         assert stat_log.atk_pct_delta == 2
         assert character.travel_atk_pct == 2
+
+
+@pytest.mark.asyncio
+async def test_travel_honor_event_grants_persistent_honor_and_rewards(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1020, "碑客")
+        character = creation.character
+        character.fate_key = "jinshicangfeng"
+        honor_service = TravelService(services.fate, rng=TravelRoller([0.99], ["honor_tianbei"], [10, 3]))
+        now = now_shanghai()
+        honor_service.start_travel(character, 30, now=now)
+        character.travel_started_at = now - timedelta(minutes=30)
+        settlement = honor_service.stop_travel(character, now=now)
+        title, honor_tags, faction_title = await services.ranking.get_titles(session, character)
+        snapshot = services.character.build_snapshot(character, title=title, faction_title=faction_title, honor_tags=honor_tags)
+        embed = build_panel_embed(snapshot)
+        await session.commit()
+
+        assert settlement.gained_honor_tags == ("见过天碑",)
+        assert settlement.gained_fate_names == ("太古碑灵",)
+        assert character.stored_honor_tags() == ("见过天碑",)
+        assert character.fate_key == "taigubeiling"
+        assert settlement.total_soul == 10
+        assert settlement.total_cultivation > 0
+        assert settlement.broadcast_texts
+        assert "太古碑灵" in settlement.broadcast_texts[0]
+        assert "见过天碑" in honor_tags
+        assert "见过天碑" in embed.description
+        assert "太古碑灵" in embed.description
+
+
+@pytest.mark.asyncio
+async def test_travel_duplicate_honor_converts_to_extra_soul(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1021, "重游")
+        character = creation.character
+        character.fate_key = "jinshicangfeng"
+        character.add_honor_tag("见过天碑")
+        honor_service = TravelService(services.fate, rng=TravelRoller([0.99], ["honor_tianbei"], [10, 3]))
+        now = now_shanghai()
+        honor_service.start_travel(character, 30, now=now)
+        character.travel_started_at = now - timedelta(minutes=30)
+        settlement = honor_service.stop_travel(character, now=now)
+        await session.commit()
+
+        assert settlement.gained_honor_tags == ()
+        assert settlement.gained_fate_names == ("太古碑灵",)
+        assert character.stored_honor_tags() == ("见过天碑",)
+        assert character.fate_key == "taigubeiling"
+        assert settlement.total_soul == 18
+        assert "旧誉再逢" in settlement.logs[0].result_text
+        assert settlement.broadcast_texts
+
+
+@pytest.mark.asyncio
+async def test_travel_easter_egg_event_does_not_overwrite_existing_other_easter_egg_fate(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1022, "守奇")
+        character = creation.character
+        character.fate_key = "dongxuantaixi"
+        honor_service = TravelService(services.fate, rng=TravelRoller([0.99], ["honor_tianbei"], [10, 3]))
+        now = now_shanghai()
+        honor_service.start_travel(character, 30, now=now)
+        character.travel_started_at = now - timedelta(minutes=30)
+        settlement = honor_service.stop_travel(character, now=now)
+        await session.commit()
+
+        assert settlement.gained_honor_tags == ("见过天碑",)
+        assert settlement.gained_fate_names == ()
+        assert character.fate_key == "dongxuantaixi"
+        assert settlement.broadcast_texts == ()
+
+
+def test_hidden_easter_egg_fates_are_not_in_normal_roll_pool(services) -> None:
+    hidden = {definition.key for definition in FATE_DEFINITIONS if definition.is_easter_egg}
+    assert hidden == {"taigubeiling", "dongxuantaixi", "fengleiminggu"}
+
+    for _ in range(200):
+        assert services.fate.roll_fate(rarity="legendary").key not in hidden
 
 
 @pytest.mark.asyncio
@@ -705,5 +785,35 @@ async def test_robbery_on_same_demonic_target_halves_rewards(session_factory, se
 
         assert result.success is True
         assert result.same_faction_halved is True
-        assert result.soul_delta == 1
+        assert result.soul_delta == 2
         assert result.luck_delta == 9
+        assert target.artifact.soul_shards == 19
+        assert robber.artifact.soul_shards == 2
+
+
+@pytest.mark.asyncio
+async def test_robbery_after_bounty_defeat_keeps_action_but_halves_bonus_soul(session_factory, services) -> None:
+    async with session_factory() as session:
+        robber = (await services.character.get_or_create_character(session, 7003, "魔丙")).character
+        target = (await services.character.get_or_create_character(session, 7004, "正乙")).character
+        services.faction.join_faction(robber, "demonic")
+        services.faction.join_faction(target, "righteous")
+        _set_stage(robber, "huashen", "early")
+        _set_stage(target, "jiedan", "early")
+        target.artifact.soul_shards = 40
+        target.luck = 100
+        action_time = now_shanghai()
+        robber.last_bounty_defeated_on = action_time.date()
+
+        can_rob, reason = services.faction.can_rob(robber, now=action_time)
+        result = services.faction.rob(robber, target, now=action_time)
+        await session.commit()
+
+        assert can_rob is True
+        assert reason is None
+        assert result.success is True
+        assert result.defeated_penalty_applied is True
+        assert result.soul_delta == 9
+        assert result.luck_delta == 15
+        assert target.artifact.soul_shards == 36
+        assert robber.artifact.soul_shards == 9

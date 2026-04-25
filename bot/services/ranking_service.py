@@ -199,6 +199,7 @@ class RankingService:
             honor_tags.append("本命通神")
         if realm_top and realm_top.id == character.id:
             honor_tags.append(f"{self.character_service.get_stage(character).realm_name}第一人")
+        honor_tags.extend(character.stored_honor_tags())
 
         if character.best_ladder_rank == 1:
             honor_tags.append("曾踏绝巅")
