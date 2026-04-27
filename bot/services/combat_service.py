@@ -327,6 +327,8 @@ class CombatService:
                 continue
             match entry.affix_id:
                 case "juling":
+                    if self._status_count(state, "灵势") >= 10:
+                        continue
                     self._add_status(state, _StatusEffect("灵势", atk_pct=_roll(entry.rolls, "atk_pct", 0)))
                     current_layers = self._status_count(state, "灵势")
                     if current_layers >= 6:
@@ -407,7 +409,7 @@ class CombatService:
                         target,
                         _StatusEffect("灼烧", duration=2, burn_pct=_roll(entry.rolls, "burn_pct", 1), is_debuff=True, source=actor),
                     )
-                    if self._status_count(target, "灼痕") < 6:
+                    if self._status_count(target, "灼痕") < 8:
                         self._add_status(
                             target,
                             _StatusEffect("灼痕", burn_bonus_pct=_roll(entry.rolls, "scar_bonus_pct", 0), is_debuff=True, source=actor),

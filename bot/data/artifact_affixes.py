@@ -102,7 +102,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("atk_pct", 3, 7),
         ("late_damage_pct", 8, 15),
         description_builder=lambda rolls: (
-            f"每回合开始获得 1 层灵势；每层杀伐提高 {rolls['atk_pct']}%，"
+            f"每回合开始获得 1 层灵势，最多 10 层；每层杀伐提高 {rolls['atk_pct']}%，"
             f"6 层后每层额外提高 {rolls['late_damage_pct']}% 造成伤害"
         ),
     ),
@@ -127,7 +127,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("scar_bonus_pct", 4, 8),
         description_builder=lambda rolls: (
             f"命中后有 {rolls['proc_pct']}% 概率附加 2 回合灼烧并叠 1 层灼痕；灼烧造成最大生命 {rolls['burn_pct']}% 伤害，"
-            f"每层灼痕使灼烧伤害提高 {rolls['scar_bonus_pct']}%，最多 6 层"
+            f"每层灼痕使灼烧伤害提高 {rolls['scar_bonus_pct']}%，最多 8 层"
         ),
     ),
     _define(
