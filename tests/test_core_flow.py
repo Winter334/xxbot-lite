@@ -302,6 +302,8 @@ async def test_travel_honor_event_grants_persistent_honor_and_rewards(session_fa
         assert settlement.total_cultivation > 0
         assert settlement.broadcast_texts
         assert "太古碑灵" in settlement.broadcast_texts[0]
+        assert "隐世命格" in settlement.broadcast_texts[0]
+        assert "彩" + "蛋" not in settlement.broadcast_texts[0]
         assert "见过天碑" in honor_tags
         assert "见过天碑" in embed.description
         assert "太古碑灵" in embed.description
@@ -897,7 +899,7 @@ async def test_robbery_on_same_demonic_target_halves_rewards(session_factory, se
 
 
 @pytest.mark.asyncio
-async def test_robbery_after_bounty_defeat_keeps_action_but_halves_bonus_soul(session_factory, services) -> None:
+async def test_robbery_after_bounty_defeat_keeps_bonus_soul_but_reduces_stolen_soul(session_factory, services) -> None:
     async with session_factory() as session:
         robber = (await services.character.get_or_create_character(session, 7003, "魔丙")).character
         target = (await services.character.get_or_create_character(session, 7004, "正乙")).character
@@ -918,7 +920,7 @@ async def test_robbery_after_bounty_defeat_keeps_action_but_halves_bonus_soul(se
         assert reason is None
         assert result.success is True
         assert result.defeated_penalty_applied is True
-        assert result.soul_delta == 9
+        assert result.soul_delta == 11
         assert result.luck_delta == 15
-        assert target.artifact.soul_shards == 36
-        assert robber.artifact.soul_shards == 9
+        assert target.artifact.soul_shards == 39
+        assert robber.artifact.soul_shards == 11

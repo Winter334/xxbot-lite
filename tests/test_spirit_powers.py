@@ -17,12 +17,13 @@ class CombatRoller:
         return next(self._random_values, self._fallback)
 
 
-def test_spirit_power_pool_expands_to_sixteen_entries() -> None:
+def test_spirit_power_pool_expands_to_twenty_entries() -> None:
     power_ids = {definition.power_id for definition in SPIRIT_POWER_DEFINITIONS}
 
-    assert len(SPIRIT_POWER_DEFINITIONS) == 16
+    assert len(SPIRIT_POWER_DEFINITIONS) == 20
     assert {"shisheng", "jueming", "xuanjia", "fanji", "guifeng", "niepan", "jinmai", "xuekuang"} <= power_ids
     assert {"fenmai", "luejie", "chengshi", "lingyong", "zhuying", "huajing", "duofeng", "zhenling"} <= power_ids
+    assert {"chunsheng", "suijue", "mingche", "zhuifeng"} <= power_ids
 
 
 @pytest.mark.asyncio
@@ -55,7 +56,7 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
 
 
 def test_shisheng_can_heal_from_zhuohun_burn_damage(services) -> None:
-    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"proc_pct": 100, "burn_pct": 20})
+    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"proc_pct": 100, "burn_pct": 20, "scar_bonus_pct": 0})
     roller = CombatRoller([0.99, 0.99, 0.0, 0.99, 0.99])
 
     attacker_without_spirit = services.combat.create_combatant(
@@ -83,7 +84,7 @@ def test_shisheng_can_heal_from_zhuohun_burn_damage(services) -> None:
 
 
 def test_fenmai_triggers_extra_damage_on_burning_target(services) -> None:
-    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"proc_pct": 100, "burn_pct": 10})
+    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"proc_pct": 100, "burn_pct": 10, "scar_bonus_pct": 0})
 
     attacker_without_spirit = services.combat.create_combatant(
         name="烬心",

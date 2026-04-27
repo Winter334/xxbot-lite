@@ -836,7 +836,7 @@ async def build_faction_message(bot: XianBot, owner_user_id: int, display_name: 
         can_rob, rob_reason = bot.faction_service.can_rob(character)
         can_bounty, bounty_reason = bot.faction_service.can_bounty_hunt(character)
         if can_rob:
-            robbery_status_text = "可出手（额外器魂减半）" if bot.faction_service.robbery_defeat_penalty_active(character) else "可出手"
+            robbery_status_text = "可出手（直接掠夺降至1%）" if bot.faction_service.robbery_defeat_penalty_active(character) else "可出手"
         else:
             robbery_status_text = rob_reason or "当前不可出手"
         bounty_status_text = "可出手" if can_bounty else (bounty_reason or "当前不可出手")
@@ -930,7 +930,7 @@ async def build_robbery_message(bot: XianBot, owner_user_id: int, display_name: 
             if result.same_faction_halved:
                 lines.append("同为魔道，此次收益已减半。")
             if result.defeated_penalty_applied:
-                lines.append("你今日方被讨伐，额外器魂已减半。")
+                lines.append("你今日方被讨伐，直接掠夺器魂降至1%，额外器魂不受影响。")
             embed = build_faction_action_embed(snapshot, "劫掠", result.message, lines, success=result.success)
             if result.battle is not None:
                 embed.add_field(name="战报截取", value=_battle_excerpt(result.battle, limit=6, mode="robbery"), inline=False)

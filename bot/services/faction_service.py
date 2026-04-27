@@ -30,6 +30,9 @@ INFAMY_BY_REALM = {
     "dujie": 300,
 }
 
+ROBBERY_SOUL_STEAL_BASIS_POINTS = 1000
+ROBBERY_DEFEATED_SOUL_STEAL_BASIS_POINTS = 100
+
 
 @dataclass(slots=True)
 class FactionActionResult:
@@ -136,13 +139,19 @@ class FactionService:
         current_time = ensure_shanghai(now or now_shanghai())
         return character.last_bounty_defeated_on == current_time.date()
 
-    def robbery_bonus_soul(self, target: Character, *, same_faction_halved: bool, defeated_penalty: bool) -> int:
+    def robbery_bonus_soul(self, target: Character, *, same_faction_halved: bool) -> int:
         bonus_soul = max(2, INFAMY_BY_REALM.get(target.realm_key, 3) // 2)
         if same_faction_halved:
             bonus_soul //= 2
-        if defeated_penalty:
-            bonus_soul //= 2
         return bonus_soul
+
+    def robbery_stolen_soul(self, target_soul: int, *, defeated_penalty: bool) -> int:
+        if target_soul <= 0:
+            return 0
+        basis_points = (
+            ROBBERY_DEFEATED_SOUL_STEAL_BASIS_POINTS if defeated_penalty else ROBBERY_SOUL_STEAL_BASIS_POINTS
+        )
+        return min(target_soul, max(1, target_soul * basis_points // 10_000))
 
     def can_bounty_hunt(self, character: Character, *, now=None) -> tuple[bool, str | None]:
         if character.faction != "righteous":
@@ -273,10 +282,7 @@ class FactionService:
             )
 
         target_soul = (target.artifact.soul_shards or 0) if target.artifact is not None else 0
-        if target_soul > 0:
-            stolen_soul = min(target_soul, max(1, target_soul // 10))
-        else:
-            stolen_soul = 0
+        stolen_soul = self.robbery_stolen_soul(target_soul, defeated_penalty=defeated_penalty_applied)
         stolen_luck = max(0, (target.luck or 0) * 15 // 100)
         if same_faction_halved:
             stolen_soul //= 2
@@ -296,7 +302,6 @@ class FactionService:
         bonus_soul = self.robbery_bonus_soul(
             target,
             same_faction_halved=same_faction_halved,
-            defeated_penalty=defeated_penalty_applied,
         )
         actual_bonus_soul = 0
         if bonus_soul > 0 and robber.artifact is not None:
