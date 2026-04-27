@@ -327,8 +327,6 @@ class CombatService:
                 continue
             match entry.affix_id:
                 case "juling":
-                    if self._status_count(state, "灵势") >= 8:
-                        continue
                     self._add_status(state, _StatusEffect("灵势", atk_pct=_roll(entry.rolls, "atk_pct", 0)))
                     current_layers = self._status_count(state, "灵势")
                     if current_layers >= 6:
@@ -571,8 +569,8 @@ class CombatService:
                     break
                 if status not in state.statuses or not status.is_active() or status.burn_pct <= 0:
                     continue
-                burn_pct = status.burn_pct + self._status_bonus_pct(state, "灼痕", "burn_bonus_pct")
-                burn_damage = max(1, int(state.snapshot.max_hp * burn_pct / 100))
+                burn_damage = max(1, int(state.snapshot.max_hp * status.burn_pct / 100))
+                burn_damage = self._apply_burn_scar_bonus(burn_damage, state)
                 actual_damage = self._apply_damage(state, burn_damage)
                 if actual_damage <= 0:
                     continue
@@ -963,6 +961,10 @@ class CombatService:
 
     def _status_bonus_pct(self, state: _CombatState, name: str, field_name: str) -> int:
         return sum(getattr(status, field_name) for status in self._active_statuses(state) if status.name == name)
+
+    def _apply_burn_scar_bonus(self, damage: int, state: _CombatState) -> int:
+        bonus_pct = self._status_bonus_pct(state, "灼痕", "burn_bonus_pct")
+        return max(1, damage * (100 + bonus_pct) // 100)
 
     def _remove_one_debuff(self, state: _CombatState) -> _StatusEffect | None:
         debuffs = [status for status in self._active_statuses(state) if status.is_debuff]

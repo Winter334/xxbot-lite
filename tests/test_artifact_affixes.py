@@ -311,6 +311,28 @@ def test_burn_affix_uses_target_max_hp_percentage(services) -> None:
     assert burn_log.target_hp_after == 94
 
 
+def test_burn_scar_scales_base_burn_damage_linearly(services) -> None:
+    attacker = services.combat.create_combatant(
+        name="灼痕修士",
+        atk=1,
+        defense=10,
+        agility=100,
+        affixes=(ArtifactAffixEntry(1, "zhuohun", {"proc_pct": 100, "burn_pct": 5, "scar_bonus_pct": 8}),),
+    )
+    defender = services.combat.create_combatant(name="木人", atk=1, defense=10, agility=1)
+
+    battle = services.combat.run_battle(
+        attacker,
+        defender,
+        rng=SequenceRandom([0.99, 0.99, 0.0] * 8),
+    )
+
+    burn_logs = [log for log in battle.logs if log.text and "受灼烧侵蚀" in log.text]
+    assert burn_logs[0].target_hp_after == 94
+    burn_damages = [int(log.text.split("损失 ", 1)[1].split(" 点生命", 1)[0]) for log in burn_logs]
+    assert max(burn_damages) == 7
+
+
 def test_lueying_creates_fast_attack_agility_gap(services) -> None:
     challenger = services.combat.create_combatant(
         name="掠影修士",
@@ -340,3 +362,40 @@ def test_dengxiao_scales_as_late_game_affix(services) -> None:
     battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 80))
 
     assert any(log.text and "登霄势涨" in log.text for log in battle.logs)
+
+
+def test_juling_can_scale_beyond_eight_layers_as_late_game_affix(services) -> None:
+    challenger = services.combat.create_combatant(
+        name="聚灵修士",
+        atk=1,
+        defense=100,
+        agility=100,
+        affixes=(ArtifactAffixEntry(1, "juling", {"atk_pct": 1, "late_damage_pct": 1}),),
+    )
+    defender = services.combat.create_combatant(name="守塔修士", atk=1, defense=100, agility=1)
+
+    battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 120))
+
+    juling_logs = [log for log in battle.logs if log.text and "聚灵凝成第" in log.text]
+    assert any("第 9 层灵势" in log.text for log in juling_logs)
+    assert any("第 20 层灵势" in log.text for log in juling_logs)
+
+
+def test_duplicate_juling_affixes_stack_faster_without_shared_cap(services) -> None:
+    challenger = services.combat.create_combatant(
+        name="双聚灵修士",
+        atk=1,
+        defense=100,
+        agility=100,
+        affixes=(
+            ArtifactAffixEntry(1, "juling", {"atk_pct": 1, "late_damage_pct": 1}),
+            ArtifactAffixEntry(2, "juling", {"atk_pct": 1, "late_damage_pct": 1}),
+        ),
+    )
+    defender = services.combat.create_combatant(name="守塔修士", atk=1, defense=100, agility=1)
+
+    battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 120))
+
+    juling_logs = [log for log in battle.logs if log.text and "聚灵凝成第" in log.text]
+    assert any("第 10 层灵势" in log.text for log in juling_logs)
+    assert any("第 40 层灵势" in log.text for log in juling_logs)
