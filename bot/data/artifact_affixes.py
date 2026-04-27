@@ -35,7 +35,13 @@ class ArtifactAffixDefinition:
         return {key: rng.randint(low, high) for key, low, high in self.roll_ranges}
 
     def describe(self, rolls: RollMap) -> str:
-        return self.description_builder(rolls)
+        return self.description_builder(self.normalize_rolls(rolls))
+
+    def normalize_rolls(self, rolls: RollMap) -> dict[str, int]:
+        normalized = dict(rolls)
+        for key, low, _high in self.roll_ranges:
+            normalized.setdefault(key, low)
+        return normalized
 
     def matches_scene(self, scene_tags: set[str]) -> bool:
         return all(tag in scene_tags for tag in self.scene_tags)
