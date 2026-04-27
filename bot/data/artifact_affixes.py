@@ -102,8 +102,8 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("atk_pct", 3, 7),
         ("late_damage_pct", 8, 15),
         description_builder=lambda rolls: (
-            f"每回合开始获得 1 层灵势，最多 8 层；每层杀伐提高 {rolls['atk_pct']}%，"
-            f"6 层后额外提高 {rolls['late_damage_pct']}% 造成伤害"
+            f"每回合开始获得 1 层灵势；每层杀伐提高 {rolls['atk_pct']}%，"
+            f"6 层后每层额外提高 {rolls['late_damage_pct']}% 造成伤害"
         ),
     ),
     _define(
