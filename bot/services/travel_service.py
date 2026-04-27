@@ -18,7 +18,7 @@ class TravelEventDefinition:
     event_id: str
     title: str
     flavor_text: str
-    weight: int
+    weight: float
     soul_min: int = 0
     soul_max: int = 0
     cultivation_pct_min: int = 0
@@ -74,6 +74,7 @@ class TravelService:
     event_interval_minutes = 10
     max_events_per_trip = 12
     stat_event_chance = 0.04
+    hidden_fate_event_weight = 0.1
 
     def __init__(self, fate_service: FateService, rng: random.Random | None = None) -> None:
         self.fate_service = fate_service
@@ -213,7 +214,7 @@ class TravelService:
         gained_fate_name = ""
         broadcast_text = ""
         if event.honor_tag:
-            # 荣誉只负责牌面展示；若重复触发，则改发额外器魂，避免彩蛋事件空转。
+            # 荣誉只负责牌面展示；若重复触发，则改发额外器魂，避免奇遇事件空转。
             honor_gained = character.add_honor_tag(event.honor_tag)
             if honor_gained:
                 gained_honor_tag = event.honor_tag
@@ -232,7 +233,7 @@ class TravelService:
                     trip_gained_fate_keys.add(target_fate.key)
                 player_name = getattr(getattr(character, "player", None), "display_name", "")
                 if target_fate.broadcast_on_obtain and player_name:
-                    broadcast_text = f"【天命奇遇】{player_name} 游历归来，于「{event.title}」机缘中得彩蛋命格「{target_fate.name}」。"
+                    broadcast_text = f"【天命奇遇】{player_name} 游历归来，于「{event.title}」机缘中得隐世命格「{target_fate.name}」。"
 
         soul_delta = base_soul_delta + duplicate_honor_bonus_soul
         if soul_delta > 0:
@@ -378,7 +379,7 @@ class TravelService:
                 "honor_tianbei",
                 "天碑留名",
                 "云崖尽头的古碑忽然映出你的影子，一缕旧时代的道痕在碑面上为你停了一息。",
-                1,
+                self.hidden_fate_event_weight,
                 soul_min=8,
                 soul_max=12,
                 cultivation_pct_min=3,
@@ -391,7 +392,7 @@ class TravelService:
                 "honor_dongtian",
                 "洞天过客",
                 "你误入一角残缺洞天，离去前回首，只见门扉上竟留下一道与你气息相合的印痕。",
-                1,
+                self.hidden_fate_event_weight,
                 soul_min=10,
                 soul_max=16,
                 def_pct_min=1,
@@ -404,7 +405,7 @@ class TravelService:
                 "honor_fenglei",
                 "风雷照胆",
                 "山巅风雷同时压下，你竟在那一瞬站稳脚跟，胸中胆意被天地亲手刻下一笔。",
-                1,
+                self.hidden_fate_event_weight,
                 soul_min=6,
                 soul_max=10,
                 atk_pct_min=2,

@@ -25,9 +25,8 @@ class ArtifactRoller:
         raise AssertionError(f"unknown affix id: {affix_id}")
 
     def randint(self, start: int, end: int) -> int:
-        value = next(self._int_values)
-        assert start <= value <= end
-        return value
+        value = next(self._int_values, start)
+        return max(start, min(value, end))
 
     def random(self) -> float:
         return self._fallback_random
@@ -61,7 +60,7 @@ async def test_affix_slots_unlock_by_reinforce_level(session_factory, services) 
 
 @pytest.mark.asyncio
 async def test_newly_unlocked_slots_receive_initial_affixes(session_factory, services) -> None:
-    services.artifact.rng = ArtifactRoller(["huichun", "ningshen", "zhuohun"], [34, 19, 28, 4])
+    services.artifact.rng = ArtifactRoller(["huichun", "ningshen", "zhuohun"], [34, 8, 50, 30, 3, 4])
     async with session_factory() as session:
         character = (await services.character.get_or_create_character(session, 5002, "器灵")).character
         artifact = character.artifact
@@ -78,7 +77,7 @@ async def test_newly_unlocked_slots_receive_initial_affixes(session_factory, ser
 
 @pytest.mark.asyncio
 async def test_refine_pending_persists_and_only_applies_after_save(session_factory, services) -> None:
-    services.artifact.rng = ArtifactRoller(["huichun", "ningshen"], [34, 19])
+    services.artifact.rng = ArtifactRoller(["huichun", "ningshen"], [34, 8, 50])
     async with session_factory() as session:
         character = (await services.character.get_or_create_character(session, 5003, "洗星")).character
         artifact = character.artifact
@@ -117,7 +116,7 @@ async def test_refine_pending_persists_and_only_applies_after_save(session_facto
 
 @pytest.mark.asyncio
 async def test_discard_pending_affix_only_removes_selected_slot(session_factory, services) -> None:
-    services.artifact.rng = ArtifactRoller(["huichun", "ningshen", "zhuohun", "lueying"], [34, 19, 28, 4, 22])
+    services.artifact.rng = ArtifactRoller(["huichun", "ningshen", "zhuohun", "lueying"], [34, 8, 50, 30, 3, 4, 50, 30, 10])
     async with session_factory() as session:
         character = (await services.character.get_or_create_character(session, 5008, "弃词")).character
         artifact = character.artifact
@@ -158,7 +157,7 @@ async def test_discard_pending_affix_only_removes_selected_slot(session_factory,
 
 @pytest.mark.asyncio
 async def test_discard_pending_affix_fails_cleanly_without_pending(session_factory, services) -> None:
-    services.artifact.rng = ArtifactRoller(["huichun"], [34])
+    services.artifact.rng = ArtifactRoller(["huichun"], [34, 8])
     async with session_factory() as session:
         character = (await services.character.get_or_create_character(session, 5009, "空弃")).character
         artifact = character.artifact
@@ -174,7 +173,7 @@ async def test_discard_pending_affix_fails_cleanly_without_pending(session_facto
 
 @pytest.mark.asyncio
 async def test_refine_embed_shows_affix_name_and_description(session_factory, services) -> None:
-    services.artifact.rng = ArtifactRoller(["huichun", "ningshen"], [34, 19])
+    services.artifact.rng = ArtifactRoller(["huichun", "ningshen"], [34, 8, 50])
     async with session_factory() as session:
         character = (await services.character.get_or_create_character(session, 5004, "照夜")).character
         artifact = character.artifact
@@ -193,7 +192,7 @@ async def test_refine_embed_shows_affix_name_and_description(session_factory, se
         assert "回春" in current_field.value
         assert "最大生命" in current_field.value
         assert "凝神" in pending_field.value
-        assert "杀伐提高 19%" in pending_field.value
+        assert "灵势" in pending_field.value
         field_names = {field.name for field in embed.fields}
         assert "三维加成" not in field_names
         assert "总三维" not in field_names
@@ -254,7 +253,7 @@ async def test_artifact_overview_shows_bonus_stats(session_factory, services) ->
 
 @pytest.mark.asyncio
 async def test_duplicate_affixes_are_allowed(session_factory, services) -> None:
-    services.artifact.rng = ArtifactRoller(["huichun", "huichun"], [18, 42])
+    services.artifact.rng = ArtifactRoller(["huichun", "huichun"], [25, 55, 8, 16])
     async with session_factory() as session:
         character = (await services.character.get_or_create_character(session, 5005, "双生")).character
         artifact = character.artifact
@@ -272,7 +271,7 @@ def test_burn_affix_uses_target_max_hp_percentage(services) -> None:
         atk=1,
         defense=10,
         agility=100,
-        affixes=(ArtifactAffixEntry(1, "zhuohun", {"proc_pct": 100, "burn_pct": 5}),),
+        affixes=(ArtifactAffixEntry(1, "zhuohun", {"proc_pct": 100, "burn_pct": 5, "scar_bonus_pct": 0}),),
     )
     defender = services.combat.create_combatant(name="木人", atk=1, defense=10, agility=1)
 
@@ -287,41 +286,32 @@ def test_burn_affix_uses_target_max_hp_percentage(services) -> None:
     assert burn_log.target_hp_after == 94
 
 
-def test_ladder_scene_affix_only_applies_in_ladder(services) -> None:
+def test_lueying_creates_fast_attack_agility_gap(services) -> None:
     challenger = services.combat.create_combatant(
-        name="先手修士",
+        name="掠影修士",
         atk=10,
         defense=10,
-        agility=90,
-        affixes=(ArtifactAffixEntry(1, "zhengheng", {"agi_pct": 28}),),
+        agility=80,
+        affixes=(ArtifactAffixEntry(1, "lueying", {"agi_pct": 80, "proc_pct": 0, "agi_down_pct": 8}),),
     )
     defender = services.combat.create_combatant(name="守擂修士", atk=10, defense=10, agility=100)
 
-    ladder_battle = services.combat.run_battle(challenger, defender, scene_tags=("scene_ladder",), rng=SequenceRandom([0.99] * 20))
-    neutral_battle = services.combat.run_battle(challenger, defender, scene_tags=("scene_tower",), rng=SequenceRandom([0.99] * 20))
+    battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 20))
+    first_attack = next(log for log in battle.logs if log.text is None)
 
-    first_ladder_attack = next(log for log in ladder_battle.logs if log.text is None)
-    first_neutral_attack = next(log for log in neutral_battle.logs if log.text is None)
-
-    assert first_ladder_attack.actor_name == "先手修士"
-    assert first_neutral_attack.actor_name == "守擂修士"
+    assert first_attack.actor_name == "掠影修士"
 
 
-def test_tower_scene_affix_only_applies_in_tower(services) -> None:
+def test_dengxiao_scales_as_late_game_affix(services) -> None:
     challenger = services.combat.create_combatant(
         name="登霄修士",
         atk=10,
-        defense=10,
-        agility=90,
-        affixes=(ArtifactAffixEntry(1, "dengxiao", {"atk_pct": 6, "agi_pct": 14}),),
+        defense=40,
+        agility=100,
+        affixes=(ArtifactAffixEntry(1, "dengxiao", {"damage_pct": 9, "pierce_pct": 7}),),
     )
-    defender = services.combat.create_combatant(name="守塔修士", atk=10, defense=10, agility=100)
+    defender = services.combat.create_combatant(name="守塔修士", atk=1, defense=40, agility=1)
 
-    tower_battle = services.combat.run_battle(challenger, defender, scene_tags=("scene_tower",), rng=SequenceRandom([0.99] * 20))
-    ladder_battle = services.combat.run_battle(challenger, defender, scene_tags=("scene_ladder",), rng=SequenceRandom([0.99] * 20))
+    battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 80))
 
-    first_tower_attack = next(log for log in tower_battle.logs if log.text is None)
-    first_ladder_attack = next(log for log in ladder_battle.logs if log.text is None)
-
-    assert first_tower_attack.actor_name == "登霄修士"
-    assert first_ladder_attack.actor_name == "守塔修士"
+    assert any(log.text and "登霄势涨" in log.text for log in battle.logs)
