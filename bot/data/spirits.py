@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import random
-from typing import Callable
+from typing import Callable, Mapping
 
-RollMap = dict[str, int]
+RollMap = Mapping[str, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +62,14 @@ class SpiritPowerDefinition:
         return SpiritPowerEntry(self.power_id, rolls)
 
     def describe(self, rolls: RollMap) -> str:
-        return self.description_builder(rolls)
+        return self.description_builder(self.normalize_rolls(rolls))
+
+    def normalize_rolls(self, rolls: RollMap) -> dict[str, int]:
+        normalized = dict(rolls)
+        for ranges in self.roll_ranges_by_tier.values():
+            for key, low, _high in ranges:
+                normalized.setdefault(key, low)
+        return normalized
 
 
 SPIRIT_NAMES = (

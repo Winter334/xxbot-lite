@@ -5,7 +5,7 @@ import json
 import pytest
 
 from bot.data.artifact_affixes import ArtifactAffixEntry
-from bot.data.spirits import SPIRIT_POWER_DEFINITIONS, SpiritPowerEntry
+from bot.data.spirits import SPIRIT_POWER_DEFINITIONS, SpiritPowerEntry, get_spirit_power_definition
 
 
 class CombatRoller:
@@ -53,6 +53,12 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
         assert snapshot.spirit_name == "旧灵"
         assert snapshot.spirit_power_name == "涅槃"
         assert services.spirit.get_current_spirit(artifact) is not None
+
+
+def test_spirit_power_description_accepts_legacy_rolls() -> None:
+    description = get_spirit_power_definition("niepan").describe({"heal_pct": 42})
+
+    assert "守势" in description
 
 
 def test_shisheng_can_heal_from_zhuohun_burn_damage(services) -> None:

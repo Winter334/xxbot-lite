@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import json
 
 import pytest
 
@@ -196,6 +197,30 @@ async def test_refine_embed_shows_affix_name_and_description(session_factory, se
         field_names = {field.name for field in embed.fields}
         assert "三维加成" not in field_names
         assert "总三维" not in field_names
+
+
+@pytest.mark.asyncio
+async def test_affix_panel_describes_legacy_rolls_with_new_defaults(session_factory, services) -> None:
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 5011, "旧词条")).character
+        artifact = character.artifact
+        artifact.reinforce_level = 10
+        artifact.affix_slots_json = json.dumps(
+            [
+                {
+                    "slot": 1,
+                    "affix_id": "zhuohun",
+                    "rolls": {"proc_pct": 25, "burn_pct": 2},
+                }
+            ]
+        )
+
+        panel_state = services.artifact.build_panel_state(artifact)
+        current_slot = panel_state.current_slots[0]
+
+        assert current_slot.name == "灼魂"
+        assert "灼痕" in current_slot.description
+        assert "4%" in current_slot.description
 
 
 @pytest.mark.asyncio
