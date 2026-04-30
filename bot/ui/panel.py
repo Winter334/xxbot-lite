@@ -99,7 +99,8 @@ def build_panel_embed(
         value=(
             f"修为：`{format_big_number(snapshot.cultivation)} / {format_big_number(snapshot.cultivation_max)}`\n"
             f"{progress} `{percent}%`\n"
-            f"气机：`{format_qi(snapshot.qi_current, snapshot.qi_max)} {snapshot.qi_current}/{snapshot.qi_max}`"
+            f"气机：`{format_qi(snapshot.qi_current, snapshot.qi_max)} {snapshot.qi_current}/{snapshot.qi_max}`\n"
+            f"灵石：`{format_big_number(snapshot.lingshi)}`"
         ),
         inline=False,
     )

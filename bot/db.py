@@ -61,6 +61,10 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                 "sect_last_contribution_on" not in character_columns,
                 "sect_bound_site_id" not in character_columns,
                 "sect_bound_site_role" not in character_columns,
+                "sect_last_settlement_on" not in character_columns,
+                "sect_last_settlement_summary" not in character_columns,
+                "sect_task_refresh_on" not in character_columns,
+                "sect_task_state_json" not in character_columns,
                 "lingshi" not in character_columns,
                 "honor_tags_json" not in character_columns,
                 "spawned_on" not in resource_site_columns,
@@ -103,6 +107,10 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             needs_sect_last_contribution_on,
             needs_sect_bound_site_id,
             needs_sect_bound_site_role,
+            needs_sect_last_settlement_on,
+            needs_sect_last_settlement_summary,
+            needs_sect_task_refresh_on,
+            needs_sect_task_state_json,
             needs_lingshi,
             needs_honor_tags_json,
             needs_site_spawned_on,
@@ -171,6 +179,14 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_bound_site_id INTEGER"))
         if needs_sect_bound_site_role:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_bound_site_role VARCHAR(16)"))
+        if needs_sect_last_settlement_on:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_last_settlement_on DATE"))
+        if needs_sect_last_settlement_summary:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_last_settlement_summary TEXT NOT NULL DEFAULT ''"))
+        if needs_sect_task_refresh_on:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_task_refresh_on DATE"))
+        if needs_sect_task_state_json:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN sect_task_state_json TEXT NOT NULL DEFAULT ''"))
         if needs_lingshi:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN lingshi BIGINT NOT NULL DEFAULT 0"))
         if needs_honor_tags_json:

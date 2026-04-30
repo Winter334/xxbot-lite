@@ -10,6 +10,7 @@ from bot.utils.time_utils import ensure_shanghai, now_shanghai, today_shanghai
 
 if TYPE_CHECKING:
     from bot.services.character_service import CharacterService
+    from bot.services.sect_service import SectService
 
 
 FACTION_NAMES = {
@@ -65,9 +66,10 @@ class FactionService:
     robbery_cooldown_minutes = 60
     bounty_hunt_cooldown_minutes = 30
 
-    def __init__(self, character_service: CharacterService, combat_service: CombatService) -> None:
+    def __init__(self, character_service: CharacterService, combat_service: CombatService, sect_service: SectService | None = None) -> None:
         self.character_service = character_service
         self.combat_service = combat_service
+        self.sect_service = sect_service
 
     def faction_name(self, faction_key: str) -> str:
         return FACTION_NAMES.get(faction_key, "中立")
@@ -242,6 +244,8 @@ class FactionService:
         target.last_bounty_defeated_on = today_shanghai()
         hunter.last_highlight_text = f"方才承悬赏讨伐 {target.player.display_name} 得手。"
         target.last_highlight_text = f"方才被正道修士 {hunter.player.display_name} 讨伐。"
+        if self.sect_service is not None:
+            self.sect_service.record_task_event(hunter, "faction_bounty_win")
         return FactionActionResult(
             True,
             "讨伐得手，对方悬赏已全部兑现。",
@@ -312,6 +316,8 @@ class FactionService:
         robber.infamy += infamy_gain
         robber.last_highlight_text = f"方才劫掠 {target.player.display_name} 得手。"
         target.last_highlight_text = f"方才遭 {robber.player.display_name} 劫掠。"
+        if self.sect_service is not None:
+            self.sect_service.record_task_event(robber, "faction_robbery_win")
         return FactionActionResult(
             True,
             "劫掠得手，所夺资源已尽归己身。",

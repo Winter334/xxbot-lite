@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,6 +70,8 @@ class CharacterSnapshot:
     sect_name: str
     sect_role: str
     sect_contribution_daily: int
+    sect_last_settlement_on: date | None
+    sect_last_settlement_summary: str
     lingshi: int
     soul_shards: int
     title: str
@@ -153,6 +156,8 @@ class CharacterService:
             character.set_honor_tags(character.stored_honor_tags())
         if not character.faction:
             character.faction = "neutral"
+        if getattr(character, "sect_task_state_json", None) is None:
+            character.sect_task_state_json = ""
         if not getattr(character, "retreat_mode", ""):
             character.retreat_mode = "cultivation"
         if character.artifact is not None:
@@ -265,6 +270,10 @@ class CharacterService:
             sect_contribution_weekly=0,
             sect_contribution_daily=0,
             sect_last_contribution_on=None,
+            sect_last_settlement_on=None,
+            sect_last_settlement_summary="",
+            sect_task_refresh_on=None,
+            sect_task_state_json="",
             lingshi=0,
             fate_key=fate.key,
             honor_tags_json="[]",
@@ -399,6 +408,8 @@ class CharacterService:
             sect_name=sect_name or (character.sect.name if character.sect is not None else ""),
             sect_role=sect_role,
             sect_contribution_daily=character.sect_contribution_daily or 0,
+            sect_last_settlement_on=character.sect_last_settlement_on,
+            sect_last_settlement_summary=character.sect_last_settlement_summary or "",
             lingshi=character.lingshi or 0,
             soul_shards=(artifact.soul_shards or 0) if artifact else 0,
             title=title or character.title,
@@ -524,6 +535,10 @@ class CharacterService:
         character.sect_contribution_weekly = 0
         character.sect_contribution_daily = 0
         character.sect_last_contribution_on = None
+        character.sect_last_settlement_on = None
+        character.sect_last_settlement_summary = ""
+        character.sect_task_refresh_on = None
+        character.sect_task_state_json = ""
         character.lingshi = 0
         character.last_qi_recovered_at = now
         character.fate_key = new_fate.key
