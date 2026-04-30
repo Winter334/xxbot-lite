@@ -167,10 +167,12 @@ class FactionService:
         demonic.sort(key=lambda char: (-(char.bounty_soul or 0), -(char.infamy or 0), char.id))
         return [self._target_view(char) for char in demonic[:limit]]
 
-    def list_robbery_targets(self, characters: list[Character], actor: Character, *, limit: int = 25) -> list[FactionTarget]:
+    def list_robbery_targets(self, characters: list[Character], actor: Character, *, limit: int | None = None) -> list[FactionTarget]:
         targets = [char for char in characters if char.id != actor.id]
         targets.sort(key=lambda char: (char.current_ladder_rank, -char.realm_index, char.id))
-        return [self._target_view(char) for char in targets[:limit]]
+        if limit is not None:
+            targets = targets[:limit]
+        return [self._target_view(char) for char in targets]
 
     def _target_view(self, character: Character) -> FactionTarget:
         snapshot = self.character_service.build_snapshot(character)

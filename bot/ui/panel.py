@@ -502,9 +502,9 @@ def build_faction_embed(
         status_lines.append(f"劫掠状态：`{robbery_status_text or '可出手'}`")
     embed.add_field(name="阵营状态", value="\n".join(status_lines), inline=False)
     if snapshot.faction_key == "righteous":
-        embed.add_field(name="可见悬赏目标", value=f"当前可选目标：`{target_count}`", inline=False)
+        embed.add_field(name="可见悬赏目标", value=f"当前可选目标总数：`{target_count}`", inline=False)
     elif snapshot.faction_key == "demonic":
-        embed.add_field(name="可劫掠目标", value=f"当前可选目标：`{target_count}`", inline=False)
+        embed.add_field(name="可劫掠目标", value=f"当前可选目标总数：`{target_count}`", inline=False)
     else:
         embed.add_field(name="当前说明", value="阵营一旦选择，此版本内不可更改。", inline=False)
     return embed
