@@ -29,6 +29,7 @@ SECT_JOIN_REWARD_LOCK_HOURS = 24
 SECT_ACTION_QI_COST = 1
 SITE_LIFETIME_DAYS = 3
 DAILY_SITE_SPAWN_COUNT = 2
+LEGACY_SITE_TYPE_FALLBACK = "lingshi"
 UNOWNED_SITE_PROGRESS_TARGET = 2
 OWNED_SITE_PROGRESS_TARGET = 4
 DIRECT_WIN_RATIO = 1.30
@@ -46,21 +47,84 @@ SITE_ROLE_NAMES = {
     "transport": "输运",
 }
 SITE_REWARD_CONFIG = {
-    "lingshi": {"lingshi": 200, "soul": 10},
-    "soul": {"lingshi": 120, "soul": 18},
-    "cultivation": {"lingshi": 100, "cultivation_pct": 5},
+    "lingshi": {"lingshi": 400, "soul": 20},
+    "soul": {"lingshi": 240, "soul": 36},
 }
-SITE_FIXED_CULTIVATION = {
-    "lianqi": 10,
-    "zhuji": 40,
-    "jiedan": 200,
-    "yuanying": 1000,
-    "huashen": 5000,
-    "lianxu": 20000,
-    "heti": 80000,
-    "dacheng": 200000,
-    "dujie": 400000,
+TASK_STATUS_NAMES = {
+    "available": "未领取",
+    "active": "进行中",
+    "completed": "可领奖",
+    "claimed": "已领取",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class SectTaskDefinition:
+    key: str
+    title: str
+    description: str
+    target: int
+    reward_lingshi: int
+    reward_soul: int
+    reward_luck: int
+    event_keys: tuple[str, ...]
+    allowed_factions: tuple[str, ...] = ()
+
+
+SECT_TASK_DEFINITIONS = (
+    SectTaskDefinition(
+        key="site_action_2",
+        title="资源点差事",
+        description="完成 2 次资源点操作。强争、护持、输运都算。",
+        target=2,
+        reward_lingshi=900,
+        reward_soul=45,
+        reward_luck=20,
+        event_keys=("sect_site_action",),
+    ),
+    SectTaskDefinition(
+        key="spar_1",
+        title="切磋试手",
+        description="完成 1 次切磋，不论胜负都算。",
+        target=1,
+        reward_lingshi=700,
+        reward_soul=36,
+        reward_luck=30,
+        event_keys=("pvp_spar",),
+    ),
+    SectTaskDefinition(
+        key="arena_1",
+        title="擂台试锋",
+        description="完成 1 次擂台出手。开擂、攻擂、收擂都算。",
+        target=1,
+        reward_lingshi=1200,
+        reward_soul=60,
+        reward_luck=40,
+        event_keys=("pvp_arena",),
+    ),
+    SectTaskDefinition(
+        key="bounty_1",
+        title="悬赏讨伐",
+        description="完成 1 次悬赏讨伐。",
+        target=1,
+        reward_lingshi=1400,
+        reward_soul=72,
+        reward_luck=50,
+        event_keys=("faction_bounty_win",),
+        allowed_factions=("righteous",),
+    ),
+    SectTaskDefinition(
+        key="robbery_1",
+        title="外道劫掠",
+        description="完成 1 次劫掠得手。",
+        target=1,
+        reward_lingshi=1400,
+        reward_soul=72,
+        reward_luck=50,
+        event_keys=("faction_robbery_win",),
+        allowed_factions=("demonic",),
+    ),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +174,29 @@ class ResourceSiteView:
     player_role_name: str = ""
     player_progress: int = 0
     player_progress_required: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class SectTaskView:
+    task_key: str
+    title: str
+    description: str
+    progress: int
+    target: int
+    status_key: str
+    status_name: str
+    reward_lingshi: int
+    reward_soul: int
+    reward_luck: int
+
+
+@dataclass(frozen=True, slots=True)
+class SectTaskBoard:
+    tasks: tuple[SectTaskView, ...]
+    available_count: int
+    active_count: int
+    completed_count: int
+    claimed_count: int
 
 
 @dataclass(slots=True)
@@ -173,6 +260,8 @@ class SectService:
                         reward_lines = self._apply_site_reward(character, site, transport_count)
                         if reward_lines:
                             notices.setdefault(character.id, []).extend(reward_lines)
+                            character.sect_last_settlement_on = reward_day
+                            character.sect_last_settlement_summary = "\n".join(notices[character.id])
                 site.settlement_day = today
             site.state_json = self._dump_state(state)
 
@@ -209,6 +298,10 @@ class SectService:
         character.sect_last_contribution_on = None
         character.sect_bound_site_id = None
         character.sect_bound_site_role = None
+        character.sect_last_settlement_on = None
+        character.sect_last_settlement_summary = ""
+        character.sect_task_refresh_on = None
+        character.sect_task_state_json = ""
         character.last_highlight_text = f"方才立下宗门「{cleaned}」。"
         return True, f"你已立下宗门「{cleaned}」。"
 
@@ -267,6 +360,136 @@ class SectService:
             members=member_views,
         )
 
+    def get_task_board(self, character: Character) -> SectTaskBoard:
+        task_state = self._ensure_task_state(character)
+        tasks: list[SectTaskView] = []
+        counts = {
+            "available": 0,
+            "active": 0,
+            "completed": 0,
+            "claimed": 0,
+        }
+        task_entries = task_state.get("tasks", {})
+        for definition in self._iter_task_definitions(character):
+            entry = task_entries.get(definition.key, {"progress": 0, "status": "available"})
+            status_key = str(entry.get("status", "available"))
+            progress = min(definition.target, max(0, int(entry.get("progress", 0))))
+            if progress >= definition.target and status_key == "active":
+                status_key = "completed"
+                entry["status"] = status_key
+            if status_key not in TASK_STATUS_NAMES:
+                status_key = "available"
+                entry["status"] = status_key
+            entry["progress"] = progress
+            counts[status_key] += 1
+            tasks.append(
+                SectTaskView(
+                    task_key=definition.key,
+                    title=definition.title,
+                    description=definition.description,
+                    progress=progress,
+                    target=definition.target,
+                    status_key=status_key,
+                    status_name=TASK_STATUS_NAMES[status_key],
+                    reward_lingshi=definition.reward_lingshi,
+                    reward_soul=definition.reward_soul,
+                    reward_luck=definition.reward_luck,
+                )
+            )
+        self._save_task_state(character, task_state)
+        return SectTaskBoard(
+            tasks=tuple(tasks),
+            available_count=counts["available"],
+            active_count=counts["active"],
+            completed_count=counts["completed"],
+            claimed_count=counts["claimed"],
+        )
+
+    def task_summary_text(self, character: Character) -> str:
+        board = self.get_task_board(character)
+        parts: list[str] = []
+        if board.available_count > 0:
+            parts.append(f"可领取 {board.available_count}")
+        if board.active_count > 0:
+            parts.append(f"进行中 {board.active_count}")
+        if board.completed_count > 0:
+            parts.append(f"可领奖 {board.completed_count}")
+        if not parts:
+            parts.append("今日已全数领完")
+        return " · ".join(parts)
+
+    def accept_task(self, character: Character, task_key: str) -> tuple[bool, str]:
+        if character.sect_id is None:
+            return False, "你尚未归于任何宗门。"
+        task_state = self._ensure_task_state(character)
+        definition = self._task_definition_for(character, task_key)
+        if definition is None:
+            return False, "未找到该宗门任务。"
+        task_entry = task_state["tasks"].get(task_key)
+        if task_entry is None:
+            return False, "未找到该宗门任务。"
+        status_key = str(task_entry.get("status", "available"))
+        if status_key == "claimed":
+            return False, "该任务奖励今日已领过。"
+        if status_key == "completed":
+            return False, "该任务已完成，可直接领奖。"
+        if status_key == "active":
+            return False, "该任务已在进行中。"
+        task_entry["status"] = "active"
+        task_entry["progress"] = min(definition.target, max(0, int(task_entry.get("progress", 0))))
+        self._save_task_state(character, task_state)
+        return True, f"你已领取任务「{definition.title}」。"
+
+    def claim_task_reward(self, character: Character, task_key: str) -> tuple[bool, str]:
+        if character.sect_id is None:
+            return False, "你尚未归于任何宗门。"
+        task_state = self._ensure_task_state(character)
+        definition = self._task_definition_for(character, task_key)
+        if definition is None:
+            return False, "未找到该宗门任务。"
+        task_entry = task_state["tasks"].get(task_key)
+        if task_entry is None:
+            return False, "未找到该宗门任务。"
+        status_key = str(task_entry.get("status", "available"))
+        if status_key == "claimed":
+            return False, "该任务奖励今日已领过。"
+        if status_key != "completed":
+            return False, "该任务尚未完成，暂不可领奖。"
+        if definition.reward_lingshi > 0:
+            character.lingshi += definition.reward_lingshi
+        if definition.reward_soul > 0 and character.artifact is not None:
+            character.artifact.soul_shards += definition.reward_soul
+        if definition.reward_luck > 0:
+            character.luck += definition.reward_luck
+        task_entry["status"] = "claimed"
+        self._save_task_state(character, task_state)
+        reward_text = self._format_task_reward(definition)
+        character.last_highlight_text = f"方才领下宗门任务「{definition.title}」的赏赐。"
+        return True, f"你已领取「{definition.title}」奖励：{reward_text}。"
+
+    def record_task_event(self, character: Character, event_key: str, *, amount: int = 1) -> None:
+        if character.sect_id is None or amount <= 0:
+            return
+        task_state = self._ensure_task_state(character)
+        task_entries = task_state.get("tasks", {})
+        changed = False
+        for definition in self._iter_task_definitions(character):
+            if event_key not in definition.event_keys:
+                continue
+            task_entry = task_entries.get(definition.key)
+            if task_entry is None or str(task_entry.get("status", "available")) != "active":
+                continue
+            progress_before = max(0, int(task_entry.get("progress", 0)))
+            progress_after = min(definition.target, progress_before + amount)
+            if progress_after == progress_before:
+                continue
+            task_entry["progress"] = progress_after
+            if progress_after >= definition.target:
+                task_entry["status"] = "completed"
+            changed = True
+        if changed:
+            self._save_task_state(character, task_state)
+
     async def join_sect(self, session: AsyncSession, character: Character, sect_id: int) -> tuple[bool, str]:
         if character.sect_id is not None:
             return False, "你既已入门，不可再投他宗。"
@@ -291,6 +514,10 @@ class SectService:
         character.sect_last_contribution_on = None
         character.sect_bound_site_id = None
         character.sect_bound_site_role = None
+        character.sect_last_settlement_on = None
+        character.sect_last_settlement_summary = ""
+        character.sect_task_refresh_on = None
+        character.sect_task_state_json = ""
         character.last_highlight_text = f"方才投入宗门「{sect.name}」。"
         return True, f"你已投入宗门「{sect.name}」。"
 
@@ -305,6 +532,10 @@ class SectService:
             character.sect_id = None
             character.sect_bound_site_id = None
             character.sect_bound_site_role = None
+            character.sect_last_settlement_on = None
+            character.sect_last_settlement_summary = ""
+            character.sect_task_refresh_on = None
+            character.sect_task_state_json = ""
             return True, "旧门已散，你自行抽身而出。"
 
         await self._detach_character_from_site(session, character)
@@ -318,6 +549,10 @@ class SectService:
         character.sect_last_contribution_on = None
         character.sect_bound_site_id = None
         character.sect_bound_site_role = None
+        character.sect_last_settlement_on = None
+        character.sect_last_settlement_summary = ""
+        character.sect_task_refresh_on = None
+        character.sect_task_state_json = ""
         await session.flush()
 
         remaining_members = list((await session.scalars(select(Character).where(Character.sect_id == sect.id))).all())
@@ -420,15 +655,15 @@ class SectService:
         if character.sect_id is None:
             return SectActionResult(False, "你尚未归于任何宗门。")
         if action_key not in SITE_ACTION_LABELS:
-            return SectActionResult(False, "你这一手落得不成章法。")
+            return SectActionResult(False, "无效的资源点操作。")
         if character.current_qi < SECT_ACTION_QI_COST:
-            return SectActionResult(False, "气机不足，难再落子。", qi_before=character.current_qi, qi_after=character.current_qi)
+            return SectActionResult(False, "气机不足，无法进行资源点操作。", qi_before=character.current_qi, qi_after=character.current_qi)
 
         today = today_shanghai()
         await self.ensure_sites(session)
         site = await session.scalar(select(WorldResourceSite).where(WorldResourceSite.id == site_id).options(selectinload(WorldResourceSite.owner_sect)))
         if site is None or not self._site_is_active(site, today):
-            return SectActionResult(False, "这处地脉已然散去。")
+            return SectActionResult(False, "该资源点已失效。")
 
         state = self._load_state(site.state_json)
         await self._hydrate_site_state(session, site, state)
@@ -471,34 +706,35 @@ class SectService:
             self._add_guard_member(state, character.id)
             character.sect_bound_site_id = site.id
             character.sect_bound_site_role = "guard"
-            character.last_highlight_text = f"方才在 {site.site_name} 守住门中旗号。"
+            character.last_highlight_text = f"已在 {site.site_name} 执行护持。"
             result = SectActionResult(
                 True,
-                f"你已在 {site.site_name} 留守。",
+                f"你已在 {site.site_name} 执行护持。",
                 contribution_gain=contribution,
                 qi_before=qi_before,
                 qi_after=character.current_qi,
                 site_name=site.site_name,
                 site_type_name=SITE_TYPE_NAMES.get(site.site_type, site.site_type),
-                detail_lines=(f"守阵：`{len(state['guard_member_ids'])}`人", f"功绩：`+{contribution}`"),
+                detail_lines=(f"护持人数：`{len(state['guard_member_ids'])}`", f"宗门贡献：`+{contribution}`"),
             )
         else:
             self._add_transport_member(state, character.id)
             character.sect_bound_site_id = site.id
             character.sect_bound_site_role = "transport"
-            character.last_highlight_text = f"方才在 {site.site_name} 护着灵运回门。"
+            character.last_highlight_text = f"已在 {site.site_name} 执行输运。"
             result = SectActionResult(
                 True,
-                f"你已在 {site.site_name} 开始输运。",
+                f"你已在 {site.site_name} 执行输运。",
                 contribution_gain=contribution,
                 qi_before=qi_before,
                 qi_after=character.current_qi,
                 site_name=site.site_name,
                 site_type_name=SITE_TYPE_NAMES.get(site.site_type, site.site_type),
-                detail_lines=(f"输运：`{len(state['transport_member_ids'])}`人", f"功绩：`+{contribution}`"),
+                detail_lines=(f"输运人数：`{len(state['transport_member_ids'])}`", f"宗门贡献：`+{contribution}`"),
             )
 
         site.state_json = self._dump_state(state)
+        self.record_task_event(character, "sect_site_action")
         await session.flush()
         return result
 
@@ -556,20 +792,20 @@ class SectService:
         character.sect_bound_site_role = "contest"
 
         required_progress = UNOWNED_SITE_PROGRESS_TARGET if site.owner_sect_id is None else OWNED_SITE_PROGRESS_TARGET
-        detail_lines: list[str] = [f"功绩：`+{contribution}`"]
+        detail_lines: list[str] = [f"宗门贡献：`+{contribution}`"]
 
         if site.owner_sect_id is None:
             current_progress = int(state["attack_progress"].get(character.sect_id, 0)) + 1
             state["attack_progress"][character.sect_id] = current_progress
-            detail_lines.insert(0, f"占势：`{current_progress}/{required_progress}`")
+            detail_lines.insert(0, f"占领进度：`{current_progress}/{required_progress}`")
             if current_progress >= required_progress:
                 await self._claim_site(session, site, state, character.sect_id)
-                character.last_highlight_text = f"方才替宗门拿下 {site.site_name}。"
-                detail_lines.insert(0, "此地灵旗已落在你门手中。")
-                message = f"你门已拿下 {site.site_name}。"
+                character.last_highlight_text = f"已为宗门占领 {site.site_name}。"
+                detail_lines.insert(0, "该资源点已由本宗占领。")
+                message = f"你所在宗门已占领 {site.site_name}。"
             else:
-                character.last_highlight_text = f"方才替宗门朝 {site.site_name} 又压上一步。"
-                message = f"你在 {site.site_name} 再压上一步。"
+                character.last_highlight_text = f"已推进 {site.site_name} 的占领进度。"
+                message = f"你推进了 {site.site_name} 的占领进度。"
             return SectActionResult(
                 True,
                 message,
@@ -589,19 +825,19 @@ class SectService:
         if contest_won:
             current_progress += 1
             state["attack_progress"][character.sect_id] = current_progress
-        detail_lines.insert(1, f"破阵：`{current_progress}/{required_progress}`")
+        detail_lines.insert(1, f"争夺进度：`{current_progress}/{required_progress}`")
 
         if contest_won and current_progress >= required_progress:
             await self._claim_site(session, site, state, character.sect_id)
-            character.last_highlight_text = f"方才替宗门夺下 {site.site_name}。"
-            detail_lines.insert(0, "地脉旗号已改换门庭。")
-            message = f"你门已夺下 {site.site_name}。"
+            character.last_highlight_text = f"已为宗门夺取 {site.site_name}。"
+            detail_lines.insert(0, "该资源点已由本宗夺取。")
+            message = f"你所在宗门已夺取 {site.site_name}。"
         elif contest_won:
-            character.last_highlight_text = f"方才替宗门在 {site.site_name} 破开一道口子。"
-            message = f"你在 {site.site_name} 撕开了一道口子。"
+            character.last_highlight_text = f"已推进 {site.site_name} 的争夺进度。"
+            message = f"你推进了 {site.site_name} 的争夺进度。"
         else:
-            character.last_highlight_text = f"方才在 {site.site_name} 冲阵未成。"
-            message = f"你这次没能撼动 {site.site_name}。"
+            character.last_highlight_text = f"在 {site.site_name} 的强争失败。"
+            message = f"你未能推进 {site.site_name} 的争夺进度。"
 
         return SectActionResult(
             contest_won,
@@ -631,12 +867,12 @@ class SectService:
     def _validate_site_action(self, character: Character, site: WorldResourceSite, action_key: str) -> str | None:
         if action_key == "contest":
             if site.owner_sect_id == character.sect_id:
-                return "此地已有你门旗号，换作护持或输运即可。"
+                return "该资源点已由本宗占有，可执行护持或输运。"
             return None
         if site.owner_sect_id is None:
-            return "此地尚无旗主，先以强争立住旗号。"
+            return "该资源点当前无归属，只能执行强争。"
         if site.owner_sect_id != character.sect_id:
-            return "此地不归你门，眼下只能强争。"
+            return "该资源点不属于本宗，当前只能执行强争。"
         return None
 
     def _calculate_contribution(self, character: Character, action_key: str) -> int:
@@ -661,15 +897,6 @@ class SectService:
             reward_soul = max(1, int(config["soul"] * multiplier))
             character.artifact.soul_shards += reward_soul
             parts.append(f"器魂 +{reward_soul}")
-        if config.get("cultivation_pct", 0):
-            stage = get_stage(character.realm_key, character.stage_key)
-            fixed_amount = SITE_FIXED_CULTIVATION.get(character.realm_key, 0)
-            percent_amount = max(1, stage.cultivation_max * config["cultivation_pct"] // 100)
-            total_amount = int((fixed_amount + percent_amount) * multiplier)
-            total_amount = min(total_amount, max(0, stage.cultivation_max - character.cultivation))
-            if total_amount > 0:
-                character.cultivation += total_amount
-                parts.append(f"修为 +{total_amount}")
         if not parts:
             return []
         return [f"{site.site_name}：{' · '.join(parts)}"]
@@ -691,7 +918,18 @@ class SectService:
     async def _initialize_legacy_sites(self, session: AsyncSession, today) -> None:
         sites = list((await session.scalars(select(WorldResourceSite))).all())
         changed = False
+        used_names_by_type = {site_type: set() for site_type in SITE_NAME_POOLS}
         for site in sites:
+            if site.site_type in SITE_NAME_POOLS and site.site_name in SITE_NAME_POOLS[site.site_type]:
+                used_names_by_type.setdefault(site.site_type, set()).add(site.site_name)
+        for site in sites:
+            # 兼容旧档中的灵泉资源点，统一迁回当前保留的资源类型。
+            if site.site_type not in SITE_TYPE_NAMES:
+                fallback_type = LEGACY_SITE_TYPE_FALLBACK
+                site.site_type = fallback_type
+                site.site_name = self._roll_site_name(fallback_type, used_names_by_type.setdefault(fallback_type, set()))
+                used_names_by_type[fallback_type].add(site.site_name)
+                changed = True
             if site.spawned_on is None:
                 site.spawned_on = site.settlement_day or today
                 changed = True
@@ -839,16 +1077,16 @@ class SectService:
 
     def _resolve_contest(self, attack_power: int, defense_power: int) -> tuple[bool, str]:
         if defense_power <= 0:
-            return True, "对面守阵空了，你门一步压了进去。"
+            return True, f"战力对比：攻 {attack_power} / 守 0，对方当前无人护持。"
         ratio = attack_power / max(defense_power, 1)
         if ratio >= DIRECT_WIN_RATIO:
-            return True, "你门来势更盛，阵脚一下压过去了。"
+            return True, f"战力对比：攻 {attack_power} / 守 {defense_power}，本次强争成功。"
         if ratio <= DIRECT_LOSS_RATIO:
-            return False, "对面守势沉稳，这一阵没能冲开。"
+            return False, f"战力对比：攻 {attack_power} / 守 {defense_power}，本次强争失败。"
         win_rate = max(SWING_WIN_RATE_MIN, min(SWING_WIN_RATE_MAX, 0.5 + (ratio - 1.0) * 0.5))
         if self.rng.random() < win_rate:
-            return True, "两边僵持片刻，终究还是你门先撕开了口子。"
-        return False, "两边厮磨了一阵，对面最终还是把阵脚稳住。"
+            return True, f"战力对比：攻 {attack_power} / 守 {defense_power}，双方接近，但本次强争成功。"
+        return False, f"战力对比：攻 {attack_power} / 守 {defense_power}，双方接近，但本次强争失败。"
 
     def _can_receive_site_reward(self, character: Character, site: WorldResourceSite, reward_day) -> bool:
         if character.sect_id != site.owner_sect_id:
@@ -858,6 +1096,114 @@ class SectService:
         if character.sect_bound_site_id == site.id and character.sect_bound_site_role in {"guard", "transport"}:
             return True
         return character.sect_last_contribution_on == reward_day and (character.sect_contribution_daily or 0) > 0
+
+    def _iter_task_definitions(self, character: Character) -> tuple[SectTaskDefinition, ...]:
+        available: list[SectTaskDefinition] = []
+        for definition in SECT_TASK_DEFINITIONS:
+            if definition.allowed_factions and character.faction not in definition.allowed_factions:
+                continue
+            available.append(definition)
+        return tuple(available)
+
+    def _task_definition_for(self, character: Character, task_key: str) -> SectTaskDefinition | None:
+        for definition in self._iter_task_definitions(character):
+            if definition.key == task_key:
+                return definition
+        return None
+
+    @staticmethod
+    def _empty_task_state() -> dict[str, object]:
+        return {"tasks": {}}
+
+    def _load_task_state(self, raw_json: str | None) -> dict[str, object]:
+        state = self._empty_task_state()
+        if not raw_json:
+            return state
+        try:
+            payload = json.loads(raw_json)
+        except json.JSONDecodeError:
+            return state
+        if not isinstance(payload, dict):
+            return state
+        raw_tasks = payload.get("tasks", {})
+        if not isinstance(raw_tasks, dict):
+            return state
+        tasks: dict[str, dict[str, object]] = {}
+        for raw_key, raw_entry in raw_tasks.items():
+            if not isinstance(raw_key, str) or not isinstance(raw_entry, dict):
+                continue
+            status_key = str(raw_entry.get("status", "available"))
+            if status_key not in TASK_STATUS_NAMES:
+                status_key = "available"
+            progress = max(0, int(raw_entry.get("progress", 0)))
+            tasks[raw_key] = {
+                "status": status_key,
+                "progress": progress,
+            }
+        state["tasks"] = tasks
+        return state
+
+    def _ensure_task_state(self, character: Character) -> dict[str, object]:
+        if character.sect_id is None:
+            character.sect_task_refresh_on = None
+            character.sect_task_state_json = ""
+            return self._empty_task_state()
+        today = today_shanghai()
+        definitions = self._iter_task_definitions(character)
+        if character.sect_task_refresh_on != today:
+            state = {
+                "tasks": {
+                    definition.key: {"status": "available", "progress": 0}
+                    for definition in definitions
+                }
+            }
+            character.sect_task_refresh_on = today
+            self._save_task_state(character, state)
+            return state
+        state = self._load_task_state(character.sect_task_state_json)
+        task_entries: dict[str, dict[str, object]] = {}
+        raw_entries = state.get("tasks", {})
+        if isinstance(raw_entries, dict):
+            for definition in definitions:
+                entry = raw_entries.get(definition.key, {})
+                if not isinstance(entry, dict):
+                    entry = {}
+                status_key = str(entry.get("status", "available"))
+                if status_key not in TASK_STATUS_NAMES:
+                    status_key = "available"
+                progress = min(definition.target, max(0, int(entry.get("progress", 0))))
+                if progress >= definition.target and status_key == "active":
+                    status_key = "completed"
+                task_entries[definition.key] = {
+                    "status": status_key,
+                    "progress": progress,
+                }
+        state["tasks"] = task_entries
+        self._save_task_state(character, state)
+        return state
+
+    def _save_task_state(self, character: Character, payload: dict[str, object]) -> None:
+        normalized = {
+            "tasks": {
+                str(key): {
+                    "status": str(value.get("status", "available")),
+                    "progress": max(0, int(value.get("progress", 0))),
+                }
+                for key, value in payload.get("tasks", {}).items()
+                if isinstance(value, dict)
+            }
+        }
+        character.sect_task_state_json = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+
+    def _format_task_reward(self, definition: SectTaskDefinition) -> str:
+        parts: list[str] = []
+        if definition.reward_lingshi > 0:
+            parts.append(f"灵石 +{definition.reward_lingshi}")
+        if definition.reward_soul > 0:
+            parts.append(f"器魂 +{definition.reward_soul}")
+        if definition.reward_luck > 0:
+            parts.append(f"气运 +{definition.reward_luck}")
+        return " · ".join(parts)
 
     def _build_attack_summaries(self, progress_map: dict[int, int], required_progress: int, sect_names: dict[int, str]) -> tuple[str, ...]:
         ordered = sorted(progress_map.items(), key=lambda item: (-item[1], item[0]))

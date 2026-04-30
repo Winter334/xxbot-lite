@@ -62,9 +62,10 @@ class ArenaClaimResult:
 class PvpService:
     public_arena_key = "public"
 
-    def __init__(self, character_service: CharacterService, combat_service: CombatService) -> None:
+    def __init__(self, character_service: CharacterService, combat_service: CombatService, sect_service=None) -> None:
         self.character_service = character_service
         self.combat_service = combat_service
+        self.sect_service = sect_service
         self._pending_spar_users: set[int] = set()
         self.arena_lock = asyncio.Lock()
 
@@ -118,6 +119,9 @@ class PvpService:
             challenger.last_highlight_text = f"方才与 {defender.player.display_name} 切磋落败。"
             defender.last_highlight_text = f"方才与 {challenger.player.display_name} 切磋得胜。"
             message = f"切磋已毕，{defender.player.display_name} 更胜一筹。"
+        if self.sect_service is not None:
+            self.sect_service.record_task_event(challenger, "pvp_spar")
+            self.sect_service.record_task_event(defender, "pvp_spar")
         return SparChallengeResult(True, message, battle)
 
     async def get_arena_status(self, session: AsyncSession) -> tuple[ArenaStatus, Character | None]:
@@ -147,6 +151,8 @@ class PvpService:
         arena.pot_soul = stake_soul
         arena.win_streak = 0
         challenger.last_highlight_text = f"方才押上 {stake_soul} 器魂，登上了单擂台。"
+        if self.sect_service is not None:
+            self.sect_service.record_task_event(challenger, "pvp_arena")
         return ArenaOpenResult(True, f"{challenger.player.display_name} 押上 {stake_soul} 器魂，登上了单擂台。", arena.stake_soul, arena.pot_soul)
 
     async def challenge_arena(self, session: AsyncSession, challenger: Character) -> ArenaChallengeResult:
@@ -181,6 +187,8 @@ class PvpService:
             arena.win_streak = 1
             challenger.last_highlight_text = f"方才接手单擂台，当前擂池为 {arena.pot_soul} 器魂。"
             defender.last_highlight_text = f"方才因无法应战而失了擂台，被 {challenger.player.display_name} 接手。"
+            if self.sect_service is not None:
+                self.sect_service.record_task_event(challenger, "pvp_arena")
             return ArenaChallengeResult(
                 True,
                 f"擂主当前无法应战，判定弃擂。{challenger.player.display_name} 直接接过擂台，当前擂池为 {arena.pot_soul} 器魂。",
@@ -207,6 +215,8 @@ class PvpService:
             arena.win_streak = 1
             challenger.last_highlight_text = f"方才夺下单擂台，当前擂池为 {arena.pot_soul} 器魂。"
             defender.last_highlight_text = f"方才在擂台战中失擂，被 {challenger.player.display_name} 夺位。"
+            if self.sect_service is not None:
+                self.sect_service.record_task_event(challenger, "pvp_arena")
             return ArenaChallengeResult(
                 True,
                 f"{challenger.player.display_name} 攻擂得手，夺下擂台。当前可收擂离场，也可继续接受挑战。",
@@ -221,6 +231,8 @@ class PvpService:
         arena.win_streak += 1
         defender.last_highlight_text = f"方才守住擂台，当前擂池为 {arena.pot_soul} 器魂。"
         challenger.last_highlight_text = f"方才攻擂失手，败给了 {defender.player.display_name}。"
+        if self.sect_service is not None:
+            self.sect_service.record_task_event(challenger, "pvp_arena")
         return ArenaChallengeResult(
             True,
             f"{defender.player.display_name} 守擂成功，当前可收擂离场，也可继续接受挑战。",
@@ -245,6 +257,8 @@ class PvpService:
         challenger.artifact.soul_shards += claimed_soul
         self._clear_arena(arena)
         challenger.last_highlight_text = f"方才收擂离场，带走了 {claimed_soul} 器魂。"
+        if self.sect_service is not None:
+            self.sect_service.record_task_event(challenger, "pvp_arena")
         return ArenaClaimResult(True, f"{challenger.player.display_name} 收擂离场，带走了 {claimed_soul} 器魂。", claimed_soul, win_streak)
 
     async def _resolve_arena(self, session: AsyncSession) -> tuple[ArenaState, Character | None]:

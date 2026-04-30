@@ -5,6 +5,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
+from bot.data.resource_sites import SITE_NAME_POOLS
 from bot.data.fates import FATE_DEFINITIONS
 from bot.data.realms import get_stage
 from bot.data.spirits import SpiritPowerEntry
@@ -58,6 +59,10 @@ def _set_stage(character, realm_key: str, stage_key: str) -> None:
     character.realm_index = stage.realm_index
     character.stage_key = stage.stage_key
     character.stage_index = stage.stage_index
+
+
+def _sect_task(task_board, task_key: str):
+    return next(task for task in task_board.tasks if task.task_key == task_key)
 
 
 @pytest.mark.asyncio
@@ -398,6 +403,21 @@ async def test_panel_embed_shows_soul_retreat_state(session_factory, services) -
 
 
 @pytest.mark.asyncio
+async def test_panel_embed_shows_lingshi(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 1021, "灵石客")
+        character = creation.character
+        character.lingshi = 4321
+        snapshot = services.character.build_snapshot(character)
+        embed = build_panel_embed(snapshot)
+        await session.commit()
+
+        progress_field = next(field for field in embed.fields if field.name == "📈 修为进境")
+        assert "灵石：" in progress_field.value
+        assert "4321" in progress_field.value
+
+
+@pytest.mark.asyncio
 async def test_spirit_nurture_collects_after_unlock_and_boosts_artifact_power(session_factory, services) -> None:
     async with session_factory() as session:
         creation = await services.character.get_or_create_character(session, 1016, "灵工")
@@ -507,6 +527,7 @@ async def test_sect_site_action_consumes_qi_and_claims_unowned_site(session_fact
         await services.sect.create_sect(session, character, "断岳门")
         await services.sect.ensure_sites(session)
         site = (await session.scalars(select(WorldResourceSite).limit(1))).one()
+        assert site.site_type in {"lingshi", "soul"}
 
         first = await services.sect.perform_site_action(session, character, site.id, "contest")
         second = await services.sect.perform_site_action(session, character, site.id, "contest")
@@ -595,6 +616,7 @@ async def test_sect_settlement_rewards_use_transport_bonus(session_factory, serv
         site = (await session.scalars(select(WorldResourceSite).order_by(WorldResourceSite.id.asc()))).first()
         assert site is not None
         site.site_type = "lingshi"
+        site.site_name = "青云灵矿"
         site.owner_sect_id = guarder.sect_id
         site.settlement_day = now_shanghai().date() - timedelta(days=1)
         guarder.sect_joined_at = now_shanghai() - timedelta(days=2)
@@ -616,10 +638,161 @@ async def test_sect_settlement_rewards_use_transport_bonus(session_factory, serv
         await session.commit()
 
         assert notices.get(guarder.id)
-        assert guarder.lingshi == 220
-        assert guarder.artifact.soul_shards == 11
-        assert transporter.lingshi == 220
-        assert transporter.artifact.soul_shards == 11
+        assert guarder.lingshi == 440
+        assert guarder.artifact.soul_shards == 22
+        assert transporter.lingshi == 440
+        assert transporter.artifact.soul_shards == 22
+        assert guarder.sect_last_settlement_summary == "青云灵矿：灵石 +440 · 器魂 +22"
+        assert transporter.sect_last_settlement_summary == "青云灵矿：灵石 +440 · 器魂 +22"
+
+
+@pytest.mark.asyncio
+async def test_sect_site_task_can_be_accepted_completed_and_claimed(session_factory, services) -> None:
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 8012, "勤务弟子")).character
+        _set_stage(character, "zhuji", "early")
+        await services.sect.create_sect(session, character, "行岳门")
+        await services.sect.ensure_sites(session)
+        site = (await session.scalars(select(WorldResourceSite).limit(1))).one()
+
+        initial_board = services.sect.get_task_board(character)
+        site_task = _sect_task(initial_board, "site_action_2")
+        accept_success, _ = services.sect.accept_task(character, site_task.task_key)
+        first_result = await services.sect.perform_site_action(session, character, site.id, "contest")
+        second_result = await services.sect.perform_site_action(session, character, site.id, "contest")
+        completed_board = services.sect.get_task_board(character)
+        reward_success, _ = services.sect.claim_task_reward(character, site_task.task_key)
+        claimed_board = services.sect.get_task_board(character)
+        await session.commit()
+
+        assert accept_success is True
+        assert first_result.qi_after == 5
+        assert second_result.qi_after == 4
+        assert _sect_task(completed_board, "site_action_2").status_key == "completed"
+        assert reward_success is True
+        assert character.lingshi == 900
+        assert character.artifact.soul_shards == 45
+        assert _sect_task(claimed_board, "site_action_2").status_key == "claimed"
+
+
+@pytest.mark.asyncio
+async def test_sect_bounty_task_tracks_righteous_hunt(session_factory, services) -> None:
+    async with session_factory() as session:
+        hunter = (await services.character.get_or_create_character(session, 8013, "正门行者")).character
+        target = (await services.character.get_or_create_character(session, 8014, "悬赏魔修")).character
+        services.faction.join_faction(hunter, "righteous")
+        services.faction.join_faction(target, "demonic")
+        _set_stage(hunter, "zhuji", "early")
+        await services.sect.create_sect(session, hunter, "清都门")
+        target.bounty_soul = 12
+
+        task_board = services.sect.get_task_board(hunter)
+        bounty_task = _sect_task(task_board, "bounty_1")
+        accept_success, _ = services.sect.accept_task(hunter, bounty_task.task_key)
+        result = services.faction.challenge_bounty(hunter, target)
+        completed_board = services.sect.get_task_board(hunter)
+        reward_success, _ = services.sect.claim_task_reward(hunter, bounty_task.task_key)
+        await session.commit()
+
+        assert accept_success is True
+        assert result.success is True
+        assert _sect_task(completed_board, "bounty_1").status_key == "completed"
+        assert reward_success is True
+        assert hunter.lingshi == 1520
+        assert hunter.artifact.soul_shards == 84
+
+
+@pytest.mark.asyncio
+async def test_sect_robbery_task_tracks_demonic_robbery(session_factory, services) -> None:
+    async with session_factory() as session:
+        robber = (await services.character.get_or_create_character(session, 8015, "魔门弟子")).character
+        target = (await services.character.get_or_create_character(session, 8016, "被劫者")).character
+        services.faction.join_faction(robber, "demonic")
+        _set_stage(robber, "zhuji", "early")
+        await services.sect.create_sect(session, robber, "夜河门")
+        target.artifact.soul_shards = 20
+        target.luck = 120
+
+        task_board = services.sect.get_task_board(robber)
+        robbery_task = _sect_task(task_board, "robbery_1")
+        accept_success, _ = services.sect.accept_task(robber, robbery_task.task_key)
+        result = services.faction.rob(robber, target)
+        completed_board = services.sect.get_task_board(robber)
+        await session.commit()
+
+        assert accept_success is True
+        assert result.success is True
+        assert _sect_task(completed_board, "robbery_1").status_key == "completed"
+
+
+@pytest.mark.asyncio
+async def test_sect_spar_task_tracks_completed_spar(session_factory, services) -> None:
+    async with session_factory() as session:
+        challenger = (await services.character.get_or_create_character(session, 8017, "同门甲")).character
+        defender = (await services.character.get_or_create_character(session, 8018, "同门乙")).character
+        _set_stage(challenger, "jiedan", "early")
+        _set_stage(defender, "zhuji", "early")
+        await services.sect.create_sect(session, challenger, "演武门")
+
+        task_board = services.sect.get_task_board(challenger)
+        spar_task = _sect_task(task_board, "spar_1")
+        accept_success, _ = services.sect.accept_task(challenger, spar_task.task_key)
+        result = services.pvp.spar(challenger, defender)
+        completed_board = services.sect.get_task_board(challenger)
+        await session.commit()
+
+        assert accept_success is True
+        assert result.success is True
+        assert _sect_task(completed_board, "spar_1").status_key == "completed"
+
+
+@pytest.mark.asyncio
+async def test_sect_arena_task_tracks_arena_action(session_factory, services) -> None:
+    async with session_factory() as session:
+        defender = (await services.character.get_or_create_character(session, 8019, "守擂修士")).character
+        challenger = (await services.character.get_or_create_character(session, 8020, "攻擂门人")).character
+        defender.artifact.soul_shards = 200
+        challenger.artifact.soul_shards = 200
+        _set_stage(challenger, "jiedan", "early")
+        _set_stage(defender, "zhuji", "early")
+        services.character.refresh_combat_power(challenger)
+        services.character.refresh_combat_power(defender)
+        await services.sect.create_sect(session, challenger, "擂山门")
+
+        task_board = services.sect.get_task_board(challenger)
+        arena_task = _sect_task(task_board, "arena_1")
+        accept_success, _ = services.sect.accept_task(challenger, arena_task.task_key)
+        open_result = await services.pvp.open_arena(session, defender, 100)
+        challenge_result = await services.pvp.challenge_arena(session, challenger)
+        completed_board = services.sect.get_task_board(challenger)
+        await session.commit()
+
+        assert accept_success is True
+        assert open_result.success is True
+        assert challenge_result.success is True
+        assert _sect_task(completed_board, "arena_1").status_key == "completed"
+
+
+@pytest.mark.asyncio
+async def test_legacy_cultivation_site_is_converted_to_lingshi_site(session_factory, services) -> None:
+    async with session_factory() as session:
+        session.add(
+            WorldResourceSite(
+                site_key="legacy_cultivation",
+                site_name="太乙灵泉",
+                site_type="cultivation",
+                owner_sect_id=None,
+                settlement_day=now_shanghai().date(),
+                state_json=services.sect._dump_state(services.sect._empty_state()),
+            )
+        )
+
+        await services.sect.ensure_sites(session)
+        site = (await session.scalars(select(WorldResourceSite).where(WorldResourceSite.site_key == "legacy_cultivation"))).one()
+        await session.commit()
+
+        assert site.site_type == "lingshi"
+        assert site.site_name in SITE_NAME_POOLS["lingshi"]
 
 
 @pytest.mark.asyncio
