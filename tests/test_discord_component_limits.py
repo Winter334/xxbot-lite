@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import discord
 import pytest
 
 from bot.views.panel import (
@@ -33,6 +34,10 @@ def _assert_component_limits(view) -> None:
     assert all(count <= 5 for count in counts)
 
 
+def _select_children(view) -> list[discord.ui.Select]:
+    return [child for child in view.children if isinstance(child, discord.ui.Select)]
+
+
 @pytest.mark.asyncio
 async def test_views_respect_discord_component_limits() -> None:
     panel_state = SimpleNamespace(
@@ -40,7 +45,10 @@ async def test_views_respect_discord_component_limits() -> None:
         pending_slots=[SimpleNamespace(slot=i, affix_id=("x" if i in (2, 4) else None), unlocked=True) for i in range(1, 6)],
         current_slots=[SimpleNamespace(slot=i, unlock_level=i * 10, unlocked=True) for i in range(1, 6)],
     )
-    challenge_targets = [SimpleNamespace(rank=i, display_name=f"修士{i}") for i in range(1, 6)]
+    challenge_targets = [
+        SimpleNamespace(rank=i, display_name=f"修士{i}", realm_display="筑基前期", combat_power=1000 + i)
+        for i in range(1, 6)
+    ]
 
     for view in (
         PanelView(1),
@@ -98,7 +106,77 @@ async def test_views_respect_discord_component_limits() -> None:
             ),
             targets=[],
         ),
+        FactionView(
+            1,
+            snapshot=SimpleNamespace(
+                faction_key="demonic",
+                faction_name="魔道",
+                faction_title="",
+            ),
+            targets=[
+                SimpleNamespace(
+                    character_id=i,
+                    display_name=f"魔修{i}",
+                    faction_name="魔道",
+                    realm_display="筑基前期",
+                    luck=i,
+                    soul=i * 2,
+                    bounty_soul=0,
+                )
+                for i in range(1, 31)
+            ],
+            robbery_page=1,
+        ),
         LeaderboardView(1, "power", []),
         LeaderboardView(1, "ladder", challenge_targets),
     ):
         _assert_component_limits(view)
+
+
+@pytest.mark.asyncio
+async def test_ladder_view_uses_previous_rank_button_and_select() -> None:
+    challenge_targets = [
+        SimpleNamespace(rank=i, display_name=f"修士{i}", realm_display="筑基前期", combat_power=1000 + i)
+        for i in range(6, 11)
+    ]
+    view = LeaderboardView(1, "ladder", challenge_targets)
+
+    button_labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+    assert "挑战前一位 #10 修士10" in button_labels
+    selects = _select_children(view)
+    assert len(selects) == 1
+    assert [option.value for option in selects[0].options] == [str(i) for i in range(6, 11)]
+
+
+@pytest.mark.asyncio
+async def test_demonic_faction_view_paginates_robbery_targets() -> None:
+    targets = [
+        SimpleNamespace(
+            character_id=i,
+            display_name=f"魔修{i}",
+            faction_name="魔道",
+            realm_display="筑基前期",
+            luck=i,
+            soul=i * 2,
+            bounty_soul=0,
+        )
+        for i in range(1, 31)
+    ]
+    view = FactionView(
+        1,
+        snapshot=SimpleNamespace(
+            faction_key="demonic",
+            faction_name="魔道",
+            faction_title="",
+        ),
+        targets=targets,
+        robbery_page=1,
+    )
+
+    selects = _select_children(view)
+    assert len(selects) == 1
+    assert [option.value for option in selects[0].options] == [str(i) for i in range(26, 31)]
+    buttons = {child.label: child for child in view.children if isinstance(child, discord.ui.Button)}
+    assert buttons["上一页"].disabled is False
+    assert buttons["下一页"].disabled is True
+    assert "2/2" in buttons

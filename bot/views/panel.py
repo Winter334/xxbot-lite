@@ -41,9 +41,13 @@ from bot.ui.sect import build_sect_directory_embed, build_sect_overview_embed, b
 from bot.ui.sect import build_sect_help_embed
 from bot.ui.spirit import build_spirit_panel_embed
 from bot.services.faction_service import FactionTarget
+from bot.services.ladder_service import ChallengeTarget
 
 if TYPE_CHECKING:
     from bot.main import XianBot
+
+
+ROBBERY_TARGETS_PER_PAGE = 25
 
 
 def _info_embed(title: str, description: str) -> discord.Embed:
@@ -78,6 +82,21 @@ async def _sync_snapshot(bot: XianBot, session, character) -> tuple:
         travel_minutes=bot.travel_service.current_travel_minutes(character),
     )
     return snapshot
+
+
+def _page_count(total_count: int, page_size: int) -> int:
+    return max(1, (total_count + page_size - 1) // page_size)
+
+
+def _clamp_page(page: int, *, total_count: int, page_size: int) -> int:
+    return min(max(0, page), _page_count(total_count, page_size) - 1)
+
+
+def _slice_page(items: list, *, page: int, page_size: int) -> list:
+    # 统一分页切片，避免刷新后页码越界。
+    clamped_page = _clamp_page(page, total_count=len(items), page_size=page_size)
+    start = clamped_page * page_size
+    return items[start : start + page_size]
 
 
 async def _load_active_character(bot: XianBot, user_id: int, display_name: str):
@@ -820,7 +839,7 @@ async def build_fate_rewrite_message(bot: XianBot, owner_user_id: int, display_n
     return build_fate_rewrite_embed(snapshot, result.message), None, broadcasts
 
 
-async def build_faction_message(bot: XianBot, owner_user_id: int, display_name: str):
+async def build_faction_message(bot: XianBot, owner_user_id: int, display_name: str, *, robbery_page: int = 0):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         character = creation.character
@@ -848,7 +867,7 @@ async def build_faction_message(bot: XianBot, owner_user_id: int, display_name: 
         )
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts
+    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets, robbery_page=robbery_page), broadcasts
 
 
 async def join_faction_message(bot: XianBot, owner_user_id: int, display_name: str, faction_key: str):
@@ -905,7 +924,14 @@ async def build_bounty_hunt_message(bot: XianBot, owner_user_id: int, display_na
     return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts
 
 
-async def build_robbery_message(bot: XianBot, owner_user_id: int, display_name: str, target_character_id: int):
+async def build_robbery_message(
+    bot: XianBot,
+    owner_user_id: int,
+    display_name: str,
+    target_character_id: int,
+    *,
+    robbery_page: int = 0,
+):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         actor = creation.character
@@ -936,7 +962,7 @@ async def build_robbery_message(bot: XianBot, owner_user_id: int, display_name: 
                 embed.add_field(name="战报截取", value=_battle_excerpt(result.battle, limit=6, mode="robbery"), inline=False)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts
+    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets, robbery_page=robbery_page), broadcasts
 
 
 async def build_sect_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -2057,17 +2083,21 @@ class SparInviteView(discord.ui.View):
 
 
 class FactionTargetSelect(discord.ui.Select):
-    def __init__(self, owner_user_id: int, *, mode: str, targets: list[FactionTarget]) -> None:
+    def __init__(self, owner_user_id: int, *, mode: str, targets: list[FactionTarget], page: int = 0) -> None:
         self.owner_user_id = owner_user_id
         self.mode = mode
+        self.page = page
+        page_targets = _slice_page(targets, page=page, page_size=ROBBERY_TARGETS_PER_PAGE)
         options = []
-        for target in targets[:25]:
+        for target in page_targets:
             if mode == "bounty":
                 description = f"{target.realm_display} · {target.faction_name} · 悬赏 {target.bounty_soul}"
             else:
                 description = f"{target.realm_display} · {target.faction_name} · 气运 {target.luck} · 器魂 {target.soul}"
             options.append(discord.SelectOption(label=target.display_name[:100], description=description[:100], value=str(target.character_id)))
         placeholder = "选择要讨伐的悬赏目标" if mode == "bounty" else "选择要劫掠的目标"
+        if mode == "robbery" and len(targets) > ROBBERY_TARGETS_PER_PAGE:
+            placeholder = f"{placeholder}（第 {page + 1}/{_page_count(len(targets), ROBBERY_TARGETS_PER_PAGE)} 页）"
         super().__init__(placeholder=placeholder, options=options, row=1, min_values=1, max_values=1)
 
     async def callback(self, interaction: discord.Interaction) -> None:
@@ -2079,16 +2109,23 @@ class FactionTargetSelect(discord.ui.Select):
         if self.mode == "bounty":
             embed, view, broadcasts = await build_bounty_hunt_message(bot, interaction.user.id, interaction.user.display_name, target_character_id)
         else:
-            embed, view, broadcasts = await build_robbery_message(bot, interaction.user.id, interaction.user.display_name, target_character_id)
+            embed, view, broadcasts = await build_robbery_message(
+                bot,
+                interaction.user.id,
+                interaction.user.display_name,
+                target_character_id,
+                robbery_page=self.page,
+            )
         await interaction.response.edit_message(embed=embed, view=view)
         await _send_broadcasts(bot, broadcasts)
 
 
 class FactionView(OwnerLockedView):
-    def __init__(self, owner_user_id: int, *, snapshot, targets: list[FactionTarget]) -> None:
+    def __init__(self, owner_user_id: int, *, snapshot, targets: list[FactionTarget], robbery_page: int = 0) -> None:
         super().__init__(owner_user_id)
         self.snapshot = snapshot
         self.targets = targets
+        self.robbery_page = _clamp_page(robbery_page, total_count=len(targets), page_size=ROBBERY_TARGETS_PER_PAGE)
         self._add_refresh_button()
         if snapshot.faction_key == "neutral":
             self._add_join_button("righteous", "加入正道", discord.ButtonStyle.success, row=0)
@@ -2105,14 +2142,51 @@ class FactionView(OwnerLockedView):
         self._add_board_button("demonic", "魔道榜", row=0)
         self._add_board_button("bounty", "悬赏榜", row=0)
         if targets:
-            self.add_item(FactionTargetSelect(owner_user_id, mode="robbery", targets=targets))
+            self.add_item(FactionTargetSelect(owner_user_id, mode="robbery", targets=targets, page=self.robbery_page))
+        if len(targets) > ROBBERY_TARGETS_PER_PAGE:
+            self._add_robbery_pagination_controls()
 
     def _add_refresh_button(self) -> None:
         button = discord.ui.Button(label="刷新", row=0, style=discord.ButtonStyle.secondary)
 
         async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
-            embed, view, broadcasts = await build_faction_message(bot, interaction.user.id, interaction.user.display_name)
+            embed, view, broadcasts = await build_faction_message(
+                bot,
+                interaction.user.id,
+                interaction.user.display_name,
+                robbery_page=self.robbery_page if self.snapshot.faction_key == "demonic" else 0,
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_robbery_pagination_controls(self) -> None:
+        page_count = _page_count(len(self.targets), ROBBERY_TARGETS_PER_PAGE)
+        self._add_robbery_page_button("上一页", self.robbery_page - 1, disabled=self.robbery_page <= 0, row=2)
+        self.add_item(
+            discord.ui.Button(
+                label=f"{self.robbery_page + 1}/{page_count}",
+                row=2,
+                style=discord.ButtonStyle.secondary,
+                disabled=True,
+            )
+        )
+        self._add_robbery_page_button("下一页", self.robbery_page + 1, disabled=self.robbery_page >= page_count - 1, row=2)
+
+    def _add_robbery_page_button(self, label: str, page: int, *, disabled: bool, row: int) -> None:
+        button = discord.ui.Button(label=label, row=row, style=discord.ButtonStyle.secondary, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction, target_page: int = page) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_faction_message(
+                bot,
+                interaction.user.id,
+                interaction.user.display_name,
+                robbery_page=target_page,
+            )
             await interaction.response.edit_message(embed=embed, view=view)
             await _send_broadcasts(bot, broadcasts)
 
@@ -2144,12 +2218,39 @@ class FactionView(OwnerLockedView):
         self.add_item(button)
 
 
+class LadderChallengeSelect(discord.ui.Select):
+    def __init__(self, owner_user_id: int, *, targets: list[ChallengeTarget], row: int = 4) -> None:
+        self.owner_user_id = owner_user_id
+        options = [
+            discord.SelectOption(
+                label=f"挑战 #{target.rank} {target.display_name}"[:100],
+                description=f"{target.realm_display} · 战力 {target.combat_power}"[:100],
+                value=str(target.rank),
+            )
+            for target in targets
+        ]
+        super().__init__(placeholder="选择当前可挑战的目标", options=options, row=row, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_user_id:
+            await interaction.response.send_message("这张面板并非为你而开。", ephemeral=True)
+            return
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        await run_private_ladder_sequence(
+            bot,
+            interaction,
+            owner_user_id=interaction.user.id,
+            display_name=interaction.user.display_name,
+            target_rank=int(self.values[0]),
+        )
+
+
 class LeaderboardView(OwnerLockedView):
     def __init__(
         self,
         owner_user_id: int,
         category: str,
-        challenge_targets: list,
+        challenge_targets: list[ChallengeTarget],
         *,
         result=None,
         challenger_snapshot=None,
@@ -2168,9 +2269,10 @@ class LeaderboardView(OwnerLockedView):
         self._add_category_button("righteous", "正道", category == "righteous", row=1)
         self._add_category_button("demonic", "魔道", category == "demonic", row=1)
         self._add_category_button("bounty", "悬赏", category == "bounty", row=2)
-        if category == "ladder":
-            for target in challenge_targets[:5]:
-                self._add_challenge_button(target.rank, target.display_name, row=3)
+        if category == "ladder" and challenge_targets:
+            self._add_previous_challenge_button(challenge_targets[-1], row=3)
+            if len(challenge_targets) > 1:
+                self.add_item(LadderChallengeSelect(owner_user_id, targets=challenge_targets, row=4))
 
     def _add_category_button(self, category: str, label: str, active: bool, *, row: int) -> None:
         style = discord.ButtonStyle.primary if active else discord.ButtonStyle.secondary
@@ -2186,10 +2288,14 @@ class LeaderboardView(OwnerLockedView):
         button.callback = callback
         self.add_item(button)
 
-    def _add_challenge_button(self, rank: int, display_name: str, *, row: int) -> None:
-        button = discord.ui.Button(label=f"挑战#{rank} {display_name[:4]}", row=row, style=discord.ButtonStyle.danger)
+    def _add_previous_challenge_button(self, target: ChallengeTarget, *, row: int) -> None:
+        button = discord.ui.Button(
+            label=f"挑战前一位 #{target.rank} {target.display_name[:4]}",
+            row=row,
+            style=discord.ButtonStyle.danger,
+        )
 
-        async def callback(interaction: discord.Interaction, target_rank: int = rank) -> None:
+        async def callback(interaction: discord.Interaction, target_rank: int = target.rank) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
             await run_private_ladder_sequence(
                 bot,
