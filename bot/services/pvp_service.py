@@ -70,10 +70,7 @@ class PvpService:
         self.arena_lock = asyncio.Lock()
 
     def can_pvp(self, character: Character, *, actor_label: str, action_name: str) -> tuple[bool, str | None]:
-        if character.is_retreating:
-            return False, f"{actor_label}仍在闭关，暂不可{action_name}。"
-        if character.is_traveling:
-            return False, f"{actor_label}仍在游历，暂不可{action_name}。"
+        # PVP 不改变闭关、游历等长期状态，避免玩家为切磋或擂台反复中断状态。
         return True, None
 
     def can_spar(self, character: Character, *, actor_label: str) -> tuple[bool, str | None]:
@@ -180,25 +177,6 @@ class PvpService:
 
         challenger.artifact.soul_shards -= status.stake_soul
         arena.pot_soul += status.stake_soul
-
-        defender_allowed, defender_reason = self.can_pvp(defender, actor_label="擂主", action_name="守擂")
-        if not defender_allowed:
-            arena.champion_character_id = challenger.id
-            arena.win_streak = 1
-            challenger.last_highlight_text = f"方才接手单擂台，当前擂池为 {arena.pot_soul} 器魂。"
-            defender.last_highlight_text = f"方才因无法应战而失了擂台，被 {challenger.player.display_name} 接手。"
-            if self.sect_service is not None:
-                self.sect_service.record_task_event(challenger, "pvp_arena")
-            return ArenaChallengeResult(
-                True,
-                f"擂主当前无法应战，判定弃擂。{challenger.player.display_name} 直接接过擂台，当前擂池为 {arena.pot_soul} 器魂。",
-                None,
-                challenger.player.display_name,
-                arena.stake_soul,
-                arena.pot_soul,
-                arena.win_streak,
-                True,
-            )
 
         challenger_snapshot = self.character_service.build_snapshot(challenger)
         defender_snapshot = self.character_service.build_snapshot(defender)
