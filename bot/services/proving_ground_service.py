@@ -73,7 +73,7 @@ from bot.data.spirits import (
 from bot.models.character import Character
 from bot.models.proving_ground_run import ProvingGroundRun
 from bot.services.combat_service import BattleResult, CombatService, CombatantSnapshot
-from bot.utils.time_utils import now_shanghai
+from bot.utils.time_utils import ensure_shanghai, now_shanghai
 
 
 # ---------------------------------------------------------------------------
@@ -537,7 +537,7 @@ class ProvingGroundService:
         if run.last_action_at is None:
             return False
         from datetime import timedelta
-        deadline = run.last_action_at + timedelta(hours=PG_RECOVERY_TIMEOUT_HOURS)
+        deadline = ensure_shanghai(run.last_action_at) + timedelta(hours=PG_RECOVERY_TIMEOUT_HOURS)
         return now_shanghai() > deadline
 
     # -----------------------------------------------------------------------
