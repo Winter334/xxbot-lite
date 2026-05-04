@@ -30,7 +30,11 @@ from bot.services.proving_ground_service import (
     ProvingGroundService,
 )
 from bot.ui.proving_ground import (
+    build_pg_affix_enhance_embed,
+    build_pg_affix_menu_embed,
     build_pg_affix_pick_embed,
+    build_pg_affix_replace_pick_embed,
+    build_pg_affix_replace_slot_embed,
     build_pg_build_embed,
     build_pg_combat_result_embed,
     build_pg_entry_embed,
@@ -38,6 +42,7 @@ from bot.ui.proving_ground import (
     build_pg_map_embed,
     build_pg_recovery_embed,
     build_pg_settlement_embed,
+    build_pg_spirit_menu_embed,
 )
 
 if TYPE_CHECKING:
@@ -312,6 +317,80 @@ async def _apply_affix_choice(
         entry = choices[choice_index]
         msg = pg_svc.apply_affix_pick(build, entry)
         run.build_json = pg_svc.serialize_build(build)
+        run.pending_affix_ops = max(0, run.pending_affix_ops - 1)
+        await session.commit()
+
+    return await _show_map(bot, user_id, display_name, run_id)
+
+
+async def _do_affix_enhance(
+    bot: XianBot,
+    user_id: int,
+    display_name: str,
+    run_id: int,
+    slot: int,
+) -> tuple[discord.Embed, discord.ui.View | None]:
+    """强化指定槽位的词条。"""
+    async with bot.session_factory() as session:
+        character = await _load_char(bot, session, user_id, display_name)
+        run = await session.get(ProvingGroundRun, run_id)
+        if run is None or run.character_id != character.id:
+            return _info_embed("🏛️ 错误", "运行不存在。"), None
+
+        pg_svc: ProvingGroundService = bot.proving_ground_service
+        build = pg_svc.deserialize_build(run.build_json)
+        msg = pg_svc.reroll_affix(build, slot)
+        run.build_json = pg_svc.serialize_build(build)
+        run.pending_affix_ops = max(0, run.pending_affix_ops - 1)
+        await session.commit()
+
+    return await _show_map(bot, user_id, display_name, run_id)
+
+
+async def _do_affix_replace(
+    bot: XianBot,
+    user_id: int,
+    display_name: str,
+    run_id: int,
+    new_entry,
+    replace_slot: int,
+) -> tuple[discord.Embed, discord.ui.View | None]:
+    """用新词条替换指定槽位。"""
+    async with bot.session_factory() as session:
+        character = await _load_char(bot, session, user_id, display_name)
+        run = await session.get(ProvingGroundRun, run_id)
+        if run is None or run.character_id != character.id:
+            return _info_embed("🏛️ 错误", "运行不存在。"), None
+
+        pg_svc: ProvingGroundService = bot.proving_ground_service
+        build = pg_svc.deserialize_build(run.build_json)
+
+        from bot.data.artifact_affixes import ArtifactAffixEntry
+        if 0 <= replace_slot < len(build.affixes):
+            build.affixes[replace_slot] = ArtifactAffixEntry(
+                slot=replace_slot,
+                affix_id=new_entry.affix_id,
+                rolls=new_entry.rolls,
+            )
+        run.build_json = pg_svc.serialize_build(build)
+        # 操作次数已在选择新词条时扣除，此处不再扣除
+        await session.commit()
+
+    return await _show_map(bot, user_id, display_name, run_id)
+
+
+async def _do_affix_abandon(
+    bot: XianBot,
+    user_id: int,
+    display_name: str,
+    run_id: int,
+) -> tuple[discord.Embed, discord.ui.View | None]:
+    """放弃词条操作（消耗操作次数但不做任何改变）。"""
+    async with bot.session_factory() as session:
+        character = await _load_char(bot, session, user_id, display_name)
+        run = await session.get(ProvingGroundRun, run_id)
+        if run is None or run.character_id != character.id:
+            return _info_embed("🏛️ 错误", "运行不存在。"), None
         run.pending_affix_ops = max(0, run.pending_affix_ops - 1)
         await session.commit()
 
@@ -663,7 +742,27 @@ class ProvingGroundMapView(_PGBaseView):
 
         async def on_affix(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
-            embed, view = await _do_affix_pick(bot, interaction.user.id, interaction.user.display_name, self.run_id)
+            async with bot.session_factory() as session:
+                run = await session.get(ProvingGroundRun, self.run_id)
+                if run is None:
+                    await interaction.response.send_message("运行不存在。", ephemeral=True)
+                    return
+                if run.pending_affix_ops <= 0:
+                    await interaction.response.send_message("没有剩余的词条操作次数。", ephemeral=True)
+                    return
+                build = bot.proving_ground_service.deserialize_build(run.build_json)
+            # 无词条且有空槽位：直接进入 3 选 1
+            if not build.affixes:
+                embed, view = await _do_affix_pick(
+                    bot, interaction.user.id, interaction.user.display_name, self.run_id,
+                )
+                await interaction.response.edit_message(embed=embed, view=view)
+                return
+            # 有词条：展示操作菜单（抽取/替换/强化）
+            embed = build_pg_affix_menu_embed(build, run.pending_affix_ops)
+            view = ProvingGroundAffixMenuView(
+                interaction.user.id, run_id=self.run_id, build=build,
+            )
             await interaction.response.edit_message(embed=embed, view=view)
 
         affix_btn.callback = on_affix
@@ -674,15 +773,25 @@ class ProvingGroundMapView(_PGBaseView):
 
         async def on_spirit(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
-            # 根据当前状态决定 roll 还是 reroll
             async with bot.session_factory() as session:
                 run = await session.get(ProvingGroundRun, self.run_id)
                 if run is None:
-                    await interaction.response.edit_message(embed=_info_embed("🏛️", "运行不存在。"), view=None)
+                    await interaction.response.send_message("运行不存在。", ephemeral=True)
+                    return
+                if run.pending_spirit_ops <= 0:
+                    await interaction.response.send_message("没有剩余的器灵操作次数。", ephemeral=True)
                     return
                 build = bot.proving_ground_service.deserialize_build(run.build_json)
-                action = "reroll" if build.spirit_power is not None else "roll"
-            embed, view = await _do_spirit_op(bot, interaction.user.id, interaction.user.display_name, self.run_id, action)
+            # 无器灵时直接 roll，不需要选择
+            if build.spirit_power is None:
+                embed, view = await _do_spirit_op(
+                    bot, interaction.user.id, interaction.user.display_name, self.run_id, "roll",
+                )
+                await interaction.response.edit_message(embed=embed, view=view)
+                return
+            # 有器灵时展示选择面板
+            embed = build_pg_spirit_menu_embed(build, run.pending_spirit_ops)
+            view = ProvingGroundSpiritMenuView(interaction.user.id, run_id=self.run_id)
             await interaction.response.edit_message(embed=embed, view=view)
 
         spirit_btn.callback = on_spirit
@@ -978,3 +1087,292 @@ class ProvingGroundInvestView(discord.ui.View):
 
         back_btn.callback = on_back
         self.add_item(back_btn)
+
+
+# ===========================================================================
+# View: 器灵操作菜单
+# ===========================================================================
+
+
+class ProvingGroundSpiritMenuView(_PGBaseView):
+    """器灵操作选择面板：重新抽取 / 强化当前 / 返回。"""
+
+    def __init__(self, owner_user_id: int, *, run_id: int) -> None:
+        super().__init__(owner_user_id, run_id=run_id)
+        self._add_buttons()
+
+    def _add_buttons(self) -> None:
+        # 重新抽取（替换）
+        roll_btn = discord.ui.Button(label="重新抽取", style=discord.ButtonStyle.primary, emoji="🆕")
+
+        async def on_roll(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view = await _do_spirit_op(
+                bot, interaction.user.id, interaction.user.display_name, self.run_id, "roll",
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+
+        roll_btn.callback = on_roll
+        self.add_item(roll_btn)
+
+        # 强化当前
+        reroll_btn = discord.ui.Button(label="强化当前", style=discord.ButtonStyle.success, emoji="⬆️")
+
+        async def on_reroll(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view = await _do_spirit_op(
+                bot, interaction.user.id, interaction.user.display_name, self.run_id, "reroll",
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+
+        reroll_btn.callback = on_reroll
+        self.add_item(reroll_btn)
+
+        # 返回地图
+        back_btn = discord.ui.Button(label="返回地图", style=discord.ButtonStyle.secondary, emoji="🗺️")
+
+        async def on_back(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view = await _show_map(bot, interaction.user.id, interaction.user.display_name, self.run_id)
+            await interaction.response.edit_message(embed=embed, view=view)
+
+        back_btn.callback = on_back
+        self.add_item(back_btn)
+
+
+# ===========================================================================
+# View: 词条操作菜单
+# ===========================================================================
+
+
+class ProvingGroundAffixMenuView(_PGBaseView):
+    """词条操作选择面板：抽取新词条 / 替换词条 / 强化词条 / 返回。"""
+
+    def __init__(self, owner_user_id: int, *, run_id: int, build: PGBuild) -> None:
+        super().__init__(owner_user_id, run_id=run_id)
+        self._add_buttons(build)
+
+    def _add_buttons(self, build: PGBuild) -> None:
+        # 抽取新词条（有空槽位时）
+        if len(build.affixes) < MAX_AFFIX_SLOTS:
+            new_btn = discord.ui.Button(label="抽取新词条", style=discord.ButtonStyle.primary, emoji="🆕")
+
+            async def on_new(interaction: discord.Interaction) -> None:
+                bot: XianBot = interaction.client  # type: ignore[assignment]
+                embed, view = await _do_affix_pick(
+                    bot, interaction.user.id, interaction.user.display_name, self.run_id,
+                )
+                await interaction.response.edit_message(embed=embed, view=view)
+
+            new_btn.callback = on_new
+            self.add_item(new_btn)
+
+        # 替换词条（满槽时）
+        if len(build.affixes) >= MAX_AFFIX_SLOTS:
+            replace_btn = discord.ui.Button(label="替换词条", style=discord.ButtonStyle.primary, emoji="🔄")
+
+            async def on_replace(interaction: discord.Interaction) -> None:
+                bot: XianBot = interaction.client  # type: ignore[assignment]
+                async with bot.session_factory() as session:
+                    character = await _load_char(bot, session, interaction.user.id, interaction.user.display_name)
+                    run = await session.get(ProvingGroundRun, self.run_id)
+                    if run is None or run.character_id != character.id:
+                        await interaction.response.send_message("运行不存在。", ephemeral=True)
+                        return
+                    pg_svc: ProvingGroundService = bot.proving_ground_service
+                    current_build = pg_svc.deserialize_build(run.build_json)
+                    choices = pg_svc.roll_affix_choices(3)
+                    # 扣除操作次数
+                    run.pending_affix_ops = max(0, run.pending_affix_ops - 1)
+                    await session.commit()
+                embed = build_pg_affix_replace_pick_embed(choices, current_build)
+                view = ProvingGroundAffixReplacePickView(
+                    interaction.user.id, run_id=self.run_id, choices=choices, build=current_build,
+                )
+                await interaction.response.edit_message(embed=embed, view=view)
+
+            replace_btn.callback = on_replace
+            self.add_item(replace_btn)
+
+        # 强化词条（有词条时）
+        if build.affixes:
+            enhance_btn = discord.ui.Button(label="强化词条", style=discord.ButtonStyle.success, emoji="⬆️")
+
+            async def on_enhance(interaction: discord.Interaction) -> None:
+                bot: XianBot = interaction.client  # type: ignore[assignment]
+                async with bot.session_factory() as session:
+                    run = await session.get(ProvingGroundRun, self.run_id)
+                    if run is None:
+                        await interaction.response.send_message("运行不存在。", ephemeral=True)
+                        return
+                    current_build = bot.proving_ground_service.deserialize_build(run.build_json)
+                embed = build_pg_affix_enhance_embed(current_build)
+                view = ProvingGroundAffixEnhanceView(
+                    interaction.user.id, run_id=self.run_id, affix_count=len(current_build.affixes),
+                )
+                await interaction.response.edit_message(embed=embed, view=view)
+
+            enhance_btn.callback = on_enhance
+            self.add_item(enhance_btn)
+
+        # 返回地图
+        back_btn = discord.ui.Button(label="返回地图", style=discord.ButtonStyle.secondary, emoji="🗺️")
+
+        async def on_back(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view = await _show_map(bot, interaction.user.id, interaction.user.display_name, self.run_id)
+            await interaction.response.edit_message(embed=embed, view=view)
+
+        back_btn.callback = on_back
+        self.add_item(back_btn)
+
+
+# ===========================================================================
+# View: 词条强化选择
+# ===========================================================================
+
+
+class ProvingGroundAffixEnhanceView(_PGBaseView):
+    """选择要强化的词条。"""
+
+    def __init__(self, owner_user_id: int, *, run_id: int, affix_count: int) -> None:
+        super().__init__(owner_user_id, run_id=run_id)
+        self._add_buttons(affix_count)
+
+    def _add_buttons(self, affix_count: int) -> None:
+        for slot in range(affix_count):
+            btn = discord.ui.Button(
+                label=f"强化词条 {slot + 1}",
+                style=discord.ButtonStyle.primary,
+                row=0 if slot < 3 else 1,
+            )
+
+            async def on_enhance(interaction: discord.Interaction, s: int = slot) -> None:
+                bot: XianBot = interaction.client  # type: ignore[assignment]
+                embed, view = await _do_affix_enhance(
+                    bot, interaction.user.id, interaction.user.display_name, self.run_id, s,
+                )
+                await interaction.response.edit_message(embed=embed, view=view)
+
+            btn.callback = on_enhance
+            self.add_item(btn)
+
+        # 返回
+        back_btn = discord.ui.Button(label="返回地图", style=discord.ButtonStyle.secondary, emoji="🗺️", row=2)
+
+        async def on_back(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view = await _show_map(bot, interaction.user.id, interaction.user.display_name, self.run_id)
+            await interaction.response.edit_message(embed=embed, view=view)
+
+        back_btn.callback = on_back
+        self.add_item(back_btn)
+
+
+# ===========================================================================
+# View: 词条替换 — 3 选 1
+# ===========================================================================
+
+
+class ProvingGroundAffixReplacePickView(_PGBaseView):
+    """替换模式：先从 3 个候选中选一个新词条。"""
+
+    def __init__(
+        self,
+        owner_user_id: int,
+        *,
+        run_id: int,
+        choices: list,
+        build: PGBuild,
+    ) -> None:
+        super().__init__(owner_user_id, run_id=run_id)
+        self.choices = choices
+        self.build = build
+        self._add_buttons()
+
+    def _add_buttons(self) -> None:
+        for i, affix in enumerate(self.choices):
+            btn = discord.ui.Button(label=f"候选 {i + 1}", style=discord.ButtonStyle.primary)
+
+            async def on_pick(interaction: discord.Interaction, idx: int = i) -> None:
+                selected = self.choices[idx]
+                # 重新读取最新 build
+                bot: XianBot = interaction.client  # type: ignore[assignment]
+                async with bot.session_factory() as session:
+                    run = await session.get(ProvingGroundRun, self.run_id)
+                    if run is None:
+                        await interaction.response.send_message("运行不存在。", ephemeral=True)
+                        return
+                    current_build = bot.proving_ground_service.deserialize_build(run.build_json)
+                embed = build_pg_affix_replace_slot_embed(selected, current_build)
+                view = ProvingGroundAffixReplaceSlotView(
+                    interaction.user.id, run_id=self.run_id, new_entry=selected,
+                    affix_count=len(current_build.affixes),
+                )
+                await interaction.response.edit_message(embed=embed, view=view)
+
+            btn.callback = on_pick
+            self.add_item(btn)
+
+        # 放弃替换
+        abandon_btn = discord.ui.Button(label="放弃替换", style=discord.ButtonStyle.danger, emoji="🗑️")
+
+        async def on_abandon(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            # 操作次数已在进入时扣除，直接返回地图
+            embed, view = await _show_map(bot, interaction.user.id, interaction.user.display_name, self.run_id)
+            await interaction.response.edit_message(embed=embed, view=view)
+
+        abandon_btn.callback = on_abandon
+        self.add_item(abandon_btn)
+
+
+# ===========================================================================
+# View: 词条替换 — 选择槽位
+# ===========================================================================
+
+
+class ProvingGroundAffixReplaceSlotView(_PGBaseView):
+    """选定新词条后，选择替换哪个旧词条。"""
+
+    def __init__(
+        self,
+        owner_user_id: int,
+        *,
+        run_id: int,
+        new_entry,
+        affix_count: int,
+    ) -> None:
+        super().__init__(owner_user_id, run_id=run_id)
+        self.new_entry = new_entry
+        self._add_buttons(affix_count)
+
+    def _add_buttons(self, affix_count: int) -> None:
+        for slot in range(affix_count):
+            btn = discord.ui.Button(
+                label=f"替换槽位 {slot + 1}",
+                style=discord.ButtonStyle.primary,
+                row=0 if slot < 3 else 1,
+            )
+
+            async def on_replace(interaction: discord.Interaction, s: int = slot) -> None:
+                bot: XianBot = interaction.client  # type: ignore[assignment]
+                embed, view = await _do_affix_replace(
+                    bot, interaction.user.id, interaction.user.display_name,
+                    self.run_id, self.new_entry, s,
+                )
+                await interaction.response.edit_message(embed=embed, view=view)
+
+            btn.callback = on_replace
+            self.add_item(btn)
+
+        # 放弃替换
+        abandon_btn = discord.ui.Button(label="放弃替换", style=discord.ButtonStyle.danger, emoji="🗑️", row=2)
+
+        async def on_abandon(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view = await _show_map(bot, interaction.user.id, interaction.user.display_name, self.run_id)
+            await interaction.response.edit_message(embed=embed, view=view)
+
+        abandon_btn.callback = on_abandon
+        self.add_item(abandon_btn)
