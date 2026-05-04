@@ -250,7 +250,7 @@ def _battle_excerpt(battle, limit: int = 6) -> str:
         lines.append(f"R{entry.round_no} {entry.text}")
     if len(battle.logs) > limit:
         lines.insert(0, f"*... 省略前 {len(battle.logs) - limit} 条 ...*")
-    if battle.round_no >= MAX_BATTLE_ROUNDS and not battle.winner:
+    if battle.reached_round_limit:
         lines.append("*道途漫漫，斗至极限而未分胜负。*")
     return "\n".join(lines) if lines else "战斗瞬间结束。"
 
