@@ -20,10 +20,12 @@ class CombatRoller:
 def test_spirit_power_pool_expands_to_twenty_entries() -> None:
     power_ids = {definition.power_id for definition in SPIRIT_POWER_DEFINITIONS}
 
-    assert len(SPIRIT_POWER_DEFINITIONS) == 20
+    assert len(SPIRIT_POWER_DEFINITIONS) == 23
     assert {"shisheng", "jueming", "xuanjia", "fanji", "guifeng", "niepan", "jinmai", "xuekuang"} <= power_ids
     assert {"fenmai", "luejie", "chengshi", "lingyong", "zhuying", "huajing", "duofeng", "zhenling"} <= power_ids
     assert {"chunsheng", "suijue", "mingche", "zhuifeng"} <= power_ids
+    # 新增神通
+    assert {"leifa", "shiyan", "fengdun"} <= power_ids
 
 
 @pytest.mark.asyncio

@@ -80,6 +80,14 @@ CATEGORY_STYLE = {
         "rest_title": "📜 悬赏名录",
         "footer": "此榜只列当前悬赏最高者。",
     },
+    "proving_ground": {
+        "icon": "🏛️",
+        "color": discord.Color.dark_teal(),
+        "viewer_title": "🪪 你的证道",
+        "top_title": "👑 证道绝顶",
+        "rest_title": "📜 证道名录",
+        "footer": "证道战场单次最高积分排序。",
+    },
 }
 
 
@@ -142,6 +150,12 @@ def build_leaderboard_embed(result: LeaderboardResult, viewer: CharacterSnapshot
                 f"阵营：`{viewer.faction_name}`",
                 f"当前悬赏：`{viewer.bounty_soul}`",
                 f"恶名：`{viewer.infamy}`",
+            ]
+        elif result.category == "proving_ground":
+            viewer_lines = [
+                f"境界：`{viewer.realm_display}`",
+                f"单次最高：`{viewer.pg_best_score}`",
+                f"通关次数：`{viewer.pg_completions}`",
             ]
         embed.add_field(name=style["viewer_title"], value="\n".join(viewer_lines), inline=False)
 

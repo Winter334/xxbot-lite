@@ -294,6 +294,146 @@ ARTIFACT_AFFIX_DEFINITIONS = (
             f"前 3 回合命中后获得 1 层疾锋，最多 3 层；每层提高 {rolls['agi_pct']}% 身法与 {rolls['damage_pct']}% 伤害"
         ),
     ),
+    # ── 灼烧流 ──
+    _define(
+        "zhuoyin",
+        "灼印",
+        "on_hit",
+        ("proc_pct", 30, 60),
+        description_builder=lambda rolls: (
+            f"命中灼烧中的目标时，有 {rolls['proc_pct']}% 概率追加 1 层灼痕"
+        ),
+    ),
+    _define(
+        "cuihuo",
+        "淬火",
+        "round_start",
+        ("atk_pct", 8, 18),
+        description_builder=lambda rolls: (
+            f"回合开始时，若目标处于灼烧状态，自身杀伐提高 {rolls['atk_pct']}%"
+        ),
+    ),
+    _define(
+        "fentian",
+        "焚天",
+        "before_attack",
+        ("damage_pct", 40, 90),
+        description_builder=lambda rolls: (
+            f"目标灼痕 ≥4 层时，本次伤害提高 {rolls['damage_pct']}%"
+        ),
+    ),
+    # ── 身法流 ──
+    _define(
+        "fengxing",
+        "风行",
+        "on_dodge",
+        ("damage_pct", 10, 22),
+        ("agi_pct", 8, 16),
+        description_builder=lambda rolls: (
+            f"闪避后获得 1 层风行，最多 5 层；每层提高 {rolls['damage_pct']}% 伤害与 {rolls['agi_pct']}% 身法"
+        ),
+    ),
+    _define(
+        "huanbu",
+        "幻步",
+        "battle_start",
+        ("dodge_pct", 15, 35),
+        description_builder=lambda rolls: (
+            f"整场闪避率提高 {rolls['dodge_pct']}%；闪避成功后下次攻击必定暴击"
+        ),
+    ),
+    _define(
+        "pokong",
+        "破空",
+        "on_crit",
+        ("proc_pct", 25, 55),
+        ("agi_scale_pct", 3, 7),
+        description_builder=lambda rolls: (
+            f"暴击时有 {rolls['proc_pct']}% 基础概率触发追击（额外一次攻击），"
+            f"身法差每 10% 额外提高 {rolls['agi_scale_pct']}% 概率"
+        ),
+    ),
+    # ── 暴击流 ──
+    _define(
+        "tianwei",
+        "天威",
+        "on_crit",
+        ("crit_damage_pct", 8, 18),
+        description_builder=lambda rolls: (
+            f"暴击后获得 1 层天威，最多 6 层；每层提高 {rolls['crit_damage_pct']}% 暴击伤害"
+        ),
+    ),
+    _define(
+        "leiyin",
+        "雷引",
+        "on_hit",
+        ("crit_pct", 5, 12),
+        ("stack_pct", 3, 7),
+        description_builder=lambda rolls: (
+            f"命中后有 {rolls['crit_pct']}% 概率提高下次暴击率；"
+            f"连续未暴击时每次递增 {rolls['stack_pct']}%"
+        ),
+    ),
+    _define(
+        "liekong",
+        "裂空",
+        "before_attack",
+        ("pierce_pct", 6, 14),
+        description_builder=lambda rolls: (
+            f"自身有天威层数时，每层无视 {rolls['pierce_pct']}% 减伤"
+        ),
+    ),
+    # ── 净化流 ──
+    _define(
+        "qingxin",
+        "清心",
+        "round_start",
+        ("proc_pct", 35, 70),
+        ("heal_pct", 2, 5),
+        description_builder=lambda rolls: (
+            f"每回合有 {rolls['proc_pct']}% 概率净化 1 层负面；"
+            f"净化成功后回复 {rolls['heal_pct']}% 最大生命"
+        ),
+    ),
+    _define(
+        "zhuanji",
+        "转机",
+        "on_be_hit",
+        ("proc_pct", 25, 55),
+        description_builder=lambda rolls: (
+            f"受击时若自身有负面层数，有 {rolls['proc_pct']}% 概率将 1 层负面转化为正面层数"
+        ),
+    ),
+    # ── 通用中立 ──
+    _define(
+        "guben",
+        "固本",
+        "battle_start",
+        ("shield_pct", 10, 25),
+        description_builder=lambda rolls: (
+            f"战斗开始时基于最大生命获得 {rolls['shield_pct']}% 的护盾"
+        ),
+    ),
+    _define(
+        "duoling",
+        "夺灵",
+        "on_hit",
+        ("proc_pct", 30, 60),
+        ("heal_pct", 2, 5),
+        description_builder=lambda rolls: (
+            f"命中后有 {rolls['proc_pct']}% 概率恢复 {rolls['heal_pct']}% 最大生命"
+        ),
+    ),
+    _define(
+        "xianji",
+        "先机",
+        "battle_start",
+        ("initiative_pct", 20, 50),
+        ("damage_pct", 25, 60),
+        description_builder=lambda rolls: (
+            f"先手概率提高 {rolls['initiative_pct']}%；首回合攻击伤害提高 {rolls['damage_pct']}%"
+        ),
+    ),
 )
 
 ARTIFACT_AFFIXES_BY_ID = {definition.affix_id: definition for definition in ARTIFACT_AFFIX_DEFINITIONS}

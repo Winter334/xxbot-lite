@@ -57,6 +57,11 @@ _ROWS = [
     ("dujie", 9, "渡劫", "mid", 2, "中期", "渡劫·中期", 34, 396230000, 2590000, 2070000, 1660000, 90),
     ("dujie", 9, "渡劫", "late", 3, "后期", "渡劫·后期", 35, 436110000, 2780000, 2230000, 1780000, 90),
     ("dujie", 9, "渡劫", "perfect", 4, "圆满", "渡劫·圆满", 36, 480000000, 3000000, 2400000, 1900000, 90),
+    # 伪仙 (过渡境界)
+    ("weixian", 10, "伪仙", "early", 1, "前期", "伪仙·前期", 37, 600000000, 4500000, 3600000, 2880000, 100),
+    ("weixian", 10, "伪仙", "mid", 2, "中期", "伪仙·中期", 38, 750000000, 5600000, 4480000, 3580000, 100),
+    ("weixian", 10, "伪仙", "late", 3, "后期", "伪仙·后期", 39, 930000000, 6900000, 5520000, 4420000, 100),
+    ("weixian", 10, "伪仙", "perfect", 4, "圆满", "伪仙·圆满", 40, 1200000000, 8500000, 6800000, 5440000, 100),
 ]
 
 REALM_STAGES = tuple(RealmStage(*row) for row in _ROWS)
@@ -79,5 +84,5 @@ def get_next_stage(stage: RealmStage) -> RealmStage | None:
 def get_stage_for_floor(floor: int) -> RealmStage:
     if floor <= 0:
         return REALM_BY_GLOBAL[1]
-    stage_index = min(36, ((floor - 1) // 25) + 1)
+    stage_index = min(len(REALM_STAGES), ((floor - 1) // 25) + 1)
     return REALM_BY_GLOBAL[stage_index]

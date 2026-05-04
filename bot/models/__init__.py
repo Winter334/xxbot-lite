@@ -4,7 +4,18 @@ from bot.models.base import Base
 from bot.models.character import Character
 from bot.models.ladder_record import LadderRecord
 from bot.models.player import Player
+from bot.models.proving_ground_run import ProvingGroundRun
 from bot.models.sect import Sect
 from bot.models.world_resource_site import WorldResourceSite
 
-__all__ = ["ArenaState", "Artifact", "Base", "Character", "LadderRecord", "Player", "Sect", "WorldResourceSite"]
+__all__ = [
+    "ArenaState",
+    "Artifact",
+    "Base",
+    "Character",
+    "LadderRecord",
+    "Player",
+    "ProvingGroundRun",
+    "Sect",
+    "WorldResourceSite",
+]

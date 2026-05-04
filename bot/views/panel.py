@@ -1464,6 +1464,13 @@ class PanelView(OwnerLockedView):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
+    @discord.ui.button(label="证道", style=discord.ButtonStyle.primary, emoji="🏛️", row=2)
+    async def proving_ground_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        from bot.views.proving_ground import build_pg_entry_message
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view = await build_pg_entry_message(bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
 
 class ReincarnationConfirmView(OwnerLockedView):
     def __init__(self, owner_user_id: int) -> None:
