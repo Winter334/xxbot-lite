@@ -99,6 +99,8 @@ class CharacterSnapshot:
     travel_atk_pct: int
     travel_def_pct: int
     travel_agi_pct: int
+    pg_best_score: int
+    pg_completions: int
 
 
 @dataclass(slots=True)
@@ -434,6 +436,8 @@ class CharacterService:
             travel_minutes=travel_minutes,
             travel_duration_minutes=character.travel_duration_minutes,
             travel_selected_duration_minutes=character.travel_selected_duration_minutes,
+            pg_best_score=character.pg_best_score or 0,
+            pg_completions=character.pg_completions or 0,
             travel_atk_pct=character.travel_atk_pct,
             travel_def_pct=character.travel_def_pct,
             travel_agi_pct=character.travel_agi_pct,
@@ -555,6 +559,9 @@ class CharacterService:
         character.last_pvp_reset_on = today
         character.reincarnation_count += 1
         character.last_reincarnated_on = today
+        character.pg_invest_stat_level = 0
+        character.pg_invest_affix_slots = 0
+        character.pg_invest_spirit_unlocked = False
         character.last_highlight_text = f"轮回一转，再得命格「{new_fate.name}」。"
         if character.artifact is not None:
             character.artifact.reinforce_level = 0

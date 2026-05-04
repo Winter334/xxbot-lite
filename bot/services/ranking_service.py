@@ -136,6 +136,19 @@ class RankingService:
                 ],
             )
 
+        if category == "proving_ground":
+            ordered = [char for char in characters if (char.pg_best_score or 0) > 0]
+            ordered.sort(key=lambda char: (-(char.pg_best_score or 0), -(char.pg_completions or 0), char.id))
+            return LeaderboardResult(
+                category,
+                "证道积分榜",
+                "证道战场单次最高积分排序。",
+                [
+                    LeaderboardEntry(index, char.player.display_name, f"最高 {char.pg_best_score}", f"通关 {char.pg_completions} 次")
+                    for index, char in enumerate(ordered[:limit], start=1)
+                ],
+            )
+
         if category == "realm_power" and viewer is not None:
             ordered = [char for char in characters if char.realm_key == viewer.realm_key]
             ordered.sort(key=lambda char: (-self.character_service.calculate_total_stats(char).combat_power, char.id))
@@ -209,6 +222,17 @@ class RankingService:
             honor_tags.append("曾入天榜")
         if character.reincarnation_count > 0:
             honor_tags.append(f"轮回 {character.reincarnation_count} 次")
+
+        # 证道战场荣誉
+        pg_top = max(characters, key=lambda char: char.pg_best_score or 0, default=None)
+        if pg_top and pg_top.id == character.id and (character.pg_best_score or 0) >= 200:
+            honor_tags.append("天心印记")
+        if (character.pg_red_dust_count or 0) >= 9:
+            honor_tags.append("九世红尘")
+
+        # 气运荣誉
+        if (character.luck or 0) >= 30000:
+            honor_tags.append("鸿运当头")
 
         faction_title = ""
         if character.faction == "righteous":

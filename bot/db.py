@@ -77,6 +77,18 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                 "spirit_pending_json" not in artifact_columns,
                 "spirit_refining_until" not in artifact_columns,
                 "spirit_refining_mode" not in artifact_columns,
+                # 证道战场
+                "pg_boss_kills_json" not in character_columns,
+                "pg_total_score" not in character_columns,
+                "pg_best_score" not in character_columns,
+                "pg_completions" not in character_columns,
+                "pg_red_dust_count" not in character_columns,
+                "dao_traces" not in character_columns,
+                "proving_ground_runs" not in table_names,
+                # 证道战场 -- 局外投资
+                "pg_invest_stat_level" not in character_columns,
+                "pg_invest_affix_slots" not in character_columns,
+                "pg_invest_spirit_unlocked" not in character_columns,
             )
 
         (
@@ -123,6 +135,18 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             needs_spirit_pending,
             needs_spirit_refining_until,
             needs_spirit_refining_mode,
+            # 证道战场
+            needs_pg_boss_kills_json,
+            needs_pg_total_score,
+            needs_pg_best_score,
+            needs_pg_completions,
+            needs_pg_red_dust_count,
+            needs_dao_traces,
+            needs_proving_ground_runs_table,
+            # 证道战场 -- 局外投资
+            needs_pg_invest_stat_level,
+            needs_pg_invest_affix_slots,
+            needs_pg_invest_spirit_unlocked,
         ) = await connection.run_sync(_collect_missing_columns)
         if needs_retreat_column:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN is_retreating BOOLEAN NOT NULL DEFAULT 0"))
@@ -213,6 +237,47 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_refining_until DATETIME"))
         if needs_spirit_refining_mode:
             await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_refining_mode VARCHAR(16)"))
+        # 证道战场
+        if needs_pg_boss_kills_json:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN pg_boss_kills_json TEXT NOT NULL DEFAULT '[]'"))
+        if needs_pg_total_score:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN pg_total_score BIGINT NOT NULL DEFAULT 0"))
+        if needs_pg_best_score:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN pg_best_score INTEGER NOT NULL DEFAULT 0"))
+        if needs_pg_completions:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN pg_completions INTEGER NOT NULL DEFAULT 0"))
+        if needs_pg_red_dust_count:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN pg_red_dust_count INTEGER NOT NULL DEFAULT 0"))
+        if needs_dao_traces:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN dao_traces BIGINT NOT NULL DEFAULT 0"))
+        if needs_proving_ground_runs_table:
+            await connection.execute(text("""
+                CREATE TABLE IF NOT EXISTS proving_ground_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    character_id INTEGER NOT NULL REFERENCES characters(id),
+                    status VARCHAR NOT NULL DEFAULT 'running',
+                    map_json TEXT NOT NULL DEFAULT '{}',
+                    current_node_id INTEGER NOT NULL DEFAULT 0,
+                    build_json TEXT NOT NULL DEFAULT '{}',
+                    pending_affix_ops INTEGER NOT NULL DEFAULT 0,
+                    pending_spirit_ops INTEGER NOT NULL DEFAULT 0,
+                    boss_type VARCHAR NOT NULL DEFAULT '',
+                    boss_snapshot_json TEXT NOT NULL DEFAULT '{}',
+                    score INTEGER NOT NULL DEFAULT 0,
+                    lingshi_invested BIGINT NOT NULL DEFAULT 0,
+                    last_action_at DATETIME,
+                    created_at DATETIME DEFAULT (datetime('now')),
+                    updated_at DATETIME DEFAULT (datetime('now'))
+                )
+            """))
+            await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_proving_ground_runs_character_id ON proving_ground_runs(character_id)"))
+        # 证道战场 -- 局外投资
+        if needs_pg_invest_stat_level:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN pg_invest_stat_level INTEGER NOT NULL DEFAULT 0"))
+        if needs_pg_invest_affix_slots:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN pg_invest_affix_slots INTEGER NOT NULL DEFAULT 0"))
+        if needs_pg_invest_spirit_unlocked:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN pg_invest_spirit_unlocked BOOLEAN NOT NULL DEFAULT 0"))
 
 
 async def init_models(engine: AsyncEngine) -> None:

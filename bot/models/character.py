@@ -68,6 +68,19 @@ class Character(Base, IdentityMixin, TimestampMixin):
     last_reincarnated_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     last_highlight_text: Mapped[str] = mapped_column(String(255), default="初入仙途，灵台未染。")
 
+    # 证道战场 (Proving Ground)
+    pg_boss_kills_json: Mapped[str] = mapped_column(Text, default="[]")
+    pg_total_score: Mapped[int] = mapped_column(BigInteger, default=0)
+    pg_best_score: Mapped[int] = mapped_column(Integer, default=0)
+    pg_completions: Mapped[int] = mapped_column(Integer, default=0)
+    pg_red_dust_count: Mapped[int] = mapped_column(Integer, default=0)
+    dao_traces: Mapped[int] = mapped_column(BigInteger, default=0)
+
+    # 证道战场 -- 局外永久投资
+    pg_invest_stat_level: Mapped[int] = mapped_column(Integer, default=0)
+    pg_invest_affix_slots: Mapped[int] = mapped_column(Integer, default=0)
+    pg_invest_spirit_unlocked: Mapped[bool] = mapped_column(Boolean, default=False)
+
     player = relationship("Player", back_populates="character")
     sect = relationship("Sect", back_populates="members", foreign_keys=[sect_id])
     artifact = relationship("Artifact", back_populates="character", uselist=False, cascade="all, delete-orphan")
@@ -104,3 +117,38 @@ class Character(Base, IdentityMixin, TimestampMixin):
         current.append(normalized)
         self.set_honor_tags(current)
         return True
+
+    # -- 证道战场 BOSS 击败记录 helpers --
+
+    _PG_BOSS_TYPES = ("preset", "strongest", "self")
+
+    def stored_pg_boss_kills(self) -> list[str]:
+        raw = getattr(self, "pg_boss_kills_json", "[]") or "[]"
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = []
+        if not isinstance(parsed, list):
+            return []
+        return [str(t).strip() for t in parsed if str(t).strip()]
+
+    def set_pg_boss_kills(self, kills: list[str]) -> None:
+        deduped: list[str] = []
+        for k in kills:
+            tag = str(k).strip()
+            if tag and tag not in deduped:
+                deduped.append(tag)
+        self.pg_boss_kills_json = json.dumps(deduped, ensure_ascii=False)
+
+    def add_pg_boss_kill(self, boss_type: str) -> bool:
+        current = self.stored_pg_boss_kills()
+        bt = boss_type.strip()
+        if not bt or bt in current:
+            return False
+        current.append(bt)
+        self.set_pg_boss_kills(current)
+        return True
+
+    def has_all_pg_boss_kills(self) -> bool:
+        kills = set(self.stored_pg_boss_kills())
+        return all(t in kills for t in self._PG_BOSS_TYPES)

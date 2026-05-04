@@ -20,6 +20,7 @@ from bot.views.panel import (
     run_private_tower_sequence,
     send_public_battle_animation,
 )
+from bot.views.proving_ground import build_pg_entry_message
 
 if TYPE_CHECKING:
     from bot.main import XianBot
@@ -35,6 +36,7 @@ LEADERBOARD_CHOICES = [
     app_commands.Choice(name="正道榜", value="righteous"),
     app_commands.Choice(name="魔道榜", value="demonic"),
     app_commands.Choice(name="悬赏榜", value="bounty"),
+    app_commands.Choice(name="证道积分榜", value="proving_ground"),
 ]
 
 PUBLIC_PANEL_DELETE_AFTER = 10 * 60
@@ -79,6 +81,11 @@ class XianCommands(commands.Cog):
     @app_commands.command(name="登塔", description="消耗 1 点气机，尝试冲击通天塔新高。")
     async def tower(self, interaction: discord.Interaction) -> None:
         await run_private_tower_sequence(self.bot, interaction, owner_user_id=interaction.user.id, display_name=interaction.user.display_name)
+
+    @app_commands.command(name="证道", description="踏入证道战场，以裸身面板闯关构筑（渡劫圆满可用）。")
+    async def proving_ground(self, interaction: discord.Interaction) -> None:
+        embed, view = await build_pg_entry_message(self.bot, interaction.user.id, interaction.user.display_name)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @app_commands.command(name="突破", description="尝试突破当前境界。")
     async def breakthrough(self, interaction: discord.Interaction) -> None:

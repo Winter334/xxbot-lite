@@ -21,6 +21,7 @@ from bot.services.pvp_service import PvpService
 from bot.services.ranking_service import RankingService
 from bot.services.sect_service import SectService
 from bot.services.spirit_service import SpiritService
+from bot.services.proving_ground_service import ProvingGroundService
 from bot.services.tower_service import TowerService
 from bot.services.travel_service import TravelService
 
@@ -47,6 +48,7 @@ class XianBot(commands.Bot):
         self.pvp_service = PvpService(self.character_service, self.combat_service, self.sect_service)
         self.ranking_service = RankingService(self.character_service, self.artifact_service, self.spirit_service, self.faction_service)
         self.travel_service = TravelService(self.fate_service, rng)
+        self.proving_ground_service = ProvingGroundService(self.combat_service, rng)
         self.broadcast_service = BroadcastService(settings)
 
     async def setup_hook(self) -> None:
