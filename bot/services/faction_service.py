@@ -33,6 +33,25 @@ INFAMY_BY_REALM = {
 
 ROBBERY_SOUL_STEAL_BASIS_POINTS = 1000
 ROBBERY_DEFEATED_SOUL_STEAL_BASIS_POINTS = 100
+ROBBERY_LINGSHI_STEAL_BASIS_POINTS = 1000
+ROBBERY_DEFEATED_LINGSHI_STEAL_BASIS_POINTS = 100
+
+ROBBERY_BONUS_LINGSHI_BY_REALM: dict[str, int] = {
+    "lianqi": 20,
+    "zhuji": 50,
+    "jiedan": 120,
+    "yuanying": 250,
+    "huashen": 400,
+    "lianxu": 600,
+    "heti": 900,
+    "dacheng": 1300,
+    "dujie": 2000,
+    "weixian": 3000,
+}
+"""劫掠成功时系统额外注入的灵石 bonus（按目标境界）。"""
+
+BOUNTY_LINGSHI_MULTIPLIER = 5
+"""悬赏讨伐成功后每点 bounty_soul 兑换灵石的倍率。"""
 
 
 @dataclass(slots=True)
@@ -141,6 +160,20 @@ class FactionService:
         current_time = ensure_shanghai(now or now_shanghai())
         return character.last_bounty_defeated_on == current_time.date()
 
+    def robbery_stolen_lingshi(self, target_lingshi: int, *, defeated_penalty: bool) -> int:
+        if target_lingshi <= 0:
+            return 0
+        basis_points = (
+            ROBBERY_DEFEATED_LINGSHI_STEAL_BASIS_POINTS if defeated_penalty else ROBBERY_LINGSHI_STEAL_BASIS_POINTS
+        )
+        return min(target_lingshi, max(1, target_lingshi * basis_points // 10_000))
+
+    def robbery_bonus_lingshi(self, target: Character, *, same_faction_halved: bool) -> int:
+        bonus = ROBBERY_BONUS_LINGSHI_BY_REALM.get(target.realm_key, 20)
+        if same_faction_halved:
+            bonus //= 2
+        return bonus
+
     def robbery_bonus_soul(self, target: Character, *, same_faction_halved: bool) -> int:
         bonus_soul = max(2, INFAMY_BY_REALM.get(target.realm_key, 3) // 2)
         if same_faction_halved:
@@ -233,7 +266,7 @@ class FactionService:
             return FactionActionResult(False, "你此番讨伐未能成事，悬赏仍在对方头上。", battle, target_name=target.player.display_name)
 
         reward_soul = target.bounty_soul or 0
-        reward_lingshi = reward_soul * 10
+        reward_lingshi = reward_soul * BOUNTY_LINGSHI_MULTIPLIER
         if hunter.artifact is not None and reward_soul > 0:
             hunter.artifact.soul_shards += reward_soul
         if reward_lingshi > 0:
@@ -289,9 +322,12 @@ class FactionService:
 
         target_soul = (target.artifact.soul_shards or 0) if target.artifact is not None else 0
         stolen_soul = self.robbery_stolen_soul(target_soul, defeated_penalty=defeated_penalty_applied)
+        target_lingshi = target.lingshi or 0
+        stolen_lingshi = self.robbery_stolen_lingshi(target_lingshi, defeated_penalty=defeated_penalty_applied)
         stolen_luck = max(0, (target.luck or 0) * 15 // 100)
         if same_faction_halved:
             stolen_soul //= 2
+            stolen_lingshi //= 2
             stolen_luck //= 2
 
         actual_stolen_soul = 0
@@ -299,12 +335,17 @@ class FactionService:
             target.artifact.soul_shards -= stolen_soul
             robber.artifact.soul_shards += stolen_soul
             actual_stolen_soul = stolen_soul
+        actual_stolen_lingshi = 0
+        if stolen_lingshi > 0:
+            target.lingshi -= stolen_lingshi
+            robber.lingshi += stolen_lingshi
+            actual_stolen_lingshi = stolen_lingshi
         if stolen_luck > 0:
             target.luck -= stolen_luck
             robber.luck += stolen_luck
 
         infamy_gain = INFAMY_BY_REALM.get(target.realm_key, 3)
-        # 魔道强化优先补系统额外器魂，不继续放大受害者被扣走的份额。
+        # 系统额外注入器魂和灵石 bonus
         bonus_soul = self.robbery_bonus_soul(
             target,
             same_faction_halved=same_faction_halved,
@@ -313,6 +354,11 @@ class FactionService:
         if bonus_soul > 0 and robber.artifact is not None:
             robber.artifact.soul_shards += bonus_soul
             actual_bonus_soul = bonus_soul
+        bonus_lingshi = self.robbery_bonus_lingshi(
+            target,
+            same_faction_halved=same_faction_halved,
+        )
+        robber.lingshi += bonus_lingshi
         robber.infamy += infamy_gain
         robber.last_highlight_text = f"方才劫掠 {target.player.display_name} 得手。"
         target.last_highlight_text = f"方才遭 {robber.player.display_name} 劫掠。"
@@ -323,6 +369,7 @@ class FactionService:
             "劫掠得手，所夺资源已尽归己身。",
             battle,
             soul_delta=actual_stolen_soul + actual_bonus_soul,
+            lingshi_delta=actual_stolen_lingshi + bonus_lingshi,
             luck_delta=stolen_luck,
             infamy_delta=infamy_gain,
             target_name=target.player.display_name,

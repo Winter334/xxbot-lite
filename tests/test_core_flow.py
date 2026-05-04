@@ -698,7 +698,7 @@ async def test_sect_bounty_task_tracks_righteous_hunt(session_factory, services)
         assert result.success is True
         assert _sect_task(completed_board, "bounty_1").status_key == "completed"
         assert reward_success is True
-        assert hunter.lingshi == 1520
+        assert hunter.lingshi == 1460  # bounty_soul(12) × 5 + 宗门任务(1400)
         assert hunter.artifact.soul_shards == 84
 
 
@@ -810,8 +810,8 @@ async def test_bounty_hunt_grants_lingshi(session_factory, services) -> None:
         await session.commit()
 
         assert result.success is True
-        assert result.lingshi_delta == 120
-        assert hunter.lingshi >= 120
+        assert result.lingshi_delta == 60  # bounty_soul(12) × 5
+        assert hunter.lingshi >= 60
 
 
 @pytest.mark.asyncio
