@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from bot.data.proving_ground import (
     PG_BOSS_DISPLAY_NAMES,
+    PG_BOSS_PRESET,
     PG_BOSS_SELF,
     PG_BOSS_STRONGEST,
     PG_INVEST_AFFIX_COSTS,
@@ -142,6 +143,9 @@ async def _do_enter(bot: XianBot, user_id: int, display_name: str) -> tuple[disc
                 run.boss_snapshot_json = json.dumps({"name": snap.name, "atk": snap.atk, "defense": snap.defense, "agility": snap.agility, "max_hp": snap.max_hp})
         elif run.boss_type == PG_BOSS_SELF:
             _, snap = pg_svc.generate_boss_from_character(character, bot.character_service, "心魔映射")
+            run.boss_snapshot_json = json.dumps({"name": snap.name, "atk": snap.atk, "defense": snap.defense, "agility": snap.agility, "max_hp": snap.max_hp})
+        elif run.boss_type == PG_BOSS_PRESET:
+            _, snap = pg_svc.generate_boss_preset()
             run.boss_snapshot_json = json.dumps({"name": snap.name, "atk": snap.atk, "defense": snap.defense, "agility": snap.agility, "max_hp": snap.max_hp})
 
         session.add(run)
