@@ -18,6 +18,7 @@ from bot.data.proving_ground import (
 from bot.data.spirits import SPIRIT_POWER_BY_ID
 from bot.services.combat_service import CombatService
 from bot.services.proving_ground_service import (
+    MAX_AFFIX_SLOTS,
     MapNode,
     PGBuild,
     PGEvent,
@@ -267,7 +268,116 @@ def _battle_excerpt(battle, limit: int = 6) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 词条选择
+# 词条操作菜单
+# ---------------------------------------------------------------------------
+
+
+def build_pg_affix_menu_embed(
+    build: PGBuild,
+    pending_affix_ops: int,
+) -> discord.Embed:
+    """词条操作选择菜单 — 展示当前词条 + 可选操作。"""
+    embed = discord.Embed(
+        title="📿 词条操作",
+        description=f"剩余操作次数：`{pending_affix_ops}`　当前词条：`{len(build.affixes)}` / `{MAX_AFFIX_SLOTS}` 槽",
+        color=_PG_COLOR_EVENT,
+    )
+    if build.affixes:
+        affix_lines: list[str] = []
+        for i, a in enumerate(build.affixes):
+            name, desc = _affix_display(a.affix_id, a.rolls)
+            affix_lines.append(f"`{i + 1}.` **{name}**　{desc}")
+        embed.add_field(name="当前词条", value="\n".join(affix_lines), inline=False)
+    else:
+        embed.add_field(name="当前词条", value="暂无词条", inline=False)
+
+    # 操作说明
+    ops: list[str] = []
+    if len(build.affixes) < MAX_AFFIX_SLOTS:
+        ops.append("🆕 **抽取新词条** — 从 3 个候选中选 1 个装入空槽位")
+    if len(build.affixes) >= MAX_AFFIX_SLOTS:
+        ops.append("🔄 **替换词条** — 先看 3 个候选，再选择替换哪个旧词条")
+    if build.affixes:
+        ops.append("⬆️ **强化词条** — 选择 1 个已有词条，重 roll 数值取高值")
+    if ops:
+        embed.add_field(name="可选操作", value="\n".join(ops), inline=False)
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# 词条强化选择
+# ---------------------------------------------------------------------------
+
+
+def build_pg_affix_enhance_embed(
+    build: PGBuild,
+) -> discord.Embed:
+    """选择要强化的词条。"""
+    embed = discord.Embed(
+        title="⬆️ 词条强化",
+        description="选择一个已有词条进行强化（重 roll 数值取高值）。",
+        color=_PG_COLOR_EVENT,
+    )
+    for i, a in enumerate(build.affixes):
+        name, desc = _affix_display(a.affix_id, a.rolls)
+        embed.add_field(
+            name=f"词条 {i + 1}：{name}",
+            value=desc,
+            inline=False,
+        )
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# 词条替换：3 选 1 后选槽位
+# ---------------------------------------------------------------------------
+
+
+def build_pg_affix_replace_pick_embed(
+    choices: list,
+    build: PGBuild,
+) -> discord.Embed:
+    """替换模式的 3 选 1 展示。"""
+    embed = discord.Embed(
+        title="🔄 词条替换 · 选择新词条",
+        description="先选择一个新词条，再决定替换哪个旧词条。",
+        color=_PG_COLOR_EVENT,
+    )
+    for i, affix in enumerate(choices, start=1):
+        name, desc = _affix_display(affix.affix_id, affix.rolls)
+        embed.add_field(
+            name=f"候选 {i}：{name}",
+            value=desc,
+            inline=False,
+        )
+    embed.set_footer(text="也可以放弃替换（本次操作机会将消耗）。")
+    return embed
+
+
+def build_pg_affix_replace_slot_embed(
+    new_affix_entry,
+    build: PGBuild,
+) -> discord.Embed:
+    """选定新词条后，展示旧词条列表供选择替换槽位。"""
+    new_name, new_desc = _affix_display(new_affix_entry.affix_id, new_affix_entry.rolls)
+    embed = discord.Embed(
+        title="🔄 词条替换 · 选择替换位",
+        description=f"即将装入：**{new_name}**　{new_desc}\n\n选择要替换的旧词条：",
+        color=_PG_COLOR_EVENT,
+    )
+    for i, a in enumerate(build.affixes):
+        name, desc = _affix_display(a.affix_id, a.rolls)
+        embed.add_field(
+            name=f"槽位 {i + 1}：{name}",
+            value=desc,
+            inline=False,
+        )
+    embed.set_footer(text="也可以放弃替换（本次操作机会将消耗）。")
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# 词条选择（新增模式）
 # ---------------------------------------------------------------------------
 
 
@@ -289,6 +399,36 @@ def build_pg_affix_pick_embed(
             value=desc,
             inline=False,
         )
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# 器灵操作菜单
+# ---------------------------------------------------------------------------
+
+
+def build_pg_spirit_menu_embed(
+    build: PGBuild,
+    pending_spirit_ops: int,
+) -> discord.Embed:
+    """器灵操作选择菜单。"""
+    embed = discord.Embed(
+        title="🔮 器灵操作",
+        description=f"剩余操作次数：`{pending_spirit_ops}`",
+        color=_PG_COLOR_EVENT,
+    )
+    if build.spirit_power is not None:
+        sp = build.spirit_power
+        name, desc = _spirit_display(sp.power_id, sp.rolls)
+        embed.add_field(name="当前器灵", value=f"**{name}**　{desc}", inline=False)
+        ops = (
+            "🆕 **重新抽取** — 随机获得新器灵，替换当前器灵\n"
+            "⬆️ **强化当前** — 重 roll 数值取高值，保留当前神通"
+        )
+    else:
+        embed.add_field(name="当前器灵", value="暂无器灵", inline=False)
+        ops = "🆕 **抽取器灵** — 随机获得一个器灵神通"
+    embed.add_field(name="可选操作", value=ops, inline=False)
     return embed
 
 
