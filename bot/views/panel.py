@@ -16,7 +16,9 @@ from bot.ui.panel import (
     _battle_excerpt,
     build_arena_battle_embed,
     build_arena_claim_embed,
+    build_arena_claim_notice_embed,
     build_arena_embed,
+    build_arena_open_notice_embed,
     build_breakthrough_embed,
     build_faction_action_embed,
     build_faction_embed,
@@ -25,6 +27,8 @@ from bot.ui.panel import (
     build_ladder_battle_embed,
     build_ladder_round_embed,
     build_panel_embed,
+    build_pvp_public_battle_frame,
+    build_pvp_summary_embed,
     build_spar_battle_embed,
     build_spar_request_embed,
     build_reincarnation_confirm_embed,
@@ -61,6 +65,62 @@ async def _refresh_resources(bot: XianBot, character) -> int:
 async def _send_broadcasts(bot: XianBot, broadcasts: list[str]) -> None:
     for content in broadcasts:
         await bot.broadcast_service.broadcast(bot, content)
+
+
+BATTLE_ANIMATION_WINDOW = 4
+BATTLE_ANIMATION_INTERVAL = 1.5
+
+
+async def send_public_battle_animation(
+    bot: XianBot,
+    channel: discord.abc.Messageable,
+    challenger_snapshot,
+    defender_snapshot,
+    battle,
+    *,
+    mode: str,
+    summary_lines: list[str] | None = None,
+) -> None:
+    """Send an animated battle report to a public channel.
+
+    Uses a sliding window of ``BATTLE_ANIMATION_WINDOW`` rounds, editing the
+    same message every ``BATTLE_ANIMATION_INTERVAL`` seconds.  The final edit
+    keeps the last window of rounds plus a summary block.
+    """
+    total_rounds = battle.rounds
+
+    # First frame
+    first_end = min(BATTLE_ANIMATION_WINDOW, total_rounds)
+    embed = build_pvp_public_battle_frame(
+        challenger_snapshot, defender_snapshot, battle,
+        mode=mode, visible_rounds=range(1, first_end + 1),
+    )
+    message = await channel.send(embed=embed)
+
+    # Animate remaining rounds
+    current_end = first_end
+    while current_end < total_rounds:
+        await asyncio.sleep(BATTLE_ANIMATION_INTERVAL)
+        current_end = min(current_end + 1, total_rounds)
+        window_start = max(1, current_end - BATTLE_ANIMATION_WINDOW + 1)
+        embed = build_pvp_public_battle_frame(
+            challenger_snapshot, defender_snapshot, battle,
+            mode=mode, visible_rounds=range(window_start, current_end + 1),
+        )
+        await message.edit(embed=embed)
+
+    # Final frame with summary
+    if total_rounds > 0:
+        await asyncio.sleep(BATTLE_ANIMATION_INTERVAL)
+    window_start = max(1, total_rounds - BATTLE_ANIMATION_WINDOW + 1)
+    final_embed = build_pvp_public_battle_frame(
+        challenger_snapshot, defender_snapshot, battle,
+        mode=mode,
+        visible_rounds=range(window_start, total_rounds + 1),
+        summary_lines=summary_lines,
+        final=True,
+    )
+    await message.edit(embed=final_embed)
 
 
 async def _sync_snapshot(bot: XianBot, session, character) -> tuple:
@@ -166,7 +226,7 @@ async def _build_arena_board_components(bot: XianBot, session, viewer, *, messag
     champion_snapshot = None
     if champion is not None:
         champion_snapshot = viewer_snapshot if champion.id == viewer.id else await _sync_snapshot(bot, session, champion)
-    embed = build_arena_embed(viewer_snapshot, arena_status, champion_snapshot, message=message)
+    embed = build_arena_embed(arena_status, champion_snapshot, message=message)
     view = ArenaBoardView(bot, has_champion=arena_status.has_champion)
     return embed, view
 
@@ -199,7 +259,8 @@ async def build_open_arena_message(
             embed, view = await _build_arena_board_components(bot, session, challenger, message=result.message)
             await session.commit()
         broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return embed, view, broadcasts, result.success
+    public_embed = build_arena_open_notice_embed(display_name, stake_soul) if result.success else None
+    return embed, view, broadcasts, result.success, public_embed
 
 
 async def build_arena_challenge_message(
@@ -217,16 +278,31 @@ async def build_arena_challenge_message(
                 await _refresh_resources(bot, defender_before)
             result = await bot.pvp_service.challenge_arena(session, challenger)
             broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+            battle_data = None
             if result.success and defender_before is not None:
                 challenger_snapshot = await _sync_snapshot(bot, session, challenger)
                 defender_snapshot = challenger_snapshot if defender_before.id == challenger.id else await _sync_snapshot(bot, session, defender_before)
                 arena_status, _ = await bot.pvp_service.get_arena_status(session)
-                embed = build_arena_battle_embed(challenger_snapshot, defender_snapshot, result)
-                view = ArenaBoardView(bot, has_champion=arena_status.has_champion)
+                # Ephemeral panel shows updated arena state
+                embed, view = await _build_arena_board_components(bot, session, challenger, message=result.message)
+                # Prepare data for public battle animation
+                if result.battle is not None:
+                    battle_data = {
+                        "challenger_snapshot": challenger_snapshot,
+                        "defender_snapshot": defender_snapshot,
+                        "battle": result.battle,
+                        "summary_lines": [
+                            f"模式：`擂台`",
+                            f"押注：`{result.stake_soul}`",
+                            f"擂池：`{result.pot_soul}`",
+                            f"当前擂主：**{result.current_champion_name or '暂无'}**",
+                            f"连胜：`{result.win_streak}`",
+                        ],
+                    }
             else:
                 embed, view = await _build_arena_board_components(bot, session, challenger, message=result.message)
             await session.commit()
-    return embed, view, broadcasts, result.success
+    return embed, view, broadcasts, result.success, battle_data
 
 
 async def build_arena_claim_message(
@@ -247,7 +323,8 @@ async def build_arena_claim_message(
             else:
                 embed, view = await _build_arena_board_components(bot, session, challenger, message=result.message)
             await session.commit()
-    return embed, view, broadcasts, result.success
+    public_embed = build_arena_claim_notice_embed(display_name, result.claimed_soul, result.win_streak) if result.success else None
+    return embed, view, broadcasts, result.success, public_embed
 
 
 async def build_spar_request_message(
@@ -305,7 +382,7 @@ async def build_spar_battle_message(
         broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
         if defender is None:
             await session.commit()
-            return _info_embed("切磋作废", "对方已不在此间，无法完成此次切磋。"), None, broadcasts
+            return broadcasts, None
 
         await _refresh_resources(bot, challenger)
         await _refresh_resources(bot, defender)
@@ -314,9 +391,19 @@ async def build_spar_battle_message(
         defender_snapshot = await _sync_snapshot(bot, session, defender)
         await session.commit()
 
-    if not result.success:
-        return _info_embed("当前无法切磋", result.message), None, broadcasts
-    return build_spar_battle_embed(challenger_snapshot, defender_snapshot, result), None, broadcasts
+    if not result.success or result.battle is None:
+        return broadcasts, None
+    battle_data = {
+        "challenger_snapshot": challenger_snapshot,
+        "defender_snapshot": defender_snapshot,
+        "battle": result.battle,
+        "summary_lines": [
+            "模式：`切磋`",
+            "名次：`不变`",
+            "奖励：`无`",
+        ],
+    }
+    return broadcasts, battle_data
 
 
 async def _load_tower_run(bot: XianBot, owner_user_id: int, display_name: str):
@@ -902,6 +989,7 @@ async def build_bounty_hunt_message(bot: XianBot, owner_user_id: int, display_na
         target = next((entry for entry in characters if entry.id == target_character_id), None)
         result = bot.faction_service.challenge_bounty(actor, target) if target is not None else None
         snapshot = await _sync_snapshot(bot, session, actor)
+        target_snapshot = await _sync_snapshot(bot, session, target) if target is not None else None
         refreshed = await bot.character_service.list_characters(session)
         targets = bot.faction_service.list_bounty_targets(refreshed) if actor.faction == "righteous" else []
         if result is None:
@@ -923,7 +1011,17 @@ async def build_bounty_hunt_message(bot: XianBot, owner_user_id: int, display_na
                 embed.add_field(name="战报截取", value=_battle_excerpt(result.battle, limit=6, mode="bounty"), inline=False)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts
+    # Public summary
+    public_summary = None
+    if result is not None and result.success and result.battle is not None and target_snapshot is not None:
+        summary_lines = [f"讨伐目标：**{result.target_name}**"]
+        if result.soul_delta:
+            summary_lines.append(f"赏金：`+{result.soul_delta}` 器魂")
+        public_summary = build_pvp_summary_embed(
+            snapshot, target_snapshot, result.battle,
+            mode="bounty", summary_lines=summary_lines,
+        )
+    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts, public_summary
 
 
 async def build_robbery_message(
@@ -941,6 +1039,7 @@ async def build_robbery_message(
         target = next((entry for entry in characters if entry.id == target_character_id), None)
         result = bot.faction_service.rob(actor, target) if target is not None else None
         snapshot = await _sync_snapshot(bot, session, actor)
+        target_snapshot = await _sync_snapshot(bot, session, target) if target is not None else None
         refreshed = await bot.character_service.list_characters(session)
         targets = bot.faction_service.list_robbery_targets(refreshed, actor) if actor.faction == "demonic" else []
         if result is None:
@@ -964,7 +1063,17 @@ async def build_robbery_message(
                 embed.add_field(name="战报截取", value=_battle_excerpt(result.battle, limit=6, mode="robbery"), inline=False)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets, robbery_page=robbery_page), broadcasts
+    # Public summary
+    public_summary = None
+    if result is not None and result.success and result.battle is not None and target_snapshot is not None:
+        summary_lines = [f"劫掠目标：**{result.target_name}**"]
+        if result.soul_delta:
+            summary_lines.append(f"掠得：`+{result.soul_delta}` 器魂")
+        public_summary = build_pvp_summary_embed(
+            snapshot, target_snapshot, result.battle,
+            mode="robbery", summary_lines=summary_lines,
+        )
+    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets, robbery_page=robbery_page), broadcasts, public_summary
 
 
 async def build_sect_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -1205,9 +1314,11 @@ async def run_private_ladder_sequence(
     display_name: str,
     target_rank: int,
 ) -> None:
-    embed, view, broadcasts = await build_challenge_message(bot, owner_user_id, display_name, target_rank)
+    embed, view, broadcasts, public_summary = await build_challenge_message(bot, owner_user_id, display_name, target_rank)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     await _send_broadcasts(bot, broadcasts)
+    if public_summary is not None:
+        await bot.broadcast_service.broadcast_embed(bot, public_summary)
 
 
 async def build_challenge_message(bot: XianBot, owner_user_id: int, display_name: str, target_rank: int):
@@ -1223,10 +1334,22 @@ async def build_challenge_message(bot: XianBot, owner_user_id: int, display_name
         if result.reached_top_rank:
             broadcasts.append(f"【论道绝巅】{challenger_snapshot.player_name} 已登临论道榜首。")
         await session.commit()
+    # Public summary for ladder challenge
+    public_summary = None
+    if result.battle is not None:
+        public_summary = build_pvp_summary_embed(
+            challenger_snapshot, defender_snapshot, result.battle,
+            mode="ladder",
+            summary_lines=[
+                f"{challenger_snapshot.player_name}：`#{result.challenger_rank_before}` → `#{result.challenger_rank_after}`",
+                f"{defender_snapshot.player_name}：`#{result.defender_rank_before}` → `#{result.defender_rank_after}`",
+            ],
+        )
     return (
         build_ladder_battle_embed(challenger_snapshot, defender_snapshot, result),
         LeaderboardView(owner_user_id, "ladder", targets, result=result, challenger_snapshot=challenger_snapshot, defender_snapshot=defender_snapshot),
         broadcasts,
+        public_summary,
     )
 
 
@@ -2164,9 +2287,18 @@ class ArenaBoardView(discord.ui.View):
         button = discord.ui.Button(label="攻擂", row=0, style=discord.ButtonStyle.danger, disabled=disabled)
 
         async def callback(interaction: discord.Interaction) -> None:
-            embed, view, broadcasts, success = await build_arena_challenge_message(self.bot, interaction.user.id, interaction.user.display_name)
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=not success)
+            embed, view, broadcasts, success, battle_data = await build_arena_challenge_message(
+                self.bot, interaction.user.id, interaction.user.display_name,
+            )
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             await _send_broadcasts(self.bot, broadcasts)
+            if battle_data is not None and interaction.channel is not None:
+                await send_public_battle_animation(
+                    self.bot, interaction.channel,
+                    battle_data["challenger_snapshot"], battle_data["defender_snapshot"],
+                    battle_data["battle"],
+                    mode="arena", summary_lines=battle_data["summary_lines"],
+                )
 
         button.callback = callback
         self.add_item(button)
@@ -2175,9 +2307,13 @@ class ArenaBoardView(discord.ui.View):
         button = discord.ui.Button(label="收擂离场", row=0, style=discord.ButtonStyle.success, disabled=disabled)
 
         async def callback(interaction: discord.Interaction) -> None:
-            embed, view, broadcasts, success = await build_arena_claim_message(self.bot, interaction.user.id, interaction.user.display_name)
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=not success)
+            embed, view, broadcasts, success, public_embed = await build_arena_claim_message(
+                self.bot, interaction.user.id, interaction.user.display_name,
+            )
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             await _send_broadcasts(self.bot, broadcasts)
+            if public_embed is not None:
+                await self.bot.broadcast_service.broadcast_embed(self.bot, public_embed)
 
         button.callback = callback
         self.add_item(button)
@@ -2237,18 +2373,27 @@ class SparInviteView(discord.ui.View):
             self.resolved = True
             self._release_pending()
             self.stop()
-            embed, _, broadcasts = await build_spar_battle_message(
+            broadcasts, battle_data = await build_spar_battle_message(
                 self.bot,
                 self.challenger_user_id,
                 self.challenger_display_name,
                 self.defender_user_id,
             )
+            # Edit the invitation message to a brief confirmation
             await interaction.response.edit_message(
-                content=f"<@{self.challenger_user_id}> 与 <@{self.defender_user_id}> 的切磋已结算。",
-                embed=embed,
+                content=f"<@{self.challenger_user_id}> 与 <@{self.defender_user_id}> 的切磋已开始。",
+                embed=_info_embed("切磋已接受", f"{self.challenger_display_name} 与 {self.defender_display_name} 即将交手。"),
                 view=None,
             )
             await _send_broadcasts(self.bot, broadcasts)
+            # Send public battle animation
+            if battle_data is not None and interaction.channel is not None:
+                await send_public_battle_animation(
+                    self.bot, interaction.channel,
+                    battle_data["challenger_snapshot"], battle_data["defender_snapshot"],
+                    battle_data["battle"],
+                    mode="spar", summary_lines=battle_data["summary_lines"],
+                )
 
         button.callback = callback
         self.add_item(button)
@@ -2295,9 +2440,9 @@ class FactionTargetSelect(discord.ui.Select):
         bot: XianBot = interaction.client  # type: ignore[assignment]
         target_character_id = int(self.values[0])
         if self.mode == "bounty":
-            embed, view, broadcasts = await build_bounty_hunt_message(bot, interaction.user.id, interaction.user.display_name, target_character_id)
+            embed, view, broadcasts, public_summary = await build_bounty_hunt_message(bot, interaction.user.id, interaction.user.display_name, target_character_id)
         else:
-            embed, view, broadcasts = await build_robbery_message(
+            embed, view, broadcasts, public_summary = await build_robbery_message(
                 bot,
                 interaction.user.id,
                 interaction.user.display_name,
@@ -2306,6 +2451,8 @@ class FactionTargetSelect(discord.ui.Select):
             )
         await interaction.response.edit_message(embed=embed, view=view)
         await _send_broadcasts(bot, broadcasts)
+        if public_summary is not None:
+            await bot.broadcast_service.broadcast_embed(bot, public_summary)
 
 
 class FactionView(OwnerLockedView):

@@ -674,68 +674,46 @@ def build_pvp_battle_embed(
 
 
 def build_arena_embed(
-    viewer: CharacterSnapshot,
     arena_status: ArenaStatus,
     champion: CharacterSnapshot | None,
     *,
     message: str | None = None,
 ) -> discord.Embed:
     if champion is None:
-        description = message or "当前单擂台无人镇守。输入 `/开擂 器魂:数量` 即可先坐上去。"
-        embed = discord.Embed(title="单擂台", description=description, color=discord.Color.blurple())
+        description = message or "石台空悬，四野无声。尚无修士登台坐镇，胆气足者可 `/开擂` 先拔头筹。"
+        embed = discord.Embed(title="擂台", description=description, color=discord.Color.blurple())
         embed.add_field(
-            name="当前状态",
+            name="🏺 擂台",
             value=(
-                "擂主：`暂无`\n"
-                "当前擂池：`0`\n"
-                "等额押注：`暂无`\n"
-                "当前连胜：`0`"
+                "擂主：`空缺`\n"
+                "擂池：`0`\n"
+                "押注：`—`\n"
+                "连胜：`0`"
             ),
             inline=True,
         )
+        embed.set_footer(text="风过石台，灵压尚温。")
     else:
-        description = message or f"{champion.player_name} 正在守擂。攻擂需等额押上 {arena_status.stake_soul} 器魂。"
-        embed = discord.Embed(title="单擂台", description=description, color=discord.Color.dark_gold())
+        description = message or f"**{champion.player_name}** 镇守擂台，灵威笼罩四方。攻擂需等额押上 `{arena_status.stake_soul}` 器魂。"
+        embed = discord.Embed(title="擂台", description=description, color=discord.Color.dark_gold())
         embed.add_field(
-            name="👑 当前擂主",
+            name="👑 擂主",
             value=(
                 f"**{champion.player_name}** · {champion.realm_display}\n"
-                f"称号：**{champion.title}**\n"
                 f"战力：`{format_big_number(champion.combat_power)}`"
             ),
             inline=True,
         )
-        viewer_tip = "你当前就是擂主，可随时收擂离场。" if viewer.character_id == champion.character_id else "你可点击攻擂，按当前押注等额入场。"
         embed.add_field(
-            name="🏺 擂台状态",
+            name="🏺 擂台",
             value=(
-                f"等额押注：`{arena_status.stake_soul}`\n"
-                f"当前擂池：`{arena_status.pot_soul}`\n"
-                f"当前连胜：`{arena_status.win_streak}`\n"
-                f"{viewer_tip}"
+                f"押注：`{arena_status.stake_soul}`\n"
+                f"擂池：`{arena_status.pot_soul}`\n"
+                f"连胜：`{arena_status.win_streak}`"
             ),
             inline=True,
         )
-    embed.add_field(
-        name="🧑 你",
-        value=(
-            f"当前器魂：`{viewer.soul_shards}`\n"
-            f"当前论道：`#{viewer.current_ladder_rank}`\n"
-            f"当前行藏：`{'游历中' if viewer.is_traveling else ('闭关中' if viewer.is_retreating else '可出战')}`"
-        ),
-        inline=True,
-    )
-    embed.add_field(
-        name="擂台规则",
-        value=(
-            "- 单公共擂台\n"
-            "- 攻擂需等额押注当前器魂\n"
-            "- 胜者接过擂台与全部擂池\n"
-            "- 擂主可随时收擂带走全部擂池\n"
-            "- 不改论道名次"
-        ),
-        inline=False,
-    )
+        embed.set_footer(text="擂台之上，器魂为注，胜者为王。")
     return embed
 
 
@@ -930,3 +908,161 @@ def _battle_excerpt(battle, limit: int, *, mode: str = "ladder") -> str:
 
 def _format_signed_pct(value: int) -> str:
     return f"{value:+d}%"
+
+
+# ---------------------------------------------------------------------------
+# Public notice / battle report / summary embeds (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def build_arena_open_notice_embed(name: str, stake_soul: int) -> discord.Embed:
+    """Public notice when someone opens the arena."""
+    embed = discord.Embed(
+        title="擂台 · 新擂",
+        description=(
+            f"**{name}** 押上 `{stake_soul}` 器魂，登上了单擂台。\n"
+            f"石台灵纹骤亮，杀意初显——有胆者可 `/攻擂` 一试。"
+        ),
+        color=discord.Color.dark_gold(),
+    )
+    embed.add_field(name="等额押注", value=f"`{stake_soul}`", inline=True)
+    embed.add_field(name="当前擂池", value=f"`{stake_soul}`", inline=True)
+    embed.set_footer(text="擂台已开，静候来者。")
+    return embed
+
+
+def build_arena_claim_notice_embed(name: str, claimed_soul: int, win_streak: int) -> discord.Embed:
+    """Public notice when the champion claims the arena."""
+    if win_streak > 0:
+        streak_text = f"连胜 `{win_streak}` 场后收擂离场"
+    else:
+        streak_text = "收擂离场"
+    embed = discord.Embed(
+        title="擂台 · 收擂",
+        description=(
+            f"**{name}** {streak_text}，带走了 `{claimed_soul}` 器魂。\n"
+            f"石台灵纹渐暗，杀意消散——擂台重归空寂。"
+        ),
+        color=discord.Color.blurple(),
+    )
+    embed.set_footer(text="擂台已空，待下一位登台者。")
+    return embed
+
+
+def build_pvp_public_battle_frame(
+    challenger: CharacterSnapshot,
+    defender: CharacterSnapshot,
+    battle,
+    *,
+    mode: str,
+    visible_rounds: range,
+    summary_lines: list[str] | None = None,
+    final: bool = False,
+) -> discord.Embed:
+    """Build one animation frame for a public PVP battle report.
+
+    ``visible_rounds`` controls which rounds appear in the report field
+    (sliding window).  When ``final=True`` the summary block is appended.
+    """
+    mode_titles = {
+        "arena": "擂台战",
+        "spar": "切磋",
+    }
+    title = mode_titles.get(mode, "对决")
+    color = discord.Color.green() if battle.challenger_won else discord.Color.orange()
+    embed = discord.Embed(
+        title=title,
+        description=f"**{challenger.player_name}** ⚔ **{defender.player_name}**",
+        color=color,
+    )
+
+    # Participant fields
+    challenger_hp = battle.challenger_hp_after
+    defender_hp = battle.defender_hp_after
+    if not final:
+        # During animation, show HP at the end of the last visible round
+        for action in battle.logs:
+            if action.round_no > visible_rounds.stop - 1:
+                break
+            if action.target_name == challenger.player_name:
+                challenger_hp = action.target_hp_after
+            elif action.target_name == defender.player_name:
+                defender_hp = action.target_hp_after
+
+    challenger_status = "💥 已败退" if challenger_hp <= 0 else f"❤ `{format_big_number(challenger_hp)} / {format_big_number(battle.challenger_max_hp)}`"
+    defender_status = "💥 已落败" if defender_hp <= 0 else f"❤ `{format_big_number(defender_hp)} / {format_big_number(battle.defender_max_hp)}`"
+
+    embed.add_field(
+        name=f"⚔ {challenger.player_name}",
+        value=f"{challenger.realm_display} · 战力 `{format_big_number(challenger.combat_power)}`\n{challenger_status}",
+        inline=True,
+    )
+    embed.add_field(
+        name=f"🛡 {defender.player_name}",
+        value=f"{defender.realm_display} · 战力 `{format_big_number(defender.combat_power)}`\n{defender_status}",
+        inline=True,
+    )
+
+    # Round-by-round report (sliding window)
+    round_blocks: list[str] = []
+    for round_no in visible_rounds:
+        lines = []
+        for action in battle.logs:
+            if action.round_no != round_no:
+                continue
+            lines.append(_format_pvp_log_line(action))
+        body = "\n".join(lines) if lines else "这一回合杀机未成。"
+        round_blocks.append(f"**第 {round_no} 回合**\n{body}")
+
+    if battle.reached_round_limit and final:
+        round_blocks.append(f"**终局判定**\n战至 {MAX_BATTLE_ROUNDS} 回合上限，主动挑战方判负。")
+
+    report_text = "\n\n".join(round_blocks) if round_blocks else "此战过于短促，未留战痕。"
+    # Truncate if too long for a single field
+    if len(report_text) > 1024:
+        report_text = report_text[:1020] + "…"
+    embed.add_field(name="📜 战报", value=report_text, inline=False)
+
+    # Summary (only on final frame)
+    if final:
+        overview = [
+            f"先手：`{_first_striker_name(battle)}`",
+            f"回合：`{battle.rounds}`",
+            f"胜者：**{battle.winner_name}**",
+            f"{challenger.player_name} 终局血量：`{format_big_number(battle.challenger_hp_after)}`",
+            f"{defender.player_name} 终局血量：`{format_big_number(battle.defender_hp_after)}`",
+        ]
+        if summary_lines:
+            overview.extend(summary_lines)
+        embed.add_field(name="⚖ 战斗总览", value="\n".join(overview), inline=False)
+
+    return embed
+
+
+def build_pvp_summary_embed(
+    challenger: CharacterSnapshot,
+    defender: CharacterSnapshot,
+    battle,
+    *,
+    mode: str,
+    summary_lines: list[str],
+) -> discord.Embed:
+    """Lightweight public summary for ladder / faction PVP (no round logs)."""
+    mode_titles = {
+        "ladder": "论道",
+        "bounty": "悬赏讨伐",
+        "robbery": "劫掠",
+    }
+    title = mode_titles.get(mode, "对决")
+    winner = challenger.player_name if battle.challenger_won else defender.player_name
+    loser = defender.player_name if battle.challenger_won else challenger.player_name
+    color = discord.Color.green() if battle.challenger_won else discord.Color.orange()
+    embed = discord.Embed(
+        title=title,
+        description=f"**{winner}** 胜 **{loser}**（{battle.rounds} 回合）",
+        color=color,
+    )
+    if summary_lines:
+        embed.add_field(name="结算", value="\n".join(summary_lines), inline=False)
+    embed.set_footer(text="胜负已分，道心各明。")
+    return embed
