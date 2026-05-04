@@ -18,6 +18,7 @@ from bot.views.panel import (
     build_spar_request_message,
     build_travel_message,
     run_private_tower_sequence,
+    send_public_battle_animation,
 )
 
 if TYPE_CHECKING:
@@ -125,24 +126,41 @@ class XianCommands(commands.Cog):
     @app_commands.command(name="开擂", description="押上器魂，成为当前公共擂台的擂主。")
     @app_commands.describe(soul="要押上的器魂数量")
     async def open_arena(self, interaction: discord.Interaction, soul: app_commands.Range[int, 1]) -> None:
-        await self._send_action_with_broadcasts(
-            interaction,
-            await build_open_arena_message(self.bot, interaction.user.id, interaction.user.display_name, soul),
+        embed, view, broadcasts, success, public_embed = await build_open_arena_message(
+            self.bot, interaction.user.id, interaction.user.display_name, soul,
         )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        for content in broadcasts:
+            await self.bot.broadcast_service.broadcast(self.bot, content)
+        if public_embed is not None:
+            await self.bot.broadcast_service.broadcast_embed(self.bot, public_embed)
 
     @app_commands.command(name="攻擂", description="按当前擂台的等额押注挑战擂主。")
     async def challenge_arena(self, interaction: discord.Interaction) -> None:
-        await self._send_action_with_broadcasts(
-            interaction,
-            await build_arena_challenge_message(self.bot, interaction.user.id, interaction.user.display_name),
+        embed, view, broadcasts, success, battle_data = await build_arena_challenge_message(
+            self.bot, interaction.user.id, interaction.user.display_name,
         )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        for content in broadcasts:
+            await self.bot.broadcast_service.broadcast(self.bot, content)
+        if battle_data is not None and interaction.channel is not None:
+            await send_public_battle_animation(
+                self.bot, interaction.channel,
+                battle_data["challenger_snapshot"], battle_data["defender_snapshot"],
+                battle_data["battle"],
+                mode="arena", summary_lines=battle_data["summary_lines"],
+            )
 
     @app_commands.command(name="收擂", description="当前擂主带走全部擂池并离场。")
     async def claim_arena(self, interaction: discord.Interaction) -> None:
-        await self._send_action_with_broadcasts(
-            interaction,
-            await build_arena_claim_message(self.bot, interaction.user.id, interaction.user.display_name),
+        embed, view, broadcasts, success, public_embed = await build_arena_claim_message(
+            self.bot, interaction.user.id, interaction.user.display_name,
         )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        for content in broadcasts:
+            await self.bot.broadcast_service.broadcast(self.bot, content)
+        if public_embed is not None:
+            await self.bot.broadcast_service.broadcast_embed(self.bot, public_embed)
 
     @app_commands.command(name="面板", description="查看其他修士的公开面板。")
     @app_commands.describe(user="要查看的道友")

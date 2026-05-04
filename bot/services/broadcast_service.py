@@ -15,3 +15,18 @@ class BroadcastService:
         channel = client.get_channel(self.settings.broadcast_channel_id)
         if isinstance(channel, discord.abc.Messageable):
             await channel.send(content)
+
+    async def broadcast_embed(
+        self,
+        client: discord.Client,
+        embed: discord.Embed,
+        *,
+        content: str | None = None,
+    ) -> discord.Message | None:
+        """Send an embed to the broadcast channel. Returns the sent message (for later edits)."""
+        if not self.settings.broadcast_enabled:
+            return None
+        channel = client.get_channel(self.settings.broadcast_channel_id)
+        if isinstance(channel, discord.abc.Messageable):
+            return await channel.send(content=content, embed=embed)
+        return None
