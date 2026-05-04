@@ -137,15 +137,39 @@ class RankingService:
             )
 
         if category == "proving_ground":
-            ordered = [char for char in characters if (char.pg_best_score or 0) > 0]
-            ordered.sort(key=lambda char: (-(char.pg_best_score or 0), -(char.pg_completions or 0), char.id))
+            ordered = [char for char in characters if (char.pg_total_score or 0) > 0]
+            ordered.sort(key=lambda char: (-(char.pg_total_score or 0), -(char.pg_completions or 0), char.id))
             return LeaderboardResult(
                 category,
                 "证道积分榜",
-                "证道战场单次最高积分排序。",
+                "证道战场累计积分排序。",
                 [
-                    LeaderboardEntry(index, char.player.display_name, f"最高 {char.pg_best_score}", f"通关 {char.pg_completions} 次")
+                    LeaderboardEntry(index, char.player.display_name, f"累计 {char.pg_total_score}", f"通关 {char.pg_completions} 次")
                     for index, char in enumerate(ordered[:limit], start=1)
+                ],
+            )
+
+        if category == "sect":
+            # 按宗门分组，计算每个宗门成员总战力
+            sect_power: dict[int, tuple[str, int, int]] = {}  # sect_id -> (name, total_power, member_count)
+            for char in characters:
+                if char.sect_id is None or char.sect is None:
+                    continue
+                sid = char.sect_id
+                cp = self.character_service.calculate_total_stats(char).combat_power
+                if sid in sect_power:
+                    name, total, count = sect_power[sid]
+                    sect_power[sid] = (name, total + cp, count + 1)
+                else:
+                    sect_power[sid] = (char.sect.name, cp, 1)
+            ranked = sorted(sect_power.values(), key=lambda t: (-t[1], t[0]))
+            return LeaderboardResult(
+                category,
+                "宗门排行榜",
+                "按宗门全体成员总战力排序。",
+                [
+                    LeaderboardEntry(index, name, f"总战力 {total_cp}", f"{count} 名门人")
+                    for index, (name, total_cp, count) in enumerate(ranked[:limit], start=1)
                 ],
             )
 
@@ -224,8 +248,8 @@ class RankingService:
             honor_tags.append(f"轮回 {character.reincarnation_count} 次")
 
         # 证道战场荣誉
-        pg_top = max(characters, key=lambda char: char.pg_best_score or 0, default=None)
-        if pg_top and pg_top.id == character.id and (character.pg_best_score or 0) >= 200:
+        pg_top = max(characters, key=lambda char: char.pg_total_score or 0, default=None)
+        if pg_top and pg_top.id == character.id and (character.pg_total_score or 0) >= 200:
             honor_tags.append("天心印记")
         if (character.pg_red_dust_count or 0) >= 9:
             honor_tags.append("九世红尘")

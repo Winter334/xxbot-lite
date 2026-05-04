@@ -37,6 +37,7 @@ LEADERBOARD_CHOICES = [
     app_commands.Choice(name="魔道榜", value="demonic"),
     app_commands.Choice(name="悬赏榜", value="bounty"),
     app_commands.Choice(name="证道积分榜", value="proving_ground"),
+    app_commands.Choice(name="宗门排行榜", value="sect"),
 ]
 
 PUBLIC_PANEL_DELETE_AFTER = 10 * 60

@@ -1017,6 +1017,8 @@ async def build_bounty_hunt_message(bot: XianBot, owner_user_id: int, display_na
         summary_lines = [f"讨伐目标：**{result.target_name}**"]
         if result.soul_delta:
             summary_lines.append(f"赏金：`+{result.soul_delta}` 器魂")
+        if result.lingshi_delta:
+            summary_lines.append(f"赏金：`+{result.lingshi_delta}` 灵石")
         public_summary = build_pvp_summary_embed(
             snapshot, target_snapshot, result.battle,
             mode="bounty", summary_lines=summary_lines,
@@ -1050,6 +1052,8 @@ async def build_robbery_message(
                 lines.append(f"目标：**{result.target_name}**")
             if result.soul_delta:
                 lines.append(f"器魂：`+{result.soul_delta}`")
+            if result.lingshi_delta:
+                lines.append(f"灵石：`+{result.lingshi_delta}`")
             if result.luck_delta:
                 lines.append(f"气运：`+{result.luck_delta}`")
             if result.infamy_delta:
@@ -1057,7 +1061,7 @@ async def build_robbery_message(
             if result.same_faction_halved:
                 lines.append("同为魔道，此次收益已减半。")
             if result.defeated_penalty_applied:
-                lines.append("你今日方被讨伐，直接掠夺器魂降至1%，额外器魂不受影响。")
+                lines.append("你今日方被讨伐，掠夺器魂与灵石降至1%，额外奖励不受影响。")
             embed = build_faction_action_embed(snapshot, "劫掠", result.message, lines, success=result.success)
             if result.battle is not None:
                 embed.add_field(name="战报截取", value=_battle_excerpt(result.battle, limit=6, mode="robbery"), inline=False)
@@ -1069,6 +1073,8 @@ async def build_robbery_message(
         summary_lines = [f"劫掠目标：**{result.target_name}**"]
         if result.soul_delta:
             summary_lines.append(f"掠得：`+{result.soul_delta}` 器魂")
+        if result.lingshi_delta:
+            summary_lines.append(f"掠得：`+{result.lingshi_delta}` 灵石")
         public_summary = build_pvp_summary_embed(
             snapshot, target_snapshot, result.battle,
             mode="robbery", summary_lines=summary_lines,

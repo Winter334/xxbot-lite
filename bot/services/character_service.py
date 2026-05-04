@@ -99,6 +99,7 @@ class CharacterSnapshot:
     travel_atk_pct: int
     travel_def_pct: int
     travel_agi_pct: int
+    pg_total_score: int
     pg_best_score: int
     pg_completions: int
 
@@ -436,6 +437,7 @@ class CharacterService:
             travel_minutes=travel_minutes,
             travel_duration_minutes=character.travel_duration_minutes,
             travel_selected_duration_minutes=character.travel_selected_duration_minutes,
+            pg_total_score=character.pg_total_score or 0,
             pg_best_score=character.pg_best_score or 0,
             pg_completions=character.pg_completions or 0,
             travel_atk_pct=character.travel_atk_pct,

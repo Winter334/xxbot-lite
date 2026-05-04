@@ -86,7 +86,15 @@ CATEGORY_STYLE = {
         "viewer_title": "🪪 你的证道",
         "top_title": "👑 证道绝顶",
         "rest_title": "📜 证道名录",
-        "footer": "证道战场单次最高积分排序。",
+        "footer": "证道战场累计积分排序。",
+    },
+    "sect": {
+        "icon": "🏯",
+        "color": discord.Color.gold(),
+        "viewer_title": "🪪 你的宗门",
+        "top_title": "👑 天下名宗",
+        "rest_title": "📜 宗门名录",
+        "footer": "按宗门全体成员总战力排序。",
     },
 }
 
@@ -154,8 +162,15 @@ def build_leaderboard_embed(result: LeaderboardResult, viewer: CharacterSnapshot
         elif result.category == "proving_ground":
             viewer_lines = [
                 f"境界：`{viewer.realm_display}`",
+                f"累计积分：`{viewer.pg_total_score}`",
                 f"单次最高：`{viewer.pg_best_score}`",
                 f"通关次数：`{viewer.pg_completions}`",
+            ]
+        elif result.category == "sect":
+            viewer_lines = [
+                f"宗门：`{viewer.sect_name or '无'}`",
+                f"境界：`{viewer.realm_display}`",
+                f"战力：`{viewer.combat_power}`",
             ]
         embed.add_field(name=style["viewer_title"], value="\n".join(viewer_lines), inline=False)
 
