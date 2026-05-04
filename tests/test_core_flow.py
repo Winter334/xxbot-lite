@@ -947,27 +947,47 @@ async def test_arena_open_challenge_claim_and_report(session_factory, services) 
 
 
 @pytest.mark.asyncio
-async def test_arena_forfeit_prevents_stuck_ring_when_defender_is_busy(session_factory, services) -> None:
+async def test_spar_allows_traveling_and_retreating_characters(session_factory, services) -> None:
     async with session_factory() as session:
-        defender = (await services.character.get_or_create_character(session, 2103, "闭关擂主")).character
-        challenger = (await services.character.get_or_create_character(session, 2104, "接擂者")).character
+        challenger = (await services.character.get_or_create_character(session, 2103, "游历切磋客")).character
+        defender = (await services.character.get_or_create_character(session, 2104, "闭关切磋客")).character
+        challenger.is_traveling = True
+        defender.is_retreating = True
+
+        result = services.pvp.spar(challenger, defender)
+        await session.commit()
+
+        assert result.success is True
+        assert result.battle is not None
+        assert challenger.is_traveling is True
+        assert defender.is_retreating is True
+
+
+@pytest.mark.asyncio
+async def test_arena_allows_traveling_and_retreating_characters(session_factory, services) -> None:
+    async with session_factory() as session:
+        defender = (await services.character.get_or_create_character(session, 2105, "闭关擂主")).character
+        challenger = (await services.character.get_or_create_character(session, 2106, "游历攻擂者")).character
         defender.artifact.soul_shards = 150
         challenger.artifact.soul_shards = 150
+        defender.is_retreating = True
+        challenger.is_traveling = True
+        _set_stage(challenger, "jiedan", "early")
+        _set_stage(defender, "zhuji", "early")
+        services.character.refresh_combat_power(challenger)
+        services.character.refresh_combat_power(defender)
 
         open_result = await services.pvp.open_arena(session, defender, 100)
-        defender.is_retreating = True
         challenge_result = await services.pvp.challenge_arena(session, challenger)
-        arena_status, champion = await services.pvp.get_arena_status(session)
         await session.commit()
 
         assert open_result.success is True
         assert challenge_result.success is True
-        assert challenge_result.battle is None
+        assert challenge_result.battle is not None
         assert challenge_result.champion_changed is True
-        assert challenge_result.current_champion_name == "接擂者"
-        assert arena_status.has_champion is True
-        assert champion is not None
-        assert champion.id == challenger.id
+        assert challenge_result.current_champion_name == "游历攻擂者"
+        assert challenger.is_traveling is True
+        assert defender.is_retreating is True
 
 
 @pytest.mark.asyncio
