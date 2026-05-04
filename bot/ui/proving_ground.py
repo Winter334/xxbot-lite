@@ -242,12 +242,23 @@ def build_pg_combat_result_embed(
     return embed
 
 
+def _format_log_entry(entry) -> str:
+    """将单条 ActionLog 格式化为可读文本。"""
+    prefix = f"R{entry.round_no}"
+    if entry.text:
+        return f"{prefix} {entry.text}"
+    if entry.dodged:
+        return f"{prefix} {entry.actor_name} 一击落空，被 {entry.target_name} 避开。"
+    crit = "暴击" if entry.critical else "命中"
+    return f"{prefix} {entry.actor_name} {crit} {entry.target_name}，造成 {format_big_number(entry.damage)} 伤害。"
+
+
 def _battle_excerpt(battle, limit: int = 6) -> str:
     """从战斗日志中提取最后几条记录。"""
     logs = battle.logs[-limit:] if len(battle.logs) > limit else battle.logs
     lines: list[str] = []
     for entry in logs:
-        lines.append(f"R{entry.round_no} {entry.text}")
+        lines.append(_format_log_entry(entry))
     if len(battle.logs) > limit:
         lines.insert(0, f"*... 省略前 {len(battle.logs) - limit} 条 ...*")
     if battle.reached_round_limit:
