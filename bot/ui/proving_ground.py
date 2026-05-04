@@ -220,11 +220,11 @@ def build_pg_combat_result_embed(
 
 def _battle_excerpt(battle, limit: int = 6) -> str:
     """从战斗日志中提取最后几条记录。"""
-    logs = battle.log[-limit:] if len(battle.log) > limit else battle.log
+    logs = battle.logs[-limit:] if len(battle.logs) > limit else battle.logs
     lines: list[str] = []
     for entry in logs:
         lines.append(f"R{entry.round_no} {entry.text}")
-    if len(battle.log) > limit:
+    if len(battle.logs) > limit:
         lines.insert(0, f"*... 省略前 {len(battle.log) - limit} 条 ...*")
     if battle.round_no >= MAX_BATTLE_ROUNDS and not battle.winner:
         lines.append("*道途漫漫，斗至极限而未分胜负。*")
