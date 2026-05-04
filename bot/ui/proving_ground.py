@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import discord
 
+from bot.data.artifact_affixes import ARTIFACT_AFFIXES_BY_ID
 from bot.data.proving_ground import (
     PG_BOSS_DISPLAY_NAMES,
     PG_ENTRY_QI_COST,
@@ -14,6 +15,7 @@ from bot.data.proving_ground import (
     PG_NODE_TYPE_NORMAL,
     PG_NODE_TYPE_START,
 )
+from bot.data.spirits import SPIRIT_POWER_BY_ID
 from bot.services.combat_service import CombatService
 from bot.services.proving_ground_service import (
     MapNode,
@@ -44,6 +46,28 @@ _PG_COLOR_SUCCESS = discord.Color.green()
 _PG_COLOR_FAILURE = discord.Color.orange()
 _PG_COLOR_EVENT = discord.Color.purple()
 _PG_COLOR_SETTLEMENT = discord.Color.gold()
+
+
+def _affix_display(affix_id: str, rolls: dict[str, int]) -> tuple[str, str]:
+    """返回 (中文名, 描述文本)。找不到定义时 fallback 到 affix_id。"""
+    defn = ARTIFACT_AFFIXES_BY_ID.get(affix_id)
+    if defn is None:
+        rolls_text = " / ".join(f"{k}: {v}" for k, v in rolls.items())
+        return affix_id, rolls_text
+    name = defn.name
+    desc = defn.describe(rolls)
+    return name, desc
+
+
+def _spirit_display(power_id: str, rolls: dict[str, int]) -> tuple[str, str]:
+    """返回 (中文名, 描述文本)。找不到定义时 fallback 到 power_id。"""
+    defn = SPIRIT_POWER_BY_ID.get(power_id)
+    if defn is None:
+        rolls_text = " / ".join(f"{k}: {v}" for k, v in rolls.items())
+        return power_id, rolls_text
+    name = defn.name
+    desc = defn.describe(rolls)
+    return name, desc
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +249,7 @@ def _battle_excerpt(battle, limit: int = 6) -> str:
     for entry in logs:
         lines.append(f"R{entry.round_no} {entry.text}")
     if len(battle.logs) > limit:
-        lines.insert(0, f"*... 省略前 {len(battle.log) - limit} 条 ...*")
+        lines.insert(0, f"*... 省略前 {len(battle.logs) - limit} 条 ...*")
     if battle.round_no >= MAX_BATTLE_ROUNDS and not battle.winner:
         lines.append("*道途漫漫，斗至极限而未分胜负。*")
     return "\n".join(lines) if lines else "战斗瞬间结束。"
@@ -248,15 +272,10 @@ def build_pg_affix_pick_embed(
         color=_PG_COLOR_EVENT,
     )
     for i, affix in enumerate(choices, start=1):
-        desc_parts: list[str] = []
-        if hasattr(affix, "description") and affix.description:
-            desc_parts.append(affix.description)
-        if hasattr(affix, "rolls") and affix.rolls:
-            rolls_text = " / ".join(f"{k}: {v}" for k, v in affix.rolls.items())
-            desc_parts.append(f"`{rolls_text}`")
+        name, desc = _affix_display(affix.affix_id, affix.rolls)
         embed.add_field(
-            name=f"选项 {i}：{affix.name if hasattr(affix, 'name') else affix.affix_id}",
-            value="\n".join(desc_parts) if desc_parts else "无详细描述",
+            name=f"选项 {i}：{name}",
+            value=desc,
             inline=False,
         )
     return embed
@@ -340,8 +359,8 @@ def build_pg_build_embed(
     if build.affixes:
         affix_lines: list[str] = []
         for a in build.affixes:
-            rolls_text = " / ".join(f"{k}:{v}" for k, v in a.rolls.items())
-            affix_lines.append(f"• {a.affix_id}　`{rolls_text}`")
+            name, desc = _affix_display(a.affix_id, a.rolls)
+            affix_lines.append(f"• **{name}**　{desc}")
         embed.add_field(name=f"📿 词条 ({len(build.affixes)}/5)", value="\n".join(affix_lines), inline=False)
     else:
         embed.add_field(name="📿 词条 (0/5)", value="暂无词条", inline=False)
@@ -349,8 +368,8 @@ def build_pg_build_embed(
     # 器灵
     if build.spirit_power is not None:
         sp = build.spirit_power
-        rolls_text = " / ".join(f"{k}:{v}" for k, v in sp.rolls.items())
-        embed.add_field(name="🔮 器灵神通", value=f"**{sp.power_id}**　`{rolls_text}`", inline=False)
+        name, desc = _spirit_display(sp.power_id, sp.rolls)
+        embed.add_field(name="🔮 器灵神通", value=f"**{name}**　{desc}", inline=False)
     else:
         embed.add_field(name="🔮 器灵神通", value="暂无器灵", inline=False)
 
@@ -410,7 +429,7 @@ def build_pg_settlement_embed(
             f"攻击：`{format_big_number(build.effective_atk())}`　"
             f"防御：`{format_big_number(build.effective_def())}`　"
             f"身法：`{format_big_number(build.effective_agi())}`\n"
-            f"词条 ×{affix_count}　器灵：{'✅ ' + spirit.power_id if spirit else '❌'}"
+            f"词条 ×{affix_count}　器灵：{'✅ ' + _spirit_display(spirit.power_id, spirit.rolls)[0] if spirit else '❌'}"
         ),
         inline=False,
     )
