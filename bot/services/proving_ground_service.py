@@ -614,24 +614,38 @@ class ProvingGroundService:
         name = defn.name if defn else entry.affix_id
         return f"装备词条「{name}」。"
 
-    def reroll_affix(self, build: PGBuild, slot: int) -> str:
-        """强化已有词条（重新 roll 数值取高值）。"""
+    def reroll_affix(self, build: PGBuild, slot: int) -> tuple[str, bool]:
+        """强化已有词条（重新 roll 数值取高值，保底至少提升一项）。
+
+        Returns:
+            (消息, 是否消耗操作次数)。满 roll 时不消耗。
+        """
         if slot < 0 or slot >= len(build.affixes):
-            return "无效的词条槽位。"
+            return "无效的词条槽位。", False
         old = build.affixes[slot]
         defn = self._get_affix_definition(old.affix_id)
         if defn is None:
-            return "词条定义未找到。"
-        new_rolls = defn.roll(self.rng)
-        # 取高值
-        merged = {
-            key: max(old.rolls.get(key, 0), new_rolls.get(key, 0))
-            for key in set(old.rolls) | set(new_rolls)
-        }
+            return "词条定义未找到。", False
+        # 满 roll 检测
+        maxed = all(
+            old.rolls.get(key, 0) >= high
+            for key, _low, high in defn.roll_ranges
+        )
+        if maxed:
+            return f"词条「{defn.name}」已臻极致，无法继续强化。", False
+        # 循环 reroll 直到至少一个 key 有提升
+        while True:
+            new_rolls = defn.roll(self.rng)
+            merged = {
+                key: max(old.rolls.get(key, 0), new_rolls.get(key, 0))
+                for key in set(old.rolls) | set(new_rolls)
+            }
+            if merged != dict(old.rolls):
+                break
         build.affixes[slot] = ArtifactAffixEntry(
             slot=slot, affix_id=old.affix_id, rolls=merged,
         )
-        return f"词条「{defn.name}」强化成功。"
+        return f"词条「{defn.name}」强化成功。", True
 
     # -----------------------------------------------------------------------
     # 构筑系统 — 器灵操作
@@ -646,22 +660,39 @@ class ProvingGroundService:
         name = power_defn.name if power_defn else power.power_id
         return f"获得器灵神通「{name}」。", power
 
-    def reroll_spirit(self, build: PGBuild) -> str:
-        """强化当前器灵（重 roll 数值取高）。"""
+    def reroll_spirit(self, build: PGBuild) -> tuple[str, bool]:
+        """强化当前器灵（重 roll 数值取高，保底至少提升一项）。
+
+        Returns:
+            (消息, 是否消耗操作次数)。满 roll 时不消耗。
+        """
         if build.spirit_power is None:
-            return "当前没有器灵。"
+            return "当前没有器灵。", False
         defn = self._get_power_definition(build.spirit_power.power_id)
         if defn is None:
-            return "器灵定义未找到。"
-        new_entry = defn.roll(build.spirit_tier or "mid", self.rng)
-        merged = {
-            key: max(build.spirit_power.rolls.get(key, 0), new_entry.rolls.get(key, 0))
-            for key in set(build.spirit_power.rolls) | set(new_entry.rolls)
-        }
+            return "器灵定义未找到。", False
+        tier = build.spirit_tier or "mid"
+        ranges = defn.roll_ranges_by_tier.get(tier, ())
+        # 满 roll 检测
+        maxed = all(
+            build.spirit_power.rolls.get(key, 0) >= high
+            for key, _low, high in ranges
+        )
+        if maxed:
+            return f"器灵「{defn.name}」已臻极致，无法继续强化。", False
+        # 循环 reroll 直到至少一个 key 有提升
+        while True:
+            new_entry = defn.roll(tier, self.rng)
+            merged = {
+                key: max(build.spirit_power.rolls.get(key, 0), new_entry.rolls.get(key, 0))
+                for key in set(build.spirit_power.rolls) | set(new_entry.rolls)
+            }
+            if merged != dict(build.spirit_power.rolls):
+                break
         build.spirit_power = SpiritPowerEntry(
             power_id=build.spirit_power.power_id, rolls=merged,
         )
-        return f"器灵「{defn.name}」强化成功。"
+        return f"器灵「{defn.name}」强化成功。", True
 
     # -----------------------------------------------------------------------
     # 构筑 → CombatantSnapshot
