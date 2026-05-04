@@ -2617,6 +2617,8 @@ class LeaderboardView(OwnerLockedView):
         self._add_category_button("righteous", "正道", category == "righteous", row=1)
         self._add_category_button("demonic", "魔道", category == "demonic", row=1)
         self._add_category_button("bounty", "悬赏", category == "bounty", row=2)
+        self._add_category_button("proving_ground", "证道", category == "proving_ground", row=2)
+        self._add_category_button("sect", "宗门", category == "sect", row=2)
         if category == "ladder" and challenge_targets:
             self._add_previous_challenge_button(challenge_targets[-1], row=3)
             if len(challenge_targets) > 1:

@@ -339,9 +339,10 @@ async def _do_affix_enhance(
 
         pg_svc: ProvingGroundService = bot.proving_ground_service
         build = pg_svc.deserialize_build(run.build_json)
-        msg = pg_svc.reroll_affix(build, slot)
-        run.build_json = pg_svc.serialize_build(build)
-        run.pending_affix_ops = max(0, run.pending_affix_ops - 1)
+        msg, consumed = pg_svc.reroll_affix(build, slot)
+        if consumed:
+            run.build_json = pg_svc.serialize_build(build)
+            run.pending_affix_ops = max(0, run.pending_affix_ops - 1)
         await session.commit()
 
     return await _show_map(bot, user_id, display_name, run_id)
@@ -418,11 +419,13 @@ async def _do_spirit_op(
 
         if action == "roll":
             msg, _ = pg_svc.roll_new_spirit(build)
+            consumed = True
         else:
-            msg = pg_svc.reroll_spirit(build)
+            msg, consumed = pg_svc.reroll_spirit(build)
 
-        run.build_json = pg_svc.serialize_build(build)
-        run.pending_spirit_ops = max(0, run.pending_spirit_ops - 1)
+        if consumed:
+            run.build_json = pg_svc.serialize_build(build)
+            run.pending_spirit_ops = max(0, run.pending_spirit_ops - 1)
         await session.commit()
 
     return await _show_map(bot, user_id, display_name, run_id)

@@ -23,6 +23,8 @@ from bot.data.proving_ground import (
     PG_STATUS_COMPLETED,
     PG_STATUS_FAILED,
 )
+from bot.data.artifact_affixes import ArtifactAffixEntry
+from bot.data.spirits import SpiritPowerEntry
 from bot.services.combat_service import CombatService
 from bot.services.proving_ground_service import (
     MAX_AFFIX_SLOTS,
@@ -62,8 +64,8 @@ class TestMapGeneration:
 
     def test_map_node_count_in_range(self, pg_service: ProvingGroundService):
         m = pg_service.generate_map()
-        # start + 6 layers * (2-3 nodes) + boss = 15~21
-        assert 15 <= len(m.nodes) <= 21
+        # start + 20 layers * (2-3 nodes) + boss = 42~62
+        assert 42 <= len(m.nodes) <= 62
 
     def test_map_layers_correct(self, pg_service: ProvingGroundService):
         m = pg_service.generate_map()
@@ -149,11 +151,31 @@ class TestBuildSystem:
         choices = pg_service.roll_affix_choices(1)
         pg_service.apply_affix_pick(build, choices[0])
         old_rolls = dict(build.affixes[0].rolls)
-        # reroll many times to ensure at least one value improves or stays
+        # reroll many times — guaranteed improvement each time
         for _ in range(10):
-            pg_service.reroll_affix(build, 0)
+            prev = dict(build.affixes[0].rolls)
+            msg, consumed = pg_service.reroll_affix(build, 0)
+            if consumed:
+                # at least one key must have improved
+                assert any(
+                    build.affixes[0].rolls[k] > prev[k] for k in prev
+                )
         for key in old_rolls:
             assert build.affixes[0].rolls[key] >= old_rolls[key]
+
+    def test_reroll_affix_maxed_does_not_consume(self, pg_service: ProvingGroundService):
+        """满 roll 词条强化应返回不消耗。"""
+        build = pg_service.create_initial_build()
+        choices = pg_service.roll_affix_choices(1)
+        pg_service.apply_affix_pick(build, choices[0])
+        # 人工将词条所有 key 设为上限
+        affix = build.affixes[0]
+        defn = pg_service._get_affix_definition(affix.affix_id)
+        maxed_rolls = {key: high for key, _low, high in defn.roll_ranges}
+        build.affixes[0] = ArtifactAffixEntry(slot=0, affix_id=affix.affix_id, rolls=maxed_rolls)
+        msg, consumed = pg_service.reroll_affix(build, 0)
+        assert not consumed
+        assert "极致" in msg
 
     def test_spirit_roll_and_reroll(self, pg_service: ProvingGroundService):
         build = pg_service.create_initial_build()
@@ -162,9 +184,28 @@ class TestBuildSystem:
         assert build.spirit_power is not None
         old_rolls = dict(build.spirit_power.rolls)
         for _ in range(10):
-            pg_service.reroll_spirit(build)
+            prev = dict(build.spirit_power.rolls)
+            msg, consumed = pg_service.reroll_spirit(build)
+            if consumed:
+                assert any(
+                    build.spirit_power.rolls[k] > prev[k] for k in prev
+                )
         for key in old_rolls:
             assert build.spirit_power.rolls[key] >= old_rolls[key]
+
+    def test_reroll_spirit_maxed_does_not_consume(self, pg_service: ProvingGroundService):
+        """满 roll 器灵强化应返回不消耗。"""
+        build = pg_service.create_initial_build()
+        pg_service.roll_new_spirit(build)
+        sp = build.spirit_power
+        defn = pg_service._get_power_definition(sp.power_id)
+        tier = build.spirit_tier or "mid"
+        ranges = defn.roll_ranges_by_tier[tier]
+        maxed_rolls = {key: high for key, _low, high in ranges}
+        build.spirit_power = SpiritPowerEntry(power_id=sp.power_id, rolls=maxed_rolls)
+        msg, consumed = pg_service.reroll_spirit(build)
+        assert not consumed
+        assert "极致" in msg
 
     def test_build_serialization_roundtrip(self, pg_service: ProvingGroundService):
         build = pg_service.create_initial_build()
@@ -206,12 +247,12 @@ class TestEnemyGeneration:
 
     def test_normal_enemy_layer5_has_affixes(self, pg_service: ProvingGroundService):
         _, enemy = pg_service.generate_normal_enemy(5)
-        assert len(enemy.affixes) == 2
+        assert len(enemy.affixes) == 1
 
     def test_elite_enemy_has_spirit_and_extra_affix(self, pg_service: ProvingGroundService):
         _, enemy = pg_service.generate_elite_enemy(3)
-        # layer 3 normal = 1 affix, elite = 1+1 = 2
-        assert len(enemy.affixes) == 2
+        # layer 3 normal = 0 affix, elite = 0+1 = 1
+        assert len(enemy.affixes) == 1
         assert enemy.spirit_power is not None
 
     def test_elite_stronger_than_normal(self, pg_service: ProvingGroundService):
