@@ -33,6 +33,7 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             character_columns = {column["name"] for column in inspector.get_columns("characters")} if "characters" in table_names else set()
             artifact_columns = {column["name"] for column in inspector.get_columns("artifacts")} if "artifacts" in table_names else set()
             resource_site_columns = {column["name"] for column in inspector.get_columns("world_resource_sites")} if "world_resource_sites" in table_names else set()
+            pg_run_columns = {column["name"] for column in inspector.get_columns("proving_ground_runs")} if "proving_ground_runs" in table_names else set()
             return (
                 "is_retreating" not in character_columns,
                 "retreat_mode" not in character_columns,
@@ -89,6 +90,8 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                 "pg_invest_stat_level" not in character_columns,
                 "pg_invest_affix_slots" not in character_columns,
                 "pg_invest_spirit_unlocked" not in character_columns,
+                # 证道战场 -- 命数机制
+                "proving_ground_runs" in table_names and "lives_remaining" not in pg_run_columns,
             )
 
         (
@@ -147,6 +150,8 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             needs_pg_invest_stat_level,
             needs_pg_invest_affix_slots,
             needs_pg_invest_spirit_unlocked,
+            # 证道战场 -- 命数机制
+            needs_pg_lives_remaining,
         ) = await connection.run_sync(_collect_missing_columns)
         if needs_retreat_column:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN is_retreating BOOLEAN NOT NULL DEFAULT 0"))
@@ -278,6 +283,9 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN pg_invest_affix_slots INTEGER NOT NULL DEFAULT 0"))
         if needs_pg_invest_spirit_unlocked:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN pg_invest_spirit_unlocked BOOLEAN NOT NULL DEFAULT 0"))
+        # 证道战场 -- 命数机制
+        if needs_pg_lives_remaining:
+            await connection.execute(text("ALTER TABLE proving_ground_runs ADD COLUMN lives_remaining INTEGER NOT NULL DEFAULT 3"))
 
 
 async def init_models(engine: AsyncEngine) -> None:

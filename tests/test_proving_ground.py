@@ -513,8 +513,135 @@ class TestNodeCombat:
         run.score = 0
         run.pending_affix_ops = 0
         run.pending_spirit_ops = 0
+        run.lives_remaining = 3
         result = pg_service.run_node_combat(node, build, "TestPlayer", run)
         assert result.success
         if result.victory:
             assert result.score_gained >= PG_SCORE_NORMAL_KILL
             assert run.score >= PG_SCORE_NORMAL_KILL
+
+
+# ---------------------------------------------------------------------------
+# 命数机制
+# ---------------------------------------------------------------------------
+
+
+class TestLivesMechanic:
+    """证道战场命数机制测试。"""
+
+    def _weak_build(self, pg_service: ProvingGroundService) -> PGBuild:
+        """构造极弱构筑确保战败。"""
+        build = pg_service.create_initial_build()
+        # 极低属性确保被一击秒杀
+        build.atk = 1
+        build.defense = 1
+        build.agility = 1
+        build.max_hp = 1
+        build.atk_pct_bonus = 0
+        build.def_pct_bonus = 0
+        build.agi_pct_bonus = 0
+        build.hp_pct_bonus = 0
+        return build
+
+    def _empty_run(self, lives: int = 3):
+        from bot.models.proving_ground_run import ProvingGroundRun
+        run = ProvingGroundRun()
+        run.score = 0
+        run.pending_affix_ops = 0
+        run.pending_spirit_ops = 0
+        run.lives_remaining = lives
+        return run
+
+    def test_lives_initial_three(self, pg_service: ProvingGroundService):
+        from bot.data.proving_ground import PG_INITIAL_LIVES
+        # PGEnterResult 不直接持久化，仅校验返回 run 上的命数
+        # 由于 enter_proving_ground 需要 character 角色对象，这里只校验常量与 run 字段默认值
+        from bot.models.proving_ground_run import ProvingGroundRun
+        run = ProvingGroundRun(lives_remaining=PG_INITIAL_LIVES)
+        assert run.lives_remaining == 3
+        assert PG_INITIAL_LIVES == 3
+
+    def test_lives_decrement_on_defeat(self, pg_service: ProvingGroundService):
+        """命数 > 1 时战败：扣 1 命数，触发复活，run 不结束。"""
+        build = self._weak_build(pg_service)
+        node = MapNode(node_id=1, layer=1, node_type=PG_NODE_TYPE_NORMAL, connections=())
+        run = self._empty_run(lives=3)
+        result = pg_service.run_node_combat(node, build, "TestPlayer", run)
+        assert result.success
+        # 极弱构筑必败
+        assert not result.victory
+        assert result.revived is True
+        assert result.lives_remaining == 2
+        assert run.lives_remaining == 2
+        assert result.run_ended is False
+        assert result.run_status == ""
+
+    def test_lives_zero_triggers_settle(self, pg_service: ProvingGroundService):
+        """命数 = 1 时战败：归零 + run_ended=True + status=FAILED。"""
+        build = self._weak_build(pg_service)
+        node = MapNode(node_id=1, layer=1, node_type=PG_NODE_TYPE_NORMAL, connections=())
+        run = self._empty_run(lives=1)
+        result = pg_service.run_node_combat(node, build, "TestPlayer", run)
+        assert result.success
+        assert not result.victory
+        assert result.revived is False
+        assert result.lives_remaining == 0
+        assert run.lives_remaining == 0
+        assert result.run_ended is True
+        assert result.run_status == PG_STATUS_FAILED
+
+    def test_revive_keeps_node(self, pg_service: ProvingGroundService):
+        """advance_to_node 在 revived=True 时不更新 current_node_id。"""
+        from bot.models.character import Character
+        from bot.models.proving_ground_run import ProvingGroundRun
+
+        # 生成确定性地图
+        pg_map = pg_service.generate_map()
+        start = pg_map.get_node(0)
+        assert start is not None and start.connections
+        target_id = start.connections[0]
+
+        build = self._weak_build(pg_service)
+
+        run = ProvingGroundRun()
+        run.character_id = 1
+        run.status = "running"
+        run.map_json = pg_service.serialize_map(pg_map)
+        run.current_node_id = 0
+        run.build_json = pg_service.serialize_build(build)
+        run.pending_affix_ops = 0
+        run.pending_spirit_ops = 0
+        run.boss_type = PG_BOSS_PRESET
+        run.boss_snapshot_json = "{}"
+        run.score = 0
+        run.lingshi_invested = 0
+        run.lives_remaining = 3
+        from bot.utils.time_utils import now_shanghai
+        run.last_action_at = now_shanghai()
+
+        # 用空 Character（advance_to_node 仅在战斗内取 build/snap）
+        character = Character()
+
+        # 找一个非 BOSS 的目标节点（必败），且确保 target 不是 BOSS
+        target = pg_map.get_node(target_id)
+        assert target is not None
+        # 跳过 EVENT 类型，需要确保是战斗节点
+        if target.node_type == PG_NODE_TYPE_EVENT:
+            # 找另一条 connections
+            for nid in start.connections:
+                cand = pg_map.get_node(nid)
+                if cand and cand.node_type in (PG_NODE_TYPE_NORMAL, PG_NODE_TYPE_ELITE):
+                    target_id = nid
+                    target = cand
+                    break
+
+        if target.node_type not in (PG_NODE_TYPE_NORMAL, PG_NODE_TYPE_ELITE):
+            pytest.skip("起点附近无战斗节点可测试")
+
+        result = pg_service.advance_to_node(run, target_id, character, "TestPlayer")
+        assert result.success
+        assert not result.victory
+        assert result.revived is True
+        # 关键断言：复活后 current_node_id 保持原值（0 = 起点）
+        assert run.current_node_id == 0
+        assert run.lives_remaining == 2
