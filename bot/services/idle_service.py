@@ -19,6 +19,7 @@ class IdleSettlement:
     gained_soul: int
     gained_luck: int
     retreat_mode: str
+    luck_honor_unlocked: bool = False
 
 
 class IdleService:
@@ -58,8 +59,8 @@ class IdleService:
             gained_cultivation = self._trim_soul_focus_cultivation(character, gained_cultivation)
         else:
             gained_soul = self._roll_idle_soul(character, cycles)
-        gained_luck = self._settle_luck(character, minutes)
-        return IdleSettlement(gained_cultivation, cycles, minutes, recovered_qi, gained_soul, gained_luck, retreat_mode)
+        gained_luck, luck_honor = self._settle_luck(character, minutes)
+        return IdleSettlement(gained_cultivation, cycles, minutes, recovered_qi, gained_soul, gained_luck, retreat_mode, luck_honor)
 
     def current_idle_minutes(self, character: Character, *, now=None) -> int:
         if not character.is_retreating:
@@ -136,10 +137,13 @@ class IdleService:
         character.cultivation = max(0, character.cultivation - (gained_cultivation - actual))
         return actual
 
-    def _settle_luck(self, character: Character, settled_minutes: int) -> int:
+    def _settle_luck(self, character: Character, settled_minutes: int) -> tuple[int, bool]:
+        """返回 (获得气运, 是否首次达到鸿运当头门槛)。"""
         if settled_minutes <= 0 or character.faction != "righteous":
-            return 0
+            return 0, False
         gained = settled_minutes * 30 // 60
+        old_luck = character.luck or 0
         if gained > 0:
             character.luck += gained
-        return gained
+        crossed = old_luck < 30000 <= (character.luck or 0)
+        return gained, crossed

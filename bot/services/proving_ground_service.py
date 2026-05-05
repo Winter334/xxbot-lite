@@ -67,7 +67,9 @@ from bot.data.proving_ground_enemies import (
 )
 from bot.data.spirits import (
     SPIRIT_POWER_DEFINITIONS,
+    SPIRIT_TIER_BY_KEY,
     SPIRIT_TIER_DEFINITIONS,
+    SPIRIT_TIER_ORDER,
     SpiritPowerEntry,
 )
 from bot.models.character import Character
@@ -277,6 +279,7 @@ class PGSettlement:
     boss_type: str
     boss_killed: bool
     honor_gained: str | None = None
+    broadcasts: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -693,6 +696,59 @@ class ProvingGroundService:
             power_id=build.spirit_power.power_id, rolls=merged,
         )
         return f"器灵「{defn.name}」强化成功。", True
+
+    def upgrade_spirit_tier(self, build: PGBuild) -> tuple[str, bool]:
+        """提升器灵品级一档。保留已有数值，低于新品级下限的 key 拉到下限。
+
+        Returns:
+            (消息, 是否消耗操作次数)。
+        """
+        if build.spirit_power is None:
+            return "当前没有器灵。", False
+        tier = build.spirit_tier or "mid"
+        idx = SPIRIT_TIER_ORDER.index(tier) if tier in SPIRIT_TIER_ORDER else 1
+        if idx >= len(SPIRIT_TIER_ORDER) - 1:
+            tier_name = SPIRIT_TIER_BY_KEY[tier].name if tier in SPIRIT_TIER_BY_KEY else tier
+            return f"器灵已为{tier_name}，无法继续提升品级。", False
+        new_tier = SPIRIT_TIER_ORDER[idx + 1]
+        new_tier_name = SPIRIT_TIER_BY_KEY[new_tier].name
+        build.spirit_tier = new_tier
+        # 保留已有数值，低于新品级下限的 key 拉到下限
+        defn = self._get_power_definition(build.spirit_power.power_id)
+        if defn is not None:
+            new_ranges = defn.roll_ranges_by_tier.get(new_tier, ())
+            adjusted = dict(build.spirit_power.rolls)
+            for key, low, _high in new_ranges:
+                if adjusted.get(key, 0) < low:
+                    adjusted[key] = low
+            build.spirit_power = SpiritPowerEntry(
+                power_id=build.spirit_power.power_id, rolls=adjusted,
+            )
+        return f"器灵品级提升至「{new_tier_name}」。", True
+
+    def roll_spirit_choices(self, count: int = 3) -> list[tuple[str, SpiritPowerEntry]]:
+        """随机生成 N 个候选器灵供玩家三选一。返回 (tier_key, SpiritPowerEntry) 列表。"""
+        choices: list[tuple[str, SpiritPowerEntry]] = []
+        used_ids: set[str] = set()
+        for _ in range(count):
+            tier, entry = self._roll_random_spirit()
+            for _ in range(5):
+                if entry.power_id not in used_ids:
+                    break
+                tier, entry = self._roll_random_spirit()
+            used_ids.add(entry.power_id)
+            choices.append((tier, entry))
+        return choices
+
+    def apply_spirit_pick(
+        self, build: PGBuild, tier: str, entry: SpiritPowerEntry,
+    ) -> str:
+        """玩家选择了一个器灵，写入构筑。"""
+        build.spirit_power = entry
+        build.spirit_tier = tier
+        defn = self._get_power_definition(entry.power_id)
+        name = defn.name if defn else entry.power_id
+        return f"装备器灵神通「{name}」。"
 
     # -----------------------------------------------------------------------
     # 构筑 → CombatantSnapshot
@@ -1449,10 +1505,19 @@ class ProvingGroundService:
     # 生命周期 — 结算
     # -----------------------------------------------------------------------
 
-    def settle_run(self, run: ProvingGroundRun, character: Character) -> PGSettlement:
+    def settle_run(
+        self,
+        run: ProvingGroundRun,
+        character: Character,
+        display_name: str = "",
+    ) -> PGSettlement:
         """结算一次运行，更新角色统计。"""
         victory = run.status == PG_STATUS_COMPLETED
         boss_killed = victory
+        broadcasts: list[str] = []
+
+        # 记录旧分数用于天心印记检测
+        old_total_score = character.pg_total_score
 
         # 更新角色统计
         character.pg_total_score += run.score
@@ -1464,6 +1529,15 @@ class ProvingGroundService:
         if character.pg_red_dust_count >= 9:
             if character.add_honor_tag("九世红尘"):
                 honor_gained = "九世红尘"
+                broadcasts.append(
+                    f"【九世红尘】{display_name} 历经九世红尘，道心终得圆满。"
+                )
+
+        # 天心印记: 累计积分首次达到 5000
+        if old_total_score < 5000 <= character.pg_total_score:
+            broadcasts.append(
+                f"【天心印记】{display_name} 证道积分已达五千，天心留印，万法归宗。"
+            )
 
         dao_traces = 0
         if victory:
@@ -1481,6 +1555,7 @@ class ProvingGroundService:
             boss_type=run.boss_type,
             boss_killed=boss_killed,
             honor_gained=honor_gained,
+            broadcasts=broadcasts,
         )
 
     # -----------------------------------------------------------------------

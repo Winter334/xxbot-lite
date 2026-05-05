@@ -95,6 +95,7 @@ SPIRIT_TIER_DEFINITIONS = (
     SpiritTierDefinition("supreme", "绝品", 2, (70, 105), (64, 98)),
 )
 SPIRIT_TIER_BY_KEY = {definition.key: definition for definition in SPIRIT_TIER_DEFINITIONS}
+SPIRIT_TIER_ORDER = ("low", "mid", "high", "peak", "supreme")
 
 
 def _tier_rolls(
