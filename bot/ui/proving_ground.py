@@ -590,8 +590,8 @@ def build_pg_settlement_embed(
     if settlement.dao_traces_gained > 0:
         embed.add_field(name="✨ 道痕", value=f"+{settlement.dao_traces_gained}", inline=True)
 
-    # BOSS
-    if settlement.boss_type:
+    # BOSS：仅在玩家抵达 BOSS 节点后才展示，避免中途阵亡时误以为被 BOSS 击败
+    if settlement.reached_boss and settlement.boss_type:
         boss_name = PG_BOSS_DISPLAY_NAMES.get(settlement.boss_type, settlement.boss_type)
         status = "已击败 ✅" if settlement.boss_killed else "未击败 ❌"
         embed.add_field(name="👹 BOSS", value=f"{boss_name}　{status}", inline=True)

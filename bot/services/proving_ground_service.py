@@ -278,6 +278,7 @@ class PGSettlement:
     dao_traces_gained: int
     boss_type: str
     boss_killed: bool
+    reached_boss: bool = False
     honor_gained: str | None = None
     broadcasts: list[str] = field(default_factory=list)
 
@@ -840,7 +841,7 @@ class ProvingGroundService:
 
     def generate_boss_preset(self) -> tuple[str, CombatantSnapshot]:
         """生成天劫化身 BOSS：固定高面板 + 5 满 roll 词条 + 高品阶器灵。"""
-        boss_mult = 1.5
+        boss_mult = 1.35
         affixes = []
         for i in range(PG_BOSS_PRESET_AFFIX_COUNT):
             defn = self.rng.choice(ARTIFACT_AFFIX_DEFINITIONS)
@@ -1548,12 +1549,26 @@ class ProvingGroundService:
             if run.boss_type:
                 character.add_pg_boss_kill(run.boss_type)
 
+        # 判断玩家是否曾抵达 BOSS 节点（影响结算面板是否展示 BOSS 字段）
+        reached_boss = False
+        try:
+            pg_map = PGMap.from_dict(json.loads(run.map_json))
+            current_node = pg_map.get_node(run.current_node_id) if run.current_node_id else None
+            if current_node and current_node.node_type == PG_NODE_TYPE_BOSS:
+                reached_boss = True
+        except (json.JSONDecodeError, KeyError, ValueError):
+            pass
+        # 胜利说明已击败 BOSS，必然抵达
+        if victory:
+            reached_boss = True
+
         return PGSettlement(
             victory=victory,
             total_score=run.score,
             dao_traces_gained=dao_traces,
             boss_type=run.boss_type,
             boss_killed=boss_killed,
+            reached_boss=reached_boss,
             honor_gained=honor_gained,
             broadcasts=broadcasts,
         )

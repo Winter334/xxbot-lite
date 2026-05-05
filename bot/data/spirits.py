@@ -371,37 +371,43 @@ SPIRIT_POWER_DEFINITIONS = (
         "leifa",
         "雷罚",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("thunder_pct", 30, 42), ("chain_pct", 10, 14)),
-            mid=(("thunder_pct", 42, 58), ("chain_pct", 14, 18)),
-            high=(("thunder_pct", 58, 76), ("chain_pct", 18, 24)),
-            peak=(("thunder_pct", 76, 96), ("chain_pct", 24, 30)),
-            supreme=(("thunder_pct", 96, 120), ("chain_pct", 30, 38)),
+            low=(("thunder_pct", 42, 58), ("chain_pct", 14, 20)),
+            mid=(("thunder_pct", 58, 78), ("chain_pct", 20, 28)),
+            high=(("thunder_pct", 78, 102), ("chain_pct", 28, 36)),
+            peak=(("thunder_pct", 102, 130), ("chain_pct", 36, 45)),
+            supreme=(("thunder_pct", 130, 160), ("chain_pct", 45, 56)),
         ),
-        description_builder=lambda rolls: f"暴击时追加 {rolls['thunder_pct']}% 雷罚伤害；连续暴击每次额外提高 {rolls['chain_pct']}%，未暴击时重置。",
+        description_builder=lambda rolls: (
+            f"暴击时追加 {rolls['thunder_pct']}% 雷罚伤害并叠加 1 层雷引；连续暴击每次额外提高 {rolls['chain_pct']}%，未暴击时重置。"
+            f"雷引达 3 层引爆，造成等同最大生命 {min(15, max(6, rolls['thunder_pct']//12))}% 的雷劫伤害并清除全部雷引。"
+        ),
     ),
     _define_power(
         "shiyan",
         "蚀焰",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_burn_pct", 12, 16), ("explode_pct", 80, 100)),
-            mid=(("per_burn_pct", 16, 22), ("explode_pct", 100, 130)),
-            high=(("per_burn_pct", 22, 28), ("explode_pct", 130, 165)),
-            peak=(("per_burn_pct", 28, 36), ("explode_pct", 165, 205)),
-            supreme=(("per_burn_pct", 36, 45), ("explode_pct", 205, 250)),
+            low=(("per_burn_pct", 18, 25), ("explode_pct", 130, 160)),
+            mid=(("per_burn_pct", 25, 33), ("explode_pct", 160, 200)),
+            high=(("per_burn_pct", 33, 42), ("explode_pct", 200, 245)),
+            peak=(("per_burn_pct", 42, 54), ("explode_pct", 245, 305)),
+            supreme=(("per_burn_pct", 54, 68), ("explode_pct", 305, 380)),
         ),
-        description_builder=lambda rolls: f"目标每层灼烧额外提高 {rolls['per_burn_pct']}% 伤害；灼烧达满层 (6) 时引爆，造成 {rolls['explode_pct']}% 神通伤害并清除灼烧。",
+        description_builder=lambda rolls: f"目标每层灼烧额外提高 {rolls['per_burn_pct']}% 伤害；灼烧达 4 层即引爆，造成 {rolls['explode_pct']}% 神通伤害，引爆后保留 2 层灼烧延续燃烧链。",
     ),
     _define_power(
         "fengdun",
         "风遁",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_wind_pct", 8, 11), ("agi_boost_pct", 5, 7)),
-            mid=(("per_wind_pct", 11, 15), ("agi_boost_pct", 7, 10)),
-            high=(("per_wind_pct", 15, 20), ("agi_boost_pct", 10, 13)),
-            peak=(("per_wind_pct", 20, 26), ("agi_boost_pct", 13, 17)),
-            supreme=(("per_wind_pct", 26, 33), ("agi_boost_pct", 17, 22)),
+            low=(("per_wind_pct", 12, 16), ("agi_boost_pct", 8, 11)),
+            mid=(("per_wind_pct", 16, 22), ("agi_boost_pct", 11, 15)),
+            high=(("per_wind_pct", 22, 30), ("agi_boost_pct", 15, 20)),
+            peak=(("per_wind_pct", 30, 40), ("agi_boost_pct", 20, 26)),
+            supreme=(("per_wind_pct", 40, 52), ("agi_boost_pct", 26, 34)),
         ),
-        description_builder=lambda rolls: f"闪避后叠加风遁层数；每层提高伤害 {rolls['per_wind_pct']}% 并提升身法 {rolls['agi_boost_pct']}%；受击命中时清除所有风遁层数。",
+        description_builder=lambda rolls: (
+            f"闪避后叠加 1 层风遁（上限 8）；每层提高伤害 {rolls['per_wind_pct']}% 并提升身法 {rolls['agi_boost_pct']}%；"
+            f"受击命中时仅消散 1 层；满 5 层时下次攻击必定暴击且伤害额外 +50%。"
+        ),
     ),
 )
 SPIRIT_POWER_BY_ID = {definition.power_id: definition for definition in SPIRIT_POWER_DEFINITIONS}
