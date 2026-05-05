@@ -22,6 +22,9 @@ class ProvingGroundRun(Base, IdentityMixin, TimestampMixin):
     boss_snapshot_json: Mapped[str] = mapped_column(Text, default="{}")
     score: Mapped[int] = mapped_column(Integer, default=0)
     lingshi_invested: Mapped[int] = mapped_column(BigInteger, default=0)
+    lives_remaining: Mapped[int] = mapped_column(
+        Integer, default=3, server_default="3", nullable=False,
+    )
     last_action_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None,
     )

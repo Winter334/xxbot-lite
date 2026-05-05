@@ -27,6 +27,7 @@ from bot.data.proving_ground import (
     PG_ELITE_REWARD_AFFIX_OPS,
     PG_ELITE_REWARD_SPIRIT_OPS,
     PG_ENTRY_QI_COST,
+    PG_INITIAL_LIVES,
     PG_INVEST_AFFIX_COSTS,
     PG_INVEST_AFFIX_SLOT_MAX,
     PG_INVEST_SPIRIT_COST,
@@ -233,6 +234,9 @@ class PGNodeResult:
     spirit_ops_gained: int = 0
     # 事件结果
     event: PGEvent | None = None
+    # 命数 / 复活
+    revived: bool = False
+    lives_remaining: int = 0
     # run 是否结束
     run_ended: bool = False
     run_status: str = ""
@@ -945,15 +949,36 @@ class ProvingGroundService:
             run.pending_affix_ops += affix_ops
             run.pending_spirit_ops += spirit_ops
 
-        run_ended = not victory
-        run_status = PG_STATUS_FAILED if not victory and node.node_type != PG_NODE_TYPE_BOSS else ""
-        if victory and node.node_type == PG_NODE_TYPE_BOSS:
-            run_ended = True
-            run_status = PG_STATUS_COMPLETED
+        revived = False
+        if not victory:
+            # 命数机制：剩余命数 > 1 时扣 1 复活，原节点保留可重打
+            if run.lives_remaining > 1:
+                run.lives_remaining -= 1
+                revived = True
+                run_ended = False
+                run_status = ""
+            else:
+                # 命数耗尽 → 走原失败结算
+                run.lives_remaining = 0
+                run_ended = True
+                run_status = PG_STATUS_FAILED
+        else:
+            run_ended = False
+            run_status = ""
+            if node.node_type == PG_NODE_TYPE_BOSS:
+                run_ended = True
+                run_status = PG_STATUS_COMPLETED
+
+        if victory:
+            message = "战斗胜利！"
+        elif revived:
+            message = f"陨身一次，命数 {run.lives_remaining}/{PG_INITIAL_LIVES}，可再战！"
+        else:
+            message = "战斗失败…"
 
         return PGNodeResult(
             success=True,
-            message="战斗胜利！" if victory else "战斗失败…",
+            message=message,
             node_type=node.node_type,
             battle=battle,
             enemy_name=enemy_name,
@@ -961,6 +986,8 @@ class ProvingGroundService:
             score_gained=score,
             affix_ops_gained=affix_ops,
             spirit_ops_gained=spirit_ops,
+            revived=revived,
+            lives_remaining=run.lives_remaining,
             run_ended=run_ended,
             run_status=run_status,
         )
@@ -1430,6 +1457,7 @@ class ProvingGroundService:
             boss_snapshot_json="{}",  # BOSS 快照稍后设置
             score=0,
             lingshi_invested=0,
+            lives_remaining=PG_INITIAL_LIVES,
             last_action_at=now,
         )
 
@@ -1492,8 +1520,9 @@ class ProvingGroundService:
         else:
             result = PGNodeResult(False, f"未知节点类型：{target.node_type}")
 
-        # 更新 run 状态
-        run.current_node_id = target_node_id
+        # 更新 run 状态：复活时保留原节点（target 节点未结算成功），玩家可在地图重选
+        if not result.revived:
+            run.current_node_id = target_node_id
         run.build_json = self.serialize_build(build)
         run.last_action_at = now_shanghai()
 

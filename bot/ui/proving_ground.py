@@ -8,6 +8,7 @@ from bot.data.artifact_affixes import ARTIFACT_AFFIXES_BY_ID
 from bot.data.proving_ground import (
     PG_BOSS_DISPLAY_NAMES,
     PG_ENTRY_QI_COST,
+    PG_INITIAL_LIVES,
     PG_MAP_LAYERS,
     PG_NODE_TYPE_BOSS,
     PG_NODE_TYPE_ELITE,
@@ -145,6 +146,7 @@ def build_pg_map_embed(
     score: int,
     pending_affix_ops: int,
     pending_spirit_ops: int,
+    lives_remaining: int = PG_INITIAL_LIVES,
 ) -> discord.Embed:
     """迷雾地图 — 只显示当前节点 + 下一层可选节点。"""
     current_node = pg_map.get_node(current_node_id)
@@ -156,9 +158,14 @@ def build_pg_map_embed(
         color=_PG_COLOR,
     )
 
-    # 当前位置
+    # 当前位置 + 命数
     current_emoji = _NODE_EMOJI.get(current_node.node_type, "📍")
-    embed.description = f"当前位置：{current_emoji} **第 {current_node.layer} 层**　积分：`{score}`"
+    lives_clamped = max(0, min(lives_remaining, PG_INITIAL_LIVES))
+    lives_str = "❤️" * lives_clamped + "🖤" * (PG_INITIAL_LIVES - lives_clamped)
+    embed.description = (
+        f"当前位置：{current_emoji} **第 {current_node.layer} 层**　积分：`{score}`\n"
+        f"命数：{lives_str} `{lives_clamped}/{PG_INITIAL_LIVES}`"
+    )
 
     # 可选下一步节点
     if current_node.connections:
@@ -214,6 +221,12 @@ def build_pg_combat_result_embed(
         embed = discord.Embed(
             title=f"⚔️ 击败 {result.enemy_name}",
             color=_PG_COLOR_SUCCESS,
+        )
+    elif result.revived:
+        embed = discord.Embed(
+            title=f"💔 陨身复活 · 败于 {result.enemy_name}",
+            description=f"剩余命数：`{result.lives_remaining}/{PG_INITIAL_LIVES}`，可重选路径再战。",
+            color=_PG_COLOR_FAILURE,
         )
     else:
         embed = discord.Embed(

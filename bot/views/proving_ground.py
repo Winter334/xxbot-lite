@@ -165,6 +165,7 @@ async def _do_enter(bot: XianBot, user_id: int, display_name: str) -> tuple[disc
             score=0,
             pending_affix_ops=0,
             pending_spirit_ops=0,
+            lives_remaining=run.lives_remaining,
         )
         view = ProvingGroundMapView(user_id, run_id=run.id)
         start_node = result.pg_map.get_node(0)
@@ -643,6 +644,7 @@ async def _show_map(
             score=run.score,
             pending_affix_ops=run.pending_affix_ops,
             pending_spirit_ops=run.pending_spirit_ops,
+            lives_remaining=run.lives_remaining,
         )
         view = ProvingGroundMapView(user_id, run_id=run_id)
         if current_node and current_node.connections:
