@@ -248,8 +248,8 @@ class CombatService:
             logs.extend(self._trigger_spirit_on_dodge(round_no, target))
             return logs
 
-        # 被命中时清除风遁层数
-        self._clear_wind_stacks(target)
+        # 被命中时只消散 1 层风遁（保留叠层流派的可玩性）
+        self._reduce_wind_stacks(target, 1)
 
         damage = self._current_atk(actor)
         crit_rate = clamp(0.20 * (self._current_agility(actor) / max(self._current_agility(target), 1)) + self._crit_bonus_pct(actor) / 100, 0.10, 0.90)
@@ -698,9 +698,20 @@ class CombatService:
         power = dodger.snapshot.spirit_power
         if power is None or power.power_id != "fengdun":
             return []
+        # 限制最多 8 层
+        if self._status_count(dodger, "风遁") >= 8:
+            return []
         self._add_status(dodger, _StatusEffect("风遁", damage_dealt_pct=power.rolls["per_wind_pct"], agility_pct=power.rolls["agi_boost_pct"]))
         layers = self._status_count(dodger, "风遁")
-        return [self._effect_log(round_no, dodger, f"{dodger.snapshot.name} 风遁叠至第 {layers} 层，攻势与身法同涨。")]
+        logs = [self._effect_log(round_no, dodger, f"{dodger.snapshot.name} 风遁叠至第 {layers} 层，攻势与身法同涨。")]
+        # 满 5 层授予「风刃」：下次攻击必定暴击 +50% 伤害
+        if layers >= 5 and self._status_count(dodger, "风刃") == 0:
+            self._add_status(
+                dodger,
+                _StatusEffect("风刃", guarantee_crit=True, damage_dealt_pct=50, remaining_hits=1),
+            )
+            logs.append(self._effect_log(round_no, dodger, f"{dodger.snapshot.name} 风遁满盈，凝出一缕风刃，下击必中要害。"))
+        return logs
 
     def _trigger_spirit_on_crit(
         self,
@@ -718,20 +729,74 @@ class CombatService:
         thunder_pct = base_pct + chain_bonus
         thunder_damage = max(1, actual_damage * thunder_pct // 100)
         thunder_actual = self._apply_damage(target, thunder_damage)
-        if thunder_actual <= 0:
-            return []
-        chain_text = f"（连锁 ×{actor.consecutive_crits}）" if actor.consecutive_crits > 1 else ""
-        return [
-            self._effect_log(
-                round_no,
-                target,
-                f"{actor.snapshot.name} 引雷罚天降{chain_text}，追加 {thunder_actual} 点雷伤。",
-                actor_name=actor.snapshot.name,
+        logs: list[ActionLog] = []
+        if thunder_actual > 0:
+            chain_text = f"（连锁 ×{actor.consecutive_crits}）" if actor.consecutive_crits > 1 else ""
+            logs.append(
+                self._effect_log(
+                    round_no,
+                    target,
+                    f"{actor.snapshot.name} 引雷罚天降{chain_text}，追加 {thunder_actual} 点雷伤。",
+                    actor_name=actor.snapshot.name,
+                )
             )
-        ]
+        # 雷引叠层：暴击命中给目标累计 1 层；满 3 层引爆造成最大生命百分比的雷劫伤害
+        if target.hp <= 0:
+            return logs
+        leiyin_layers = self._target_leiyin_count(target)
+        if leiyin_layers < 3:
+            self._add_target_leiyin(target, actor)
+            leiyin_layers += 1
+            logs.append(
+                self._effect_log(
+                    round_no,
+                    target,
+                    f"{actor.snapshot.name} 在 {target.snapshot.name} 身上烙下雷引（{leiyin_layers}/3）。",
+                    actor_name=actor.snapshot.name,
+                )
+            )
+        if leiyin_layers >= 3:
+            # 雷劫百分比：取 thunder_pct/12，区间 [6, 15]
+            judgment_pct = max(6, min(15, base_pct // 12))
+            judgment_damage = max(1, target.snapshot.max_hp * judgment_pct // 100)
+            judgment_actual = self._apply_damage(target, judgment_damage)
+            self._clear_target_leiyin(target)
+            if judgment_actual > 0:
+                logs.append(
+                    self._effect_log(
+                        round_no,
+                        target,
+                        f"{actor.snapshot.name} 引动雷劫，雷引尽炸，造成 {judgment_actual} 点雷劫真伤。",
+                        actor_name=actor.snapshot.name,
+                    )
+                )
+        return logs
 
     def _clear_wind_stacks(self, state: _CombatState) -> None:
         state.statuses = [s for s in state.statuses if s.name != "风遁"]
+
+    def _reduce_wind_stacks(self, state: _CombatState, count: int) -> None:
+        """命中时削减风遁层数（保留剩余层数延续流派）。"""
+        if count <= 0:
+            return
+        removed = 0
+        new_statuses: list[_StatusEffect] = []
+        for status in state.statuses:
+            if status.name == "风遁" and removed < count:
+                removed += 1
+                continue
+            new_statuses.append(status)
+        state.statuses = new_statuses
+
+    def _target_leiyin_count(self, state: _CombatState) -> int:
+        """目标身上「敌方雷引」层数（与施法者无关，按目标视角统计）。"""
+        return sum(1 for s in self._active_statuses(state) if s.name == "敌雷引")
+
+    def _add_target_leiyin(self, target: _CombatState, actor: _CombatState) -> None:
+        self._add_status(target, _StatusEffect("敌雷引", is_debuff=True, source=actor))
+
+    def _clear_target_leiyin(self, target: _CombatState) -> None:
+        target.statuses = [s for s in target.statuses if s.name != "敌雷引"]
 
     def _decay_leiyin_stacks(self, state: _CombatState) -> None:
         state.statuses = [s for s in state.statuses if s.name != "雷引"]
@@ -984,17 +1049,21 @@ class CombatService:
 
         if power.power_id == "shiyan" and target.hp > 0:
             burn_count = sum(1 for s in self._active_statuses(target) if s.burn_pct > 0)
-            if burn_count >= 6:
+            if burn_count >= 4:
                 explode_damage = max(1, actual_damage * power.rolls["explode_pct"] // 100)
                 explode_actual = self._apply_damage(target, explode_damage)
-                # 清除所有灼烧
-                target.statuses = [s for s in target.statuses if s.burn_pct <= 0]
+                # 引爆后保留 2 层灼烧延续燃烧链
+                burns = [s for s in target.statuses if s.burn_pct > 0]
+                non_burns = [s for s in target.statuses if s.burn_pct <= 0]
+                # 优先保留剩余持续时间最长的两层灼烧
+                burns.sort(key=lambda s: (s.duration is None, s.duration or 0), reverse=True)
+                target.statuses = non_burns + burns[:2]
                 if explode_actual > 0:
                     logs.append(
                         self._effect_log(
                             round_no,
                             target,
-                            f"{actor.snapshot.name} 的蚀焰引爆灼烧！一切焰意轰然炸裂，造成 {explode_actual} 点伤害。",
+                            f"{actor.snapshot.name} 的蚀焰引爆灼烧！一切焰意轰然炸裂，造成 {explode_actual} 点伤害（残留 2 层余焰）。",
                             actor_name=actor.snapshot.name,
                         )
                     )
