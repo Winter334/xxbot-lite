@@ -408,6 +408,94 @@ class TestBossTypePick:
 
 
 # ---------------------------------------------------------------------------
+# 器灵品级提升
+# ---------------------------------------------------------------------------
+
+
+class TestSpiritTierUpgrade:
+    def test_upgrade_tier_from_low_to_mid(self, pg_service: ProvingGroundService):
+        build = pg_service.create_initial_build()
+        pg_service.roll_new_spirit(build)
+        build.spirit_tier = "low"
+        msg, consumed = pg_service.upgrade_spirit_tier(build)
+        assert consumed
+        assert build.spirit_tier == "mid"
+        assert "中品" in msg
+
+    def test_upgrade_tier_preserves_rolls(self, pg_service: ProvingGroundService):
+        build = pg_service.create_initial_build()
+        pg_service.roll_new_spirit(build)
+        build.spirit_tier = "low"
+        old_rolls = dict(build.spirit_power.rolls)
+        pg_service.upgrade_spirit_tier(build)
+        # 所有旧值应该保留（可能被拉到新下限）
+        for key, val in old_rolls.items():
+            assert build.spirit_power.rolls[key] >= val
+
+    def test_upgrade_tier_raises_floor(self, pg_service: ProvingGroundService):
+        """品级提升后，低于新品级下限的 key 应被拉到下限。"""
+        build = pg_service.create_initial_build()
+        pg_service.roll_new_spirit(build)
+        build.spirit_tier = "low"
+        # 人工将所有 key 设为最小值
+        defn = pg_service._get_power_definition(build.spirit_power.power_id)
+        low_ranges = defn.roll_ranges_by_tier["low"]
+        min_rolls = {key: low for key, low, _high in low_ranges}
+        build.spirit_power = SpiritPowerEntry(power_id=build.spirit_power.power_id, rolls=min_rolls)
+        pg_service.upgrade_spirit_tier(build)
+        # 现在是 mid 品级，所有 key 应不低于 mid 品级的下限
+        mid_ranges = defn.roll_ranges_by_tier["mid"]
+        for key, low, _high in mid_ranges:
+            assert build.spirit_power.rolls.get(key, 0) >= low
+
+    def test_upgrade_supreme_cannot_go_higher(self, pg_service: ProvingGroundService):
+        build = pg_service.create_initial_build()
+        pg_service.roll_new_spirit(build)
+        build.spirit_tier = "supreme"
+        msg, consumed = pg_service.upgrade_spirit_tier(build)
+        assert not consumed
+        assert "绝品" in msg
+
+    def test_upgrade_no_spirit_fails(self, pg_service: ProvingGroundService):
+        build = pg_service.create_initial_build()
+        msg, consumed = pg_service.upgrade_spirit_tier(build)
+        assert not consumed
+
+
+# ---------------------------------------------------------------------------
+# 器灵三选一
+# ---------------------------------------------------------------------------
+
+
+class TestSpiritPickSystem:
+    def test_spirit_choices_returns_three(self, pg_service: ProvingGroundService):
+        choices = pg_service.roll_spirit_choices(3)
+        assert len(choices) == 3
+        for tier, entry in choices:
+            assert tier in ("low", "mid", "high", "peak", "supreme")
+            assert entry.power_id != ""
+
+    def test_spirit_choices_deduplicate_power_id(self, pg_service: ProvingGroundService):
+        """三选一的器灵神通 ID 应尽量不重复。"""
+        # 使用多次尝试验证去重
+        for _ in range(20):
+            choices = pg_service.roll_spirit_choices(3)
+            power_ids = [entry.power_id for _, entry in choices]
+            # 至少应有 2 个不同的（极端情况下 3 个全不同）
+            assert len(set(power_ids)) >= 2
+
+    def test_apply_spirit_pick(self, pg_service: ProvingGroundService):
+        build = pg_service.create_initial_build()
+        choices = pg_service.roll_spirit_choices(3)
+        tier, entry = choices[1]
+        msg = pg_service.apply_spirit_pick(build, tier, entry)
+        assert build.spirit_power is not None
+        assert build.spirit_power.power_id == entry.power_id
+        assert build.spirit_tier == tier
+        assert "装备" in msg
+
+
+# ---------------------------------------------------------------------------
 # 节点战斗
 # ---------------------------------------------------------------------------
 

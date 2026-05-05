@@ -137,7 +137,8 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("proc_pct", 30, 60),
         ("agi_down_pct", 8, 16),
         description_builder=lambda rolls: (
-            f"命中后有 {rolls['proc_pct']}% 概率附加 1 层破步；每层使目标身法降低 {rolls['agi_down_pct']}%，最多 4 层"
+            f"命中后有 {rolls['proc_pct']}% 概率附加 1 层破步，每层使目标身法降低 {rolls['agi_down_pct']}%，"
+            f"最多 4 层；已满 4 层时改为震慑目标（跳过下次行动）"
         ),
     ),
     _define(
@@ -300,26 +301,31 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "灼印",
         "on_hit",
         ("proc_pct", 30, 60),
+        ("burn_damage_pct", 3, 8),
         description_builder=lambda rolls: (
-            f"命中灼烧中的目标时，有 {rolls['proc_pct']}% 概率追加 1 层灼痕"
+            f"命中灼烧中的目标时，有 {rolls['proc_pct']}% 概率追加 {rolls['burn_damage_pct']}% 最大生命的灼伤"
         ),
     ),
     _define(
         "cuihuo",
         "淬火",
         "round_start",
-        ("atk_pct", 8, 18),
+        ("atk_pct", 4, 9),
+        ("max_stacks", 4, 6),
         description_builder=lambda rolls: (
-            f"回合开始时，若目标处于灼烧状态，自身杀伐提高 {rolls['atk_pct']}%"
+            f"回合开始时，若目标处于灼烧状态，获得 1 层淬火，最多 {rolls['max_stacks']} 层；"
+            f"每层杀伐提高 {rolls['atk_pct']}%"
         ),
     ),
     _define(
         "fentian",
         "焚天",
         "before_attack",
-        ("damage_pct", 40, 90),
+        ("damage_pct", 50, 110),
+        ("extend_rounds", 1, 2),
         description_builder=lambda rolls: (
-            f"目标灼痕 ≥4 层时，本次伤害提高 {rolls['damage_pct']}%"
+            f"目标灼痕 ≥4 层时，本次伤害提高 {rolls['damage_pct']}%，"
+            f"并使目标灼烧延长 {rolls['extend_rounds']} 回合"
         ),
     ),
     # ── 身法流 ──
@@ -337,9 +343,10 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "huanbu",
         "幻步",
         "battle_start",
-        ("dodge_pct", 15, 35),
+        ("dodge_pct", 8, 18),
+        ("crit_pct", 40, 75),
         description_builder=lambda rolls: (
-            f"整场闪避率提高 {rolls['dodge_pct']}%；闪避成功后下次攻击必定暴击"
+            f"整场闪避率提高 {rolls['dodge_pct']}%；闪避后下次攻击暴击率提高 {rolls['crit_pct']}%"
         ),
     ),
     _define(
@@ -367,11 +374,9 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "leiyin",
         "雷引",
         "on_hit",
-        ("crit_pct", 5, 12),
-        ("stack_pct", 3, 7),
+        ("crit_pct", 8, 18),
         description_builder=lambda rolls: (
-            f"命中后有 {rolls['crit_pct']}% 概率提高下次暴击率；"
-            f"连续未暴击时每次递增 {rolls['stack_pct']}%"
+            f"每次命中提高 {rolls['crit_pct']}% 暴击率；暴击后清除所有层数"
         ),
     ),
     _define(
@@ -400,8 +405,12 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "转机",
         "on_be_hit",
         ("proc_pct", 25, 55),
+        ("damage_pct", 15, 35),
+        ("agi_pct", 10, 25),
+        ("reduce_pct", 20, 45),
         description_builder=lambda rolls: (
-            f"受击时若自身有负面层数，有 {rolls['proc_pct']}% 概率将 1 层负面转化为正面层数"
+            f"受击时若有负面层数，有 {rolls['proc_pct']}% 概率将 1 层负面转化为增益"
+            f"（随机：{rolls['damage_pct']}% 增伤/{rolls['reduce_pct']}% 守势/{rolls['agi_pct']}% 身法）"
         ),
     ),
     # ── 通用中立 ──
@@ -409,9 +418,11 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "guben",
         "固本",
         "battle_start",
-        ("shield_pct", 10, 25),
+        ("shield_pct", 25, 50),
+        ("reduce_pct", 10, 25),
         description_builder=lambda rolls: (
-            f"战斗开始时基于最大生命获得 {rolls['shield_pct']}% 的护盾"
+            f"战斗开始获得 {rolls['shield_pct']}% 最大生命的护盾；"
+            f"护盾存在时受到伤害降低 {rolls['reduce_pct']}%"
         ),
     ),
     _define(
@@ -419,9 +430,11 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "夺灵",
         "on_hit",
         ("proc_pct", 30, 60),
-        ("heal_pct", 2, 5),
+        ("heal_pct", 3, 7),
+        ("heal_down_pct", 4, 8),
         description_builder=lambda rolls: (
-            f"命中后有 {rolls['proc_pct']}% 概率恢复 {rolls['heal_pct']}% 最大生命"
+            f"命中后有 {rolls['proc_pct']}% 概率吸取 {rolls['heal_pct']}% 最大生命，"
+            f"并附加 1 层创伤（降低受疗 {rolls['heal_down_pct']}%），创伤最多 3 层"
         ),
     ),
     _define(
@@ -431,7 +444,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("initiative_pct", 20, 50),
         ("damage_pct", 25, 60),
         description_builder=lambda rolls: (
-            f"先手概率提高 {rolls['initiative_pct']}%；首回合攻击伤害提高 {rolls['damage_pct']}%"
+            f"整场身法提高 {rolls['initiative_pct']}%（影响先手判定）；首回合攻击伤害提高 {rolls['damage_pct']}%"
         ),
     ),
 )

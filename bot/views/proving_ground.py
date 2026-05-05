@@ -43,6 +43,7 @@ from bot.ui.proving_ground import (
     build_pg_recovery_embed,
     build_pg_settlement_embed,
     build_pg_spirit_menu_embed,
+    build_pg_spirit_pick_embed,
 )
 
 if TYPE_CHECKING:
@@ -259,9 +260,13 @@ async def _do_settle(
             return None
 
         pg_svc: ProvingGroundService = bot.proving_ground_service
-        settlement = pg_svc.settle_run(run, character)
+        settlement = pg_svc.settle_run(run, character, display_name)
         build = pg_svc.deserialize_build(run.build_json)
         await session.commit()
+
+    # 发送荣誉公告
+    for content in settlement.broadcasts:
+        await bot.broadcast_service.broadcast(bot, content)
 
     embed = build_pg_settlement_embed(settlement, build)
     return embed, None
@@ -403,9 +408,9 @@ async def _do_spirit_op(
     user_id: int,
     display_name: str,
     run_id: int,
-    action: str,  # "roll" or "reroll"
+    action: str,  # "reroll" or "upgrade"
 ) -> tuple[discord.Embed, discord.ui.View | None]:
-    """执行器灵操作。"""
+    """执行器灵操作（强化/品级提升）。"""
     async with bot.session_factory() as session:
         character = await _load_char(bot, session, user_id, display_name)
         run = await session.get(ProvingGroundRun, run_id)
@@ -417,15 +422,64 @@ async def _do_spirit_op(
         pg_svc: ProvingGroundService = bot.proving_ground_service
         build = pg_svc.deserialize_build(run.build_json)
 
-        if action == "roll":
-            msg, _ = pg_svc.roll_new_spirit(build)
-            consumed = True
+        if action == "upgrade":
+            msg, consumed = pg_svc.upgrade_spirit_tier(build)
         else:
             msg, consumed = pg_svc.reroll_spirit(build)
 
         if consumed:
             run.build_json = pg_svc.serialize_build(build)
             run.pending_spirit_ops = max(0, run.pending_spirit_ops - 1)
+        await session.commit()
+
+    return await _show_map(bot, user_id, display_name, run_id)
+
+
+async def _do_spirit_pick(
+    bot: XianBot,
+    user_id: int,
+    display_name: str,
+    run_id: int,
+) -> tuple[discord.Embed, discord.ui.View | None]:
+    """展示器灵三选一。"""
+    async with bot.session_factory() as session:
+        character = await _load_char(bot, session, user_id, display_name)
+        run = await session.get(ProvingGroundRun, run_id)
+        if run is None or run.character_id != character.id:
+            return _info_embed("🏛️ 错误", "运行不存在。"), None
+        if run.pending_spirit_ops <= 0:
+            return _info_embed("🏛️ 无操作", "没有剩余的器灵操作次数。"), None
+
+        pg_svc: ProvingGroundService = bot.proving_ground_service
+        choices = pg_svc.roll_spirit_choices(3)
+        await session.commit()
+
+    embed = build_pg_spirit_pick_embed(choices)
+    view = ProvingGroundSpiritPickView(user_id, run_id=run_id, choices=choices)
+    return embed, view
+
+
+async def _apply_spirit_choice(
+    bot: XianBot,
+    user_id: int,
+    display_name: str,
+    run_id: int,
+    choice_index: int,
+    choices: list,
+) -> tuple[discord.Embed, discord.ui.View | None]:
+    """应用器灵选择。"""
+    async with bot.session_factory() as session:
+        character = await _load_char(bot, session, user_id, display_name)
+        run = await session.get(ProvingGroundRun, run_id)
+        if run is None or run.character_id != character.id:
+            return _info_embed("🏛️ 错误", "运行不存在。"), None
+
+        pg_svc: ProvingGroundService = bot.proving_ground_service
+        build = pg_svc.deserialize_build(run.build_json)
+        tier, entry = choices[choice_index]
+        pg_svc.apply_spirit_pick(build, tier, entry)
+        run.build_json = pg_svc.serialize_build(build)
+        run.pending_spirit_ops = max(0, run.pending_spirit_ops - 1)
         await session.commit()
 
     return await _show_map(bot, user_id, display_name, run_id)
@@ -785,10 +839,10 @@ class ProvingGroundMapView(_PGBaseView):
                     await interaction.response.send_message("没有剩余的器灵操作次数。", ephemeral=True)
                     return
                 build = bot.proving_ground_service.deserialize_build(run.build_json)
-            # 无器灵时直接 roll，不需要选择
+            # 无器灵时进入三选一
             if build.spirit_power is None:
-                embed, view = await _do_spirit_op(
-                    bot, interaction.user.id, interaction.user.display_name, self.run_id, "roll",
+                embed, view = await _do_spirit_pick(
+                    bot, interaction.user.id, interaction.user.display_name, self.run_id,
                 )
                 await interaction.response.edit_message(embed=embed, view=view)
                 return
@@ -984,6 +1038,47 @@ class ProvingGroundAffixPickView(_PGBaseView):
 
 
 # ===========================================================================
+# View: 器灵三选一
+# ===========================================================================
+
+
+class ProvingGroundSpiritPickView(_PGBaseView):
+    """器灵三选一界面。"""
+
+    def __init__(self, owner_user_id: int, *, run_id: int, choices: list) -> None:
+        super().__init__(owner_user_id, run_id=run_id)
+        self.choices = choices
+        self._add_buttons()
+
+    def _add_buttons(self) -> None:
+        for i, (_tier, _entry) in enumerate(self.choices):
+            label = f"选项 {i + 1}"
+            btn = discord.ui.Button(label=label, style=discord.ButtonStyle.primary)
+
+            async def on_pick(interaction: discord.Interaction, idx: int = i) -> None:
+                bot: XianBot = interaction.client  # type: ignore[assignment]
+                embed, view = await _apply_spirit_choice(
+                    bot, interaction.user.id, interaction.user.display_name,
+                    self.run_id, idx, self.choices,
+                )
+                await interaction.response.edit_message(embed=embed, view=view)
+
+            btn.callback = on_pick
+            self.add_item(btn)
+
+        # 返回按钮
+        back_btn = discord.ui.Button(label="返回地图", style=discord.ButtonStyle.secondary, emoji="🗺️")
+
+        async def on_back(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view = await _show_map(bot, interaction.user.id, interaction.user.display_name, self.run_id)
+            await interaction.response.edit_message(embed=embed, view=view)
+
+        back_btn.callback = on_back
+        self.add_item(back_btn)
+
+
+# ===========================================================================
 # View: 构筑查看
 # ===========================================================================
 
@@ -1098,20 +1193,20 @@ class ProvingGroundInvestView(discord.ui.View):
 
 
 class ProvingGroundSpiritMenuView(_PGBaseView):
-    """器灵操作选择面板：重新抽取 / 强化当前 / 返回。"""
+    """器灵操作选择面板：重新抽取(三选一) / 强化当前 / 品级提升 / 返回。"""
 
     def __init__(self, owner_user_id: int, *, run_id: int) -> None:
         super().__init__(owner_user_id, run_id=run_id)
         self._add_buttons()
 
     def _add_buttons(self) -> None:
-        # 重新抽取（替换）
+        # 重新抽取（三选一替换）
         roll_btn = discord.ui.Button(label="重新抽取", style=discord.ButtonStyle.primary, emoji="🆕")
 
         async def on_roll(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
-            embed, view = await _do_spirit_op(
-                bot, interaction.user.id, interaction.user.display_name, self.run_id, "roll",
+            embed, view = await _do_spirit_pick(
+                bot, interaction.user.id, interaction.user.display_name, self.run_id,
             )
             await interaction.response.edit_message(embed=embed, view=view)
 
@@ -1130,6 +1225,19 @@ class ProvingGroundSpiritMenuView(_PGBaseView):
 
         reroll_btn.callback = on_reroll
         self.add_item(reroll_btn)
+
+        # 品级提升
+        upgrade_btn = discord.ui.Button(label="品级提升", style=discord.ButtonStyle.primary, emoji="✨")
+
+        async def on_upgrade(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view = await _do_spirit_op(
+                bot, interaction.user.id, interaction.user.display_name, self.run_id, "upgrade",
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+
+        upgrade_btn.callback = on_upgrade
+        self.add_item(upgrade_btn)
 
         # 返回地图
         back_btn = discord.ui.Button(label="返回地图", style=discord.ButtonStyle.secondary, emoji="🗺️")

@@ -249,7 +249,7 @@ class RankingService:
 
         # 证道战场荣誉
         pg_top = max(characters, key=lambda char: char.pg_total_score or 0, default=None)
-        if pg_top and pg_top.id == character.id and (character.pg_total_score or 0) >= 200:
+        if pg_top and pg_top.id == character.id and (character.pg_total_score or 0) >= 5000:
             honor_tags.append("天心印记")
         if (character.pg_red_dust_count or 0) >= 9:
             honor_tags.append("九世红尘")

@@ -15,7 +15,7 @@ from bot.data.proving_ground import (
     PG_NODE_TYPE_NORMAL,
     PG_NODE_TYPE_START,
 )
-from bot.data.spirits import SPIRIT_POWER_BY_ID
+from bot.data.spirits import SPIRIT_POWER_BY_ID, SPIRIT_TIER_BY_KEY
 from bot.services.combat_service import CombatService
 from bot.services.proving_ground_service import (
     MAX_AFFIX_SLOTS,
@@ -407,6 +407,12 @@ def build_pg_affix_pick_embed(
 # ---------------------------------------------------------------------------
 
 
+def _tier_display(tier_key: str) -> str:
+    """返回品级中文名。"""
+    defn = SPIRIT_TIER_BY_KEY.get(tier_key)
+    return defn.name if defn else tier_key
+
+
 def build_pg_spirit_menu_embed(
     build: PGBuild,
     pending_spirit_ops: int,
@@ -419,16 +425,38 @@ def build_pg_spirit_menu_embed(
     )
     if build.spirit_power is not None:
         sp = build.spirit_power
+        tier_name = _tier_display(build.spirit_tier) if build.spirit_tier else "未知"
         name, desc = _spirit_display(sp.power_id, sp.rolls)
-        embed.add_field(name="当前器灵", value=f"**{name}**　{desc}", inline=False)
+        embed.add_field(name="当前器灵", value=f"【{tier_name}】**{name}**　{desc}", inline=False)
         ops = (
-            "🆕 **重新抽取** — 随机获得新器灵，替换当前器灵\n"
-            "⬆️ **强化当前** — 重 roll 数值取高值，保留当前神通"
+            "🆕 **重新抽取** — 三选一获得新器灵，替换当前器灵\n"
+            "⬆️ **强化当前** — 重 roll 数值取高值，保留当前神通\n"
+            "✨ **品级提升** — 提升器灵品级一档，解锁更高数值上限"
         )
     else:
         embed.add_field(name="当前器灵", value="暂无器灵", inline=False)
-        ops = "🆕 **抽取器灵** — 随机获得一个器灵神通"
+        ops = "🆕 **抽取器灵** — 三选一获得一个器灵神通"
     embed.add_field(name="可选操作", value=ops, inline=False)
+    return embed
+
+
+def build_pg_spirit_pick_embed(
+    choices: list[tuple[str, object]],
+) -> discord.Embed:
+    """器灵三选一展示。choices 为 (tier_key, SpiritPowerEntry) 列表。"""
+    embed = discord.Embed(
+        title="🔮 器灵机缘",
+        description="请选择一个器灵神通",
+        color=_PG_COLOR_EVENT,
+    )
+    for i, (tier_key, entry) in enumerate(choices, start=1):
+        tier_name = _tier_display(tier_key)
+        name, desc = _spirit_display(entry.power_id, entry.rolls)
+        embed.add_field(
+            name=f"选项 {i}：【{tier_name}】{name}",
+            value=desc,
+            inline=False,
+        )
     return embed
 
 
@@ -519,8 +547,9 @@ def build_pg_build_embed(
     # 器灵
     if build.spirit_power is not None:
         sp = build.spirit_power
+        tier_name = _tier_display(build.spirit_tier) if build.spirit_tier else "未知"
         name, desc = _spirit_display(sp.power_id, sp.rolls)
-        embed.add_field(name="🔮 器灵神通", value=f"**{name}**　{desc}", inline=False)
+        embed.add_field(name="🔮 器灵神通", value=f"【{tier_name}】**{name}**　{desc}", inline=False)
     else:
         embed.add_field(name="🔮 器灵神通", value="暂无器灵", inline=False)
 

@@ -854,7 +854,9 @@ async def stop_retreat_message(bot: XianBot, owner_user_id: int, display_name: s
         result = bot.character_service.stop_retreat(character, settlement)
         snapshot = await _sync_snapshot(bot, session, character)
         await session.commit()
-    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []    
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    if settlement.luck_honor_unlocked:
+        broadcasts.append(f"【鸿运当头】{display_name} 气运冲天，鸿运加身，万事皆宜。")
     return build_retreat_settlement_embed(snapshot, settlement, result.message), RetreatView(owner_user_id, snapshot=snapshot), broadcasts
 
 
