@@ -53,6 +53,7 @@ from bot.data.proving_ground import (
     PG_SCORE_EVENT_RISK_BONUS,
     PG_SCORE_NO_DAMAGE_BONUS,
     PG_SCORE_NORMAL_KILL,
+    PG_SOUL_SHARD_REWARDS,
     PG_STATUS_COMPLETED,
     PG_STATUS_EXPIRED,
     PG_STATUS_FAILED,
@@ -240,6 +241,8 @@ class PGNodeResult:
     # run 是否结束
     run_ended: bool = False
     run_status: str = ""
+    # 器魂产出
+    soul_shards_gained: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +274,7 @@ class PGEventResult:
     success: bool
     message: str
     score_gained: int = 0
+    soul_shards_gained: int = 0
 
 
 @dataclass(slots=True)
@@ -284,6 +288,7 @@ class PGSettlement:
     boss_killed: bool
     reached_boss: bool = False
     honor_gained: str | None = None
+    soul_shards_earned: int = 0
     broadcasts: list[str] = field(default_factory=list)
 
 
@@ -905,6 +910,7 @@ class ProvingGroundService:
         run: ProvingGroundRun,
         *,
         boss_snapshot: CombatantSnapshot | None = None,
+        character: Character | None = None,
     ) -> PGNodeResult:
         """执行一个战斗节点（普通/精英/BOSS），返回结果并更新 run。"""
         player = self.build_player_snapshot(build, player_name)
@@ -949,6 +955,16 @@ class ProvingGroundService:
             run.pending_affix_ops += affix_ops
             run.pending_spirit_ops += spirit_ops
 
+        # 器魂产出（仅胜利发放）
+        soul_reward = 0
+        if victory:
+            soul_reward = PG_SOUL_SHARD_REWARDS.get(node.node_type, 0)
+            if soul_reward > 0 and character is not None and character.artifact is not None:
+                character.artifact.soul_shards = (character.artifact.soul_shards or 0) + soul_reward
+                run.soul_shards_earned = (run.soul_shards_earned or 0) + soul_reward
+            else:
+                soul_reward = 0
+
         revived = False
         if not victory:
             # 命数机制：剩余命数 > 1 时扣 1 复活，原节点保留可重打
@@ -990,6 +1006,7 @@ class ProvingGroundService:
             lives_remaining=run.lives_remaining,
             run_ended=run_ended,
             run_status=run_status,
+            soul_shards_gained=soul_reward,
         )
 
     # -----------------------------------------------------------------------
@@ -1382,7 +1399,7 @@ class ProvingGroundService:
         run.score += score
         return PGEventResult(True, f"舍弃词条机会，获得极品器灵「{power_defn.name}」。", score_gained=score)
 
-    def _apply_xinmo_shilian(self, choice_id: str, build: PGBuild, run: ProvingGroundRun, _char: Character) -> PGEventResult:
+    def _apply_xinmo_shilian(self, choice_id: str, build: PGBuild, run: ProvingGroundRun, character: Character) -> PGEventResult:
         if choice_id == "skip":
             return PGEventResult(True, "退避三舍。")
         # 心魔 = 自身构筑 × 1.2 加强版
@@ -1401,7 +1418,17 @@ class ProvingGroundService:
             score = PG_SCORE_EVENT_RISK_BONUS * 3
             run.score += score
             run.pending_affix_ops += 1
-            return PGEventResult(True, f"心魔试炼胜利！积分 +{score}，词条操作 +1。", score_gained=score)
+            soul_reward = PG_SOUL_SHARD_REWARDS.get("heart_demon", 0)
+            if soul_reward > 0 and character is not None and character.artifact is not None:
+                character.artifact.soul_shards = (character.artifact.soul_shards or 0) + soul_reward
+                run.soul_shards_earned = (run.soul_shards_earned or 0) + soul_reward
+            else:
+                soul_reward = 0
+            msg = f"心魔试炼胜利！积分 +{score}，词条操作 +1"
+            if soul_reward > 0:
+                msg += f"，器魂 +{soul_reward}"
+            msg += "。"
+            return PGEventResult(True, msg, score_gained=score, soul_shards_gained=soul_reward)
         return PGEventResult(True, "心魔试炼失败，但未影响本次运行。")
 
     def _apply_hongchen_lijie(self, _cid: str, _build: PGBuild, _run: ProvingGroundRun, character: Character) -> PGEventResult:
@@ -1508,6 +1535,7 @@ class ProvingGroundService:
             result = self.run_node_combat(
                 target, build, player_name, run,
                 boss_snapshot=boss_snapshot,
+                character=character,
             )
         elif target.node_type == PG_NODE_TYPE_EVENT:
             event = self.generate_event(build)
@@ -1599,6 +1627,7 @@ class ProvingGroundService:
             boss_killed=boss_killed,
             reached_boss=reached_boss,
             honor_gained=honor_gained,
+            soul_shards_earned=run.soul_shards_earned or 0,
             broadcasts=broadcasts,
         )
 

@@ -163,3 +163,121 @@ def test_huajing_converts_reduction_affix_into_recovery(services) -> None:
 
     assert empowered.defender_hp_after > baseline.defender_hp_after
     assert any(log.text and "化劲" in log.text for log in empowered.logs)
+
+
+# ---------------------------------------------------------------------------
+# 器灵品阶淬炼 (upgrade_owned_spirit_tier)
+# ---------------------------------------------------------------------------
+
+_BASE_LOW_SPIRIT = {
+    "tier": "low",
+    "stats": [
+        {"stat": "atk", "kind": "flat", "value": 1500},
+        {"stat": "def", "kind": "ratio", "value": 12},
+        {"stat": "agi", "kind": "ratio", "value": 8},
+    ],
+    "power": {"power_id": "niepan", "rolls": {"heal_pct": 30, "reduce_pct": 50}},
+}
+
+_BASE_SUPREME_SPIRIT = {
+    "tier": "supreme",
+    "stats": [
+        {"stat": "atk", "kind": "flat", "value": 9000},
+        {"stat": "def", "kind": "ratio", "value": 50},
+        {"stat": "agi", "kind": "ratio", "value": 50},
+    ],
+    "power": {"power_id": "niepan", "rolls": {"heal_pct": 90, "reduce_pct": 99}},
+}
+
+
+def _dump_spirit(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+@pytest.mark.asyncio
+async def test_upgrade_tier_blocked_without_owned_spirit(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7001, "测一")
+        artifact = creation.character.artifact
+        artifact.reinforce_level = 30
+        artifact.spirit_name = None
+        artifact.spirit_json = None
+        artifact.soul_shards = 1000
+
+        result = services.spirit.upgrade_owned_spirit_tier(artifact)
+
+        assert result.success is False
+        assert artifact.soul_shards == 1000
+        assert services.spirit.get_current_spirit(artifact) is None
+
+
+@pytest.mark.asyncio
+async def test_upgrade_tier_blocked_when_supreme(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7002, "测二")
+        artifact = creation.character.artifact
+        artifact.reinforce_level = 30
+        artifact.spirit_name = "已绝"
+        artifact.spirit_json = _dump_spirit(_BASE_SUPREME_SPIRIT)
+        artifact.soul_shards = 5000
+
+        result = services.spirit.upgrade_owned_spirit_tier(artifact)
+
+        assert result.success is False
+        assert artifact.soul_shards == 5000
+        assert services.spirit.get_current_spirit(artifact).tier == "supreme"
+
+
+@pytest.mark.asyncio
+async def test_upgrade_tier_blocked_by_insufficient_soul(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7003, "测三")
+        artifact = creation.character.artifact
+        artifact.reinforce_level = 30
+        artifact.spirit_name = "穷酸"
+        artifact.spirit_json = _dump_spirit(_BASE_LOW_SPIRIT)
+        artifact.soul_shards = 10  # < 80
+
+        result = services.spirit.upgrade_owned_spirit_tier(artifact)
+
+        assert result.success is False
+        assert artifact.soul_shards == 10
+        assert services.spirit.get_current_spirit(artifact).tier == "low"
+
+
+@pytest.mark.asyncio
+async def test_upgrade_tier_blocked_by_pending_spirit(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7004, "测四")
+        artifact = creation.character.artifact
+        artifact.reinforce_level = 30
+        artifact.spirit_name = "有挂"
+        artifact.spirit_json = _dump_spirit(_BASE_LOW_SPIRIT)
+        artifact.spirit_pending_json = _dump_spirit(_BASE_LOW_SPIRIT)
+        artifact.soul_shards = 1000
+
+        result = services.spirit.upgrade_owned_spirit_tier(artifact)
+
+        assert result.success is False
+        assert artifact.soul_shards == 1000
+        assert services.spirit.get_current_spirit(artifact).tier == "low"
+
+
+@pytest.mark.asyncio
+async def test_upgrade_tier_success_low_to_mid(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7005, "测五")
+        artifact = creation.character.artifact
+        artifact.reinforce_level = 30
+        artifact.spirit_name = "成长"
+        artifact.spirit_json = _dump_spirit(_BASE_LOW_SPIRIT)
+        artifact.soul_shards = 200
+
+        result = services.spirit.upgrade_owned_spirit_tier(artifact)
+
+        assert result.success is True
+        assert result.tier_before == "low"
+        assert result.tier_after == "mid"
+        assert result.soul_cost == 80
+        assert artifact.soul_shards == 120
+        assert services.spirit.get_current_spirit(artifact).tier == "mid"

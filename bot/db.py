@@ -141,6 +141,7 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                 "pg_invest_spirit_unlocked" not in character_columns,
                 # 证道战场 -- 命数机制
                 "proving_ground_runs" in table_names and "lives_remaining" not in pg_run_columns,
+                "proving_ground_runs" in table_names and "soul_shards_earned" not in pg_run_columns,
             )
 
         (
@@ -201,6 +202,7 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             needs_pg_invest_spirit_unlocked,
             # 证道战场 -- 命数机制
             needs_pg_lives_remaining,
+            needs_pg_soul_shards_earned,
         ) = await connection.run_sync(_collect_missing_columns)
         if needs_retreat_column:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN is_retreating BOOLEAN NOT NULL DEFAULT 0"))
@@ -335,6 +337,9 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
         # 证道战场 -- 命数机制
         if needs_pg_lives_remaining:
             await connection.execute(text("ALTER TABLE proving_ground_runs ADD COLUMN lives_remaining INTEGER NOT NULL DEFAULT 3"))
+        # 证道战场 -- 器魂产出
+        if needs_pg_soul_shards_earned:
+            await connection.execute(text("ALTER TABLE proving_ground_runs ADD COLUMN soul_shards_earned BIGINT NOT NULL DEFAULT 0"))
 
         # 灼烧体系重做：迁移所有 artifacts 的旧词条 ID
         artifacts_exists_result = await connection.execute(

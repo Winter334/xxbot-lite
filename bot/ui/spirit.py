@@ -33,9 +33,24 @@ def build_spirit_panel_embed(
     embed.add_field(name="当前器灵", value=_render_spirit(panel_state.current_spirit), inline=True)
     if panel_state.pending_spirit is not None:
         embed.add_field(name="待选新灵相", value=_render_spirit(panel_state.pending_spirit), inline=True)
+    embed.add_field(name="品阶淬炼", value=_render_tier_upgrade(panel_state), inline=False)
     if action_title and action_lines:
         embed.add_field(name=action_title, value="\n".join(action_lines), inline=False)
     return embed
+
+
+def _render_tier_upgrade(panel_state: SpiritPanelState) -> str:
+    lines = [f"持有器魂：`{format_big_number(panel_state.soul_shards)}`"]
+    if panel_state.next_tier_name is None:
+        lines.append("器灵已臻绝品，无法继续淬炼。")
+        return "\n".join(lines)
+    cost_text = format_big_number(panel_state.next_tier_cost or 0)
+    lines.append(f"下一品阶：**{panel_state.next_tier_name}** · 耗器魂 `{cost_text}`")
+    if panel_state.can_upgrade_tier:
+        lines.append("当前可点击「淬炼品阶」提升器灵境界。")
+    elif panel_state.tier_upgrade_blocked_reason:
+        lines.append(panel_state.tier_upgrade_blocked_reason)
+    return "\n".join(lines)
 
 
 def _render_spirit(spirit: SpiritView | None) -> str:

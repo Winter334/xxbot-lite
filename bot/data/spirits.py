@@ -419,3 +419,28 @@ SPIRIT_POWER_BY_ID = {definition.power_id: definition for definition in SPIRIT_P
 
 def get_spirit_power_definition(power_id: str) -> SpiritPowerDefinition:
     return SPIRIT_POWER_BY_ID[power_id]
+
+
+# 器灵品阶淬炼（升阶）所需器魂消耗，key 为目标品阶
+SPIRIT_TIER_UPGRADE_COSTS: dict[str, int] = {
+    "mid": 80,        # low -> mid
+    "high": 200,      # mid -> high
+    "peak": 450,      # high -> peak
+    "supreme": 1000,  # peak -> supreme
+}
+
+
+def get_spirit_tier_upgrade_cost(target_tier_key: str) -> int | None:
+    """返回升级到 target_tier_key 所需的器魂数；非法 tier 返回 None。"""
+    return SPIRIT_TIER_UPGRADE_COSTS.get(target_tier_key)
+
+
+def get_next_spirit_tier(current_tier_key: str) -> str | None:
+    """返回 current_tier_key 的下一阶，绝品或非法 tier 返回 None。"""
+    try:
+        idx = SPIRIT_TIER_ORDER.index(current_tier_key)
+    except ValueError:
+        return None
+    if idx + 1 >= len(SPIRIT_TIER_ORDER):
+        return None
+    return SPIRIT_TIER_ORDER[idx + 1]

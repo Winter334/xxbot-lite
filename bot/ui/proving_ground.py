@@ -247,6 +247,8 @@ def build_pg_combat_result_embed(
         reward_lines.append(f"词条操作 +{result.affix_ops_gained}")
     if result.spirit_ops_gained > 0:
         reward_lines.append(f"器灵操作 +{result.spirit_ops_gained}")
+    if result.soul_shards_gained > 0:
+        reward_lines.append(f"器魂 +{result.soul_shards_gained}")
     if reward_lines:
         embed.add_field(name="🎁 战利品", value="\n".join(reward_lines), inline=False)
 
@@ -490,8 +492,13 @@ def build_pg_event_embed(
             description=result.message,
             color=_PG_COLOR_SUCCESS if result.success else _PG_COLOR_FAILURE,
         )
+        footer_parts: list[str] = []
         if result.score_gained > 0:
-            embed.set_footer(text=f"积分 +{result.score_gained}")
+            footer_parts.append(f"积分 +{result.score_gained}")
+        if result.soul_shards_gained > 0:
+            footer_parts.append(f"器魂 +{result.soul_shards_gained}")
+        if footer_parts:
+            embed.set_footer(text=" · ".join(footer_parts))
         return embed
 
     embed = discord.Embed(
@@ -602,6 +609,10 @@ def build_pg_settlement_embed(
     # 道痕
     if settlement.dao_traces_gained > 0:
         embed.add_field(name="✨ 道痕", value=f"+{settlement.dao_traces_gained}", inline=True)
+
+    # 器魂
+    if settlement.soul_shards_earned > 0:
+        embed.add_field(name="🪬 器魂", value=f"+{settlement.soul_shards_earned}", inline=True)
 
     # BOSS：仅在玩家抵达 BOSS 节点后才展示，避免中途阵亡时误以为被 BOSS 击败
     if settlement.reached_boss and settlement.boss_type:

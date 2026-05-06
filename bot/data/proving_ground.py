@@ -179,6 +179,17 @@ PG_DAO_TRACE_REWARD_PER_BOSS = 1
 """通关一次 BOSS 战获得的道痕数量。"""
 
 
+# -- 器魂产出 --
+
+PG_SOUL_SHARD_REWARDS: dict[str, int] = {
+    PG_NODE_TYPE_NORMAL: 2,
+    PG_NODE_TYPE_ELITE: 8,
+    PG_NODE_TYPE_BOSS: 30,
+    "heart_demon": 12,
+}
+"""战场各节点战斗胜利后的器魂产出（持仓器灵升阶素材）。"""
+
+
 # -- 红尘历劫 --
 
 PG_RED_DUST_THRESHOLD = 9
