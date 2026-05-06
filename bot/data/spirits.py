@@ -395,7 +395,7 @@ SPIRIT_POWER_DEFINITIONS = (
             supreme=(("per_burn_pct", 70, 70), ("wound_stacks", 5, 5)),
         ),
         description_builder=lambda rolls: (
-            f"目标灼烧 ≥5 层时触发：消耗目标全部灼烧层数，每层造成杀伐 {rolls['per_burn_pct']}% 神通伤害（无上限），"
+            f"命中且目标灼烧 ≥5 层时触发：消耗目标全部灼烧层数，每层造成 {rolls['per_burn_pct']}% 杀伐神通伤害（无上限），"
             f"引爆后给目标附加 {rolls['wound_stacks']} 层创伤。"
         ),
     ),

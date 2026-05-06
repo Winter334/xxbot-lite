@@ -965,10 +965,76 @@ class CombatService:
         source: str,
     ) -> list[ActionLog]:
         power = actor.snapshot.spirit_power
-        if power is None or actual_damage <= 0:
+        if power is None:
             return []
 
         logs: list[ActionLog] = []
+
+        # 蚀焰：独立条件触发（命中目标且灼烧≥5 即可引爆），不依赖本次普攻是否造成伤害。
+        # 只接受 ATTACK 来源，避免 burn DOT / 引爆自身造成的伤害再次触发蚀焰。
+        if (
+            power.power_id == "shiyan"
+            and source == _DamageSource.ATTACK
+            and target.hp > 0
+        ):
+            stacks = self._burn_stacks(target)
+            if stacks >= 5:
+                per_burn_pct = power.rolls.get("per_burn_pct", 25)
+                total_pct = stacks * per_burn_pct
+                # 蚀焰伤害基底改为 actor 当前杀伐 × total_pct%（避免 0 伤普攻引爆为 0）
+                base_damage = max(1, self._current_atk(actor) * total_pct // 100)
+                # 收集被消耗的灼烧（用于判断是否触发余烬重燃）
+                consumed_burns = [s for s in target.statuses if s.name == "灼烧"]
+                # 触发即消耗目标全部灼烧层数
+                target.statuses = [s for s in target.statuses if s.name != "灼烧"]
+                explode_actual = self._apply_damage(target, base_damage)
+                # 无论实际伤害是否为 0，都明确播报"引爆 + 消耗灼烧"事件
+                logs.append(
+                    self._effect_log(
+                        round_no,
+                        target,
+                        f"{actor.snapshot.name} 的蚀焰引爆 {stacks} 层灼烧！焰意轰然炸裂，造成 {explode_actual} 点伤害。",
+                        actor_name=actor.snapshot.name,
+                    )
+                )
+                # 引爆后给目标附加创伤（按器灵品阶递增 1~5 层，受 5 层上限约束）
+                wound_stacks = power.rolls.get("wound_stacks", 1)
+                if wound_stacks > 0 and target.hp > 0:
+                    current_wounds = self._status_count(target, "创伤")
+                    add_wounds = min(wound_stacks, max(0, 5 - current_wounds))
+                    for _ in range(add_wounds):
+                        self._add_status(
+                            target,
+                            _StatusEffect(
+                                "创伤",
+                                damage_taken_pct=5,
+                                heal_received_pct=-8,
+                                is_debuff=True,
+                                source=actor,
+                            ),
+                        )
+                    if add_wounds > 0:
+                        logs.append(
+                            self._effect_log(
+                                round_no,
+                                target,
+                                f"蚀焰焚痕未消，{target.snapshot.name} 附加 {add_wounds} 层创伤。",
+                                actor_name=actor.snapshot.name,
+                            )
+                        )
+                # 触发余烬重燃（B 方案：引爆消耗也算 on_burn_consumed）
+                if target.hp > 0 and consumed_burns:
+                    has_relight = any(getattr(b, "is_relight", False) for b in consumed_burns)
+                    if not has_relight:
+                        logs.extend(
+                            self._trigger_on_burn_consumed(
+                                actor, target, round_no=round_no, roller=roller
+                            )
+                        )
+
+        if actual_damage <= 0:
+            return logs
+
         if power.power_id == "shisheng" and source in {_DamageSource.ATTACK, _DamageSource.BURN, _DamageSource.SPIRIT}:
             healed = self._heal_by_damage(actor, actual_damage, power.rolls["heal_pct"])
             if healed > 0:
@@ -1067,61 +1133,6 @@ class CombatService:
                             actor_name=actor.snapshot.name,
                         )
                     )
-
-        if power.power_id == "shiyan" and target.hp > 0:
-            stacks = self._burn_stacks(target)
-            if stacks >= 5:
-                per_burn_pct = power.rolls.get("per_burn_pct", 25)
-                total_pct = stacks * per_burn_pct
-                explode_damage = max(1, actual_damage * total_pct // 100)
-                explode_actual = self._apply_damage(target, explode_damage)
-                # 收集被消耗的灼烧（用于判断是否触发余烬重燃）
-                consumed_burns = [s for s in target.statuses if s.name == "灼烧"]
-                # 触发即消耗目标全部灼烧层数
-                target.statuses = [s for s in target.statuses if s.name != "灼烧"]
-                if explode_actual > 0:
-                    logs.append(
-                        self._effect_log(
-                            round_no,
-                            target,
-                            f"{actor.snapshot.name} 的蚀焰引爆 {stacks} 层灼烧！焰意轰然炸裂，造成 {explode_actual} 点伤害。",
-                            actor_name=actor.snapshot.name,
-                        )
-                    )
-                # 引爆后给目标附加创伤（按器灵品阶递增 1~5 层，受 5 层上限约束）
-                wound_stacks = power.rolls.get("wound_stacks", 1)
-                if wound_stacks > 0 and target.hp > 0:
-                    current_wounds = self._status_count(target, "创伤")
-                    add_wounds = min(wound_stacks, max(0, 5 - current_wounds))
-                    for _ in range(add_wounds):
-                        self._add_status(
-                            target,
-                            _StatusEffect(
-                                "创伤",
-                                damage_taken_pct=5,
-                                heal_received_pct=-8,
-                                is_debuff=True,
-                                source=actor,
-                            ),
-                        )
-                    if add_wounds > 0:
-                        logs.append(
-                            self._effect_log(
-                                round_no,
-                                target,
-                                f"蚀焰焚痕未消，{target.snapshot.name} 附加 {add_wounds} 层创伤。",
-                                actor_name=actor.snapshot.name,
-                            )
-                        )
-                # 触发余烬重燃（B 方案：引爆消耗也算 on_burn_consumed）
-                if target.hp > 0 and consumed_burns:
-                    has_relight = any(getattr(b, "is_relight", False) for b in consumed_burns)
-                    if not has_relight:
-                        logs.extend(
-                            self._trigger_on_burn_consumed(
-                                actor, target, round_no=round_no, roller=roller
-                            )
-                        )
 
         return logs
 
