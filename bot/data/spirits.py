@@ -264,13 +264,31 @@ SPIRIT_POWER_DEFINITIONS = (
         "lingyong",
         "灵涌",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_buff_pct", 6, 9), ("max_bonus_pct", 80, 80)),
-            mid=(("per_buff_pct", 9, 12), ("max_bonus_pct", 110, 110)),
-            high=(("per_buff_pct", 12, 15), ("max_bonus_pct", 140, 140)),
-            peak=(("per_buff_pct", 15, 19), ("max_bonus_pct", 175, 175)),
-            supreme=(("per_buff_pct", 19, 24), ("max_bonus_pct", 210, 210)),
+            low=(("start_stacks", 1, 1), ("per_stack_pct", 2, 3)),
+            mid=(("start_stacks", 2, 2), ("per_stack_pct", 3, 5)),
+            high=(("start_stacks", 3, 3), ("per_stack_pct", 5, 7)),
+            peak=(("start_stacks", 4, 4), ("per_stack_pct", 7, 10)),
+            supreme=(("start_stacks", 5, 5), ("per_stack_pct", 10, 14)),
         ),
-        description_builder=lambda rolls: f"自身每有 1 个正面层数，伤害提高 {rolls['per_buff_pct']}%，最高 {rolls['max_bonus_pct']}%；灵势权重更高；灵势≥6层时灵涌伤害翻倍。",
+        description_builder=lambda rolls: (
+            f"战斗开始时获得 {rolls['start_stacks']} 层灵势；"
+            f"自身每层灵势额外提高造成伤害 {rolls['per_stack_pct']}%（与聚灵词条联动加速爆发）。"
+        ),
+    ),
+    _define_power(
+        "lingyu",
+        "灵御",
+        roll_ranges_by_tier=_tier_rolls(
+            low=(("reduce_per_stack_pct", 8, 10), ("self_damage_down_per_stack_pct", 8, 10)),
+            mid=(("reduce_per_stack_pct", 10, 12), ("self_damage_down_per_stack_pct", 10, 12)),
+            high=(("reduce_per_stack_pct", 12, 15), ("self_damage_down_per_stack_pct", 12, 15)),
+            peak=(("reduce_per_stack_pct", 15, 18), ("self_damage_down_per_stack_pct", 15, 18)),
+            supreme=(("reduce_per_stack_pct", 18, 22), ("self_damage_down_per_stack_pct", 18, 22)),
+        ),
+        description_builder=lambda rolls: (
+            f"战斗前 6 回合，每层灵势提高减伤 {rolls['reduce_per_stack_pct']}% 并降低自身造成伤害 {rolls['self_damage_down_per_stack_pct']}%；"
+            f"第 7 回合起效果消失，进入聚灵爆发期。"
+        ),
     ),
     _define_power(
         "zhuying",

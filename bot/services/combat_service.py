@@ -106,6 +106,7 @@ class _CombatState:
     spirit_proc_rounds: dict[str, int] = field(default_factory=dict)
     consecutive_crits: int = 0
     first_round: bool = True
+    current_round: int = 0
 
 
 class CombatService:
@@ -167,6 +168,8 @@ class CombatService:
         first, second = self._determine_order(challenger_state, defender_state, roller)
 
         for round_no in range(1, self.max_rounds + 1):
+            challenger_state.current_round = round_no
+            defender_state.current_round = round_no
             logs.extend(self._trigger_round_start(round_no, first, second, roller, scene))
             logs.extend(self._trigger_round_start(round_no, second, first, roller, scene))
 
@@ -350,6 +353,37 @@ class CombatService:
                 case "xianji":
                     self._add_status(state, _StatusEffect("先机", agility_pct=_roll(entry.rolls, "initiative_pct", 0)))
                     logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 先机独占，起手快人一步。"))
+        # 器灵 battle_start 钩子：在词条 battle_start 之后触发，便于联动聚灵等词条
+        logs.extend(self._trigger_spirit_battle_start(round_no, state))
+        return logs
+
+    def _trigger_spirit_battle_start(self, round_no: int, state: _CombatState) -> list[ActionLog]:
+        logs: list[ActionLog] = []
+        power = state.snapshot.spirit_power
+        if power is None:
+            return logs
+        match power.power_id:
+            case "lingyong":
+                start_stacks = max(0, power.rolls.get("start_stacks", 0))
+                if start_stacks <= 0:
+                    return logs
+                # 灵势 atk_pct 优先取自聚灵词条 rolls；若无聚灵词条，则灵势仅作为 lingyong 增伤计数器（atk_pct=0）
+                juling_atk_pct = 0
+                for entry in state.snapshot.affixes:
+                    if entry.affix_id == "juling":
+                        juling_atk_pct = _roll(entry.rolls, "atk_pct", 0)
+                        break
+                for _ in range(start_stacks):
+                    if self._status_count(state, "灵势") >= 12:
+                        break
+                    self._add_status(state, _StatusEffect("灵势", atk_pct=juling_atk_pct))
+                logs.append(
+                    self._effect_log(
+                        round_no,
+                        state,
+                        f"{state.snapshot.name} 的灵涌器灵牵起灵势，战斗开始即获得 {start_stacks} 层灵势。",
+                    )
+                )
         return logs
 
     def _trigger_round_start(self, round_no: int, state: _CombatState, opponent: _CombatState, roller: random.Random, scene: set[str]) -> list[ActionLog]:
@@ -359,12 +393,12 @@ class CombatService:
                 continue
             match entry.affix_id:
                 case "juling":
-                    if self._status_count(state, "灵势") >= 10:
+                    if self._status_count(state, "灵势") >= 12:
                         continue
                     self._add_status(state, _StatusEffect("灵势", atk_pct=_roll(entry.rolls, "atk_pct", 0)))
                     current_layers = self._status_count(state, "灵势")
-                    if current_layers >= 6:
-                        self._add_status(state, _StatusEffect("聚灵通明", damage_dealt_pct=_roll(entry.rolls, "late_damage_pct", 8)))
+                    # 每层灵势都叠 1 层聚灵通明，强化后期爆发
+                    self._add_status(state, _StatusEffect("聚灵通明", damage_dealt_pct=_roll(entry.rolls, "late_damage_pct", 8)))
                     logs.append(
                         self._effect_log(
                             round_no,
@@ -987,7 +1021,21 @@ class CombatService:
                 consumed_burns = [s for s in target.statuses if s.name == "灼烧"]
                 # 触发即消耗目标全部灼烧层数
                 target.statuses = [s for s in target.statuses if s.name != "灼烧"]
-                explode_actual = self._apply_damage(target, base_damage)
+                # 蚀焰伤害走减伤管线（增伤/承伤/减伤/命格基点）；不暴击、不消耗护盾、不触发 _before_attack_bonus
+                shiyan_dmg = base_damage
+                shiyan_dmg = int(shiyan_dmg * (1 + self._damage_dealt_pct(actor) / 100))
+                shiyan_dmg = int(shiyan_dmg * (1 + self._damage_taken_pct(target) / 100))
+                shiyan_reduction = self._damage_reduction_pct(target)
+                shiyan_dmg = max(1, int(shiyan_dmg * max(0.05, 1 - (shiyan_reduction / 100))))
+                shiyan_dmg = int(shiyan_dmg * (1 + actor.snapshot.damage_dealt_basis_points / 10_000))
+                if target.snapshot.realm_index > actor.snapshot.realm_index:
+                    shiyan_dmg = int(shiyan_dmg * (1 + actor.snapshot.versus_higher_realm_damage_basis_points / 10_000))
+                shiyan_dmg = int(shiyan_dmg * (1 + target.snapshot.damage_taken_basis_points / 10_000))
+                shiyan_dmg = max(1, int(shiyan_dmg * max(0.05, 1 - (target.snapshot.damage_reduction_basis_points / 10_000))))
+                # 蚀焰伤害可被护盾抵挡（护盾完全吃掉时仍消耗灼烧 + 挂创伤）
+                if self._total_shield(target) > 0:
+                    shiyan_dmg = self._consume_shield(target, shiyan_dmg)
+                explode_actual = self._apply_damage(target, shiyan_dmg)
                 # 无论实际伤害是否为 0，都明确播报"引爆 + 消耗灼烧"事件
                 logs.append(
                     self._effect_log(
@@ -1256,7 +1304,12 @@ class CombatService:
         return total
 
     def _damage_dealt_pct(self, state: _CombatState) -> int:
-        return sum(status.damage_dealt_pct for status in self._active_statuses(state))
+        total = sum(status.damage_dealt_pct for status in self._active_statuses(state))
+        # 灵御：战斗前 6 回合每层灵势降低自身造成伤害（拖时间换爆发期）
+        power = state.snapshot.spirit_power
+        if power is not None and power.power_id == "lingyu" and state.current_round <= 6:
+            total -= self._status_count(state, "灵势") * power.rolls.get("self_damage_down_per_stack_pct", 0)
+        return total
 
     def _spirit_damage_bonus_pct(
         self,
@@ -1284,9 +1337,9 @@ class CombatService:
                     bonus += power.rolls["per_type_pct"]
                 return bonus
             case "lingyong":
-                weighted_count = self._positive_status_count(actor) + self._status_count(actor, "灵势")
-                bonus = weighted_count * power.rolls["per_buff_pct"]
-                return min(bonus, power.rolls["max_bonus_pct"])
+                # 重做：灵涌仅按"自身灵势层数 × per_stack_pct%"计算增伤，不再叠正面层数权重。
+                lingshi_layers = self._status_count(actor, "灵势")
+                return lingshi_layers * power.rolls.get("per_stack_pct", 0)
             case "zhuying":
                 actor_agi = self._current_agility(actor)
                 target_agi = self._current_agility(target)
@@ -1304,7 +1357,12 @@ class CombatService:
         return sum(status.damage_taken_pct for status in self._active_statuses(state))
 
     def _damage_reduction_pct(self, state: _CombatState) -> int:
-        return sum(status.damage_reduction_pct for status in self._active_statuses(state))
+        total = sum(status.damage_reduction_pct for status in self._active_statuses(state))
+        # 灵御：战斗前 6 回合每层灵势提供减伤；第 7 回合起效果消失
+        power = state.snapshot.spirit_power
+        if power is not None and power.power_id == "lingyu" and state.current_round <= 6:
+            total += self._status_count(state, "灵势") * power.rolls.get("reduce_per_stack_pct", 0)
+        return total
 
     def _pierce_pct(self, actor: _CombatState, scene: set[str]) -> int:
         total = 0

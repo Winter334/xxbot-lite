@@ -368,7 +368,7 @@ def test_dengxiao_scales_as_late_game_affix(services) -> None:
     assert any(log.text and "登霄势涨" in log.text for log in battle.logs)
 
 
-def test_juling_scales_to_ten_layers_as_late_game_affix(services) -> None:
+def test_juling_scales_to_twelve_layers_as_late_game_affix(services) -> None:
     challenger = services.combat.create_combatant(
         name="聚灵修士",
         atk=1,
@@ -378,12 +378,12 @@ def test_juling_scales_to_ten_layers_as_late_game_affix(services) -> None:
     )
     defender = services.combat.create_combatant(name="守塔修士", atk=1, defense=100, agility=1)
 
-    battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 120))
+    battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 144))
 
     juling_logs = [log for log in battle.logs if log.text and "聚灵凝成第" in log.text]
-    assert any("第 9 层灵势" in log.text for log in juling_logs)
-    assert any("第 10 层灵势" in log.text for log in juling_logs)
-    assert not any("第 11 层灵势" in log.text for log in juling_logs)
+    assert any("第 11 层灵势" in log.text for log in juling_logs)
+    assert any("第 12 层灵势" in log.text for log in juling_logs)
+    assert not any("第 13 层灵势" in log.text for log in juling_logs)
 
 
 def test_duplicate_juling_affixes_stack_faster_without_breaking_cap(services) -> None:
@@ -399,9 +399,9 @@ def test_duplicate_juling_affixes_stack_faster_without_breaking_cap(services) ->
     )
     defender = services.combat.create_combatant(name="守塔修士", atk=1, defense=100, agility=1)
 
-    battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 120))
+    battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 144))
 
     juling_logs = [log for log in battle.logs if log.text and "聚灵凝成第" in log.text]
-    assert any("第 10 层灵势" in log.text for log in juling_logs)
-    assert not any("第 11 层灵势" in log.text for log in juling_logs)
-    assert len(juling_logs) == 10
+    assert any("第 12 层灵势" in log.text for log in juling_logs)
+    assert not any("第 13 层灵势" in log.text for log in juling_logs)
+    assert len(juling_logs) == 12
