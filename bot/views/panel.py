@@ -628,6 +628,37 @@ async def discard_spirit_message(bot: XianBot, owner_user_id: int, display_name:
     return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
 
 
+async def upgrade_spirit_tier_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.spirit_service.upgrade_owned_spirit_tier(character.artifact)
+        bot.character_service.refresh_combat_power(character)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines: list[str] = [f"器魂：`{result.soul_before} -> {result.soul_after}`"]
+    if result.success:
+        if result.soul_cost:
+            action_lines.append(f"耗费器魂：`{result.soul_cost}`")
+        if result.tier_before and result.tier_after:
+            from bot.data.spirits import SPIRIT_TIER_BY_KEY as _TIERS
+            tb = _TIERS.get(result.tier_before)
+            ta = _TIERS.get(result.tier_after)
+            if tb and ta:
+                action_lines.append(f"品阶：`{tb.name} -> {ta.name}`")
+    embed = build_spirit_panel_embed(
+        snapshot,
+        panel_state,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="品阶淬炼",
+        action_lines=action_lines,
+    )
+    return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
+
+
 async def rename_spirit_message(bot: XianBot, owner_user_id: int, display_name: str, new_name: str):
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
@@ -2103,6 +2134,8 @@ class SpiritOverviewView(OwnerLockedView):
             self._add_discard_button()
         if panel_state.can_rename and not panel_state.can_collect:
             self._add_rename_button()
+        if panel_state.can_upgrade_tier:
+            self._add_upgrade_tier_button()
 
     def _add_refresh_button(self) -> None:
         button = discord.ui.Button(label="刷新", row=0, style=discord.ButtonStyle.secondary)
@@ -2181,6 +2214,18 @@ class SpiritOverviewView(OwnerLockedView):
 
         async def callback(interaction: discord.Interaction) -> None:
             await interaction.response.send_modal(SpiritRenameModal(self.owner_user_id))
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_upgrade_tier_button(self) -> None:
+        button = discord.ui.Button(label="淬炼品阶", row=1, style=discord.ButtonStyle.primary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await upgrade_spirit_tier_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
 
         button.callback = callback
         self.add_item(button)

@@ -25,6 +25,9 @@ class ProvingGroundRun(Base, IdentityMixin, TimestampMixin):
     lives_remaining: Mapped[int] = mapped_column(
         Integer, default=3, server_default="3", nullable=False,
     )
+    soul_shards_earned: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0", nullable=False,
+    )
     last_action_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None,
     )

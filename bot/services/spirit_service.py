@@ -14,7 +14,9 @@ from bot.data.spirits import (
     SpiritInstance,
     SpiritPowerEntry,
     SpiritStatEntry,
+    get_next_spirit_tier,
     get_spirit_power_definition,
+    get_spirit_tier_upgrade_cost,
 )
 from bot.models.artifact import Artifact
 from bot.utils.time_utils import ensure_shanghai, now_shanghai
@@ -59,6 +61,12 @@ class SpiritPanelState:
     can_accept_pending: bool
     can_discard_pending: bool
     can_rename: bool
+    soul_shards: int = 0
+    next_tier_key: str | None = None
+    next_tier_name: str | None = None
+    next_tier_cost: int | None = None
+    can_upgrade_tier: bool = False
+    tier_upgrade_blocked_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -91,6 +99,19 @@ class RenameSpiritResult:
     message: str
     name_before: str
     name_after: str
+
+
+@dataclass(slots=True)
+class SpiritTierUpgradeResult:
+    success: bool
+    message: str
+    soul_before: int
+    soul_after: int
+    soul_cost: int = 0
+    tier_before: str | None = None
+    tier_after: str | None = None
+    spirit_before: SpiritInstance | None = None
+    spirit_after: SpiritInstance | None = None
 
 
 class SpiritService:
@@ -151,6 +172,31 @@ class SpiritService:
         else:
             action_text = "器灵已安于本命法宝之中，可继续重炼追寻更高资质。"
 
+        next_tier_key: str | None = None
+        next_tier_name: str | None = None
+        next_tier_cost: int | None = None
+        can_upgrade_tier = False
+        tier_upgrade_blocked_reason: str | None = None
+        soul_shards = artifact.soul_shards or 0
+        if current is not None:
+            next_tier_key = get_next_spirit_tier(current.tier)
+            if next_tier_key is None:
+                tier_upgrade_blocked_reason = "器灵已臻绝品，无法继续淬炼。"
+            else:
+                next_tier_name = SPIRIT_TIER_BY_KEY[next_tier_key].name
+                next_tier_cost = get_spirit_tier_upgrade_cost(next_tier_key)
+                # 必须无进行中的孕育 / 重炼 / 待选灵相
+                if artifact.spirit_refining_until is not None:
+                    tier_upgrade_blocked_reason = "炉中尚有未竟之事，暂不可淬炼品阶。"
+                elif pending is not None:
+                    tier_upgrade_blocked_reason = "新灵相未决，暂不可淬炼品阶。"
+                elif next_tier_cost is None:
+                    tier_upgrade_blocked_reason = "暂无可用的淬炼路径。"
+                elif soul_shards < next_tier_cost:
+                    tier_upgrade_blocked_reason = f"器魂不足 `{next_tier_cost}`，无法淬炼至{next_tier_name}。"
+                else:
+                    can_upgrade_tier = True
+
         return SpiritPanelState(
             unlocked=unlocked,
             current_spirit=self._build_spirit_view(artifact, current) if current is not None else None,
@@ -164,6 +210,12 @@ class SpiritService:
             can_accept_pending=can_accept_pending,
             can_discard_pending=can_discard_pending,
             can_rename=can_rename,
+            soul_shards=soul_shards,
+            next_tier_key=next_tier_key,
+            next_tier_name=next_tier_name,
+            next_tier_cost=next_tier_cost,
+            can_upgrade_tier=can_upgrade_tier,
+            tier_upgrade_blocked_reason=tier_upgrade_blocked_reason,
         )
 
     def spirit_summary(self, artifact: Artifact) -> tuple[str, str, str]:
@@ -293,6 +345,84 @@ class SpiritService:
         current_time = ensure_shanghai(now or now_shanghai())
         remaining = ensure_shanghai(artifact.spirit_refining_until) - current_time
         return int(remaining.total_seconds())
+
+    def upgrade_owned_spirit_tier(self, artifact: Artifact) -> SpiritTierUpgradeResult:
+        """淬炼持仓器灵品阶一级：消耗器魂；保留高于新品阶下限的数值，低于下限的拉到下限。"""
+        self.ensure_compatibility(artifact)
+        soul_before = artifact.soul_shards or 0
+        spirit_before = self.get_current_spirit(artifact)
+        if spirit_before is None:
+            return SpiritTierUpgradeResult(False, "尚无持仓器灵，不能行淬炼之事。", soul_before, soul_before)
+        if artifact.spirit_refining_until is not None:
+            return SpiritTierUpgradeResult(
+                False, "炉中尚有未竟之事，暂不可淬炼品阶。",
+                soul_before, soul_before, tier_before=spirit_before.tier, spirit_before=spirit_before,
+            )
+        if self.has_pending(artifact):
+            return SpiritTierUpgradeResult(
+                False, "新灵相未决，暂不可淬炼品阶。",
+                soul_before, soul_before, tier_before=spirit_before.tier, spirit_before=spirit_before,
+            )
+        next_tier_key = get_next_spirit_tier(spirit_before.tier)
+        if next_tier_key is None:
+            tier_name = SPIRIT_TIER_BY_KEY[spirit_before.tier].name
+            return SpiritTierUpgradeResult(
+                False, f"器灵已为{tier_name}，无法继续淬炼。",
+                soul_before, soul_before, tier_before=spirit_before.tier, spirit_before=spirit_before,
+            )
+        cost = get_spirit_tier_upgrade_cost(next_tier_key)
+        if cost is None:
+            return SpiritTierUpgradeResult(
+                False, "暂无可用的淬炼路径。",
+                soul_before, soul_before, tier_before=spirit_before.tier, spirit_before=spirit_before,
+            )
+        if soul_before < cost:
+            return SpiritTierUpgradeResult(
+                False, f"器魂不足 `{cost}`，无法淬炼。",
+                soul_before, soul_before, soul_cost=cost,
+                tier_before=spirit_before.tier, spirit_before=spirit_before,
+            )
+
+        # 扣器魂
+        artifact.soul_shards = soul_before - cost
+
+        # 拉升数值至新品阶下限（保留高于下限的）
+        new_tier = SPIRIT_TIER_BY_KEY[next_tier_key]
+        new_stats: list[SpiritStatEntry] = []
+        for entry in spirit_before.stats:
+            target_low = new_tier.flat_range[0] if entry.kind == "flat" else new_tier.ratio_range[0]
+            if entry.kind == "flat":
+                # flat 在 _roll_stat_entry 中存的是 base_value * pct // 100，但同时品阶 flat_range 是百分比域
+                # 这里保持与 ProvingGroundService.upgrade_spirit_tier 一致的语义：直接比较 entry.value 与 range[0]
+                new_value = max(entry.value, target_low)
+            else:
+                new_value = max(entry.value, target_low)
+            new_stats.append(SpiritStatEntry(stat=entry.stat, kind=entry.kind, value=new_value))
+
+        # 拉升 power.rolls
+        power_def = get_spirit_power_definition(spirit_before.power.power_id)
+        new_ranges = power_def.roll_ranges_by_tier.get(next_tier_key, ())
+        adjusted_rolls = dict(spirit_before.power.rolls)
+        for key, low, _high in new_ranges:
+            if adjusted_rolls.get(key, 0) < low:
+                adjusted_rolls[key] = low
+        new_power = SpiritPowerEntry(power_id=spirit_before.power.power_id, rolls=adjusted_rolls)
+
+        spirit_after = SpiritInstance(tier=next_tier_key, stats=tuple(new_stats), power=new_power)
+        self._store_spirit(artifact, "spirit_json", spirit_after)
+
+        new_tier_name = new_tier.name
+        return SpiritTierUpgradeResult(
+            True,
+            f"器灵成功淬炼至「{new_tier_name}」。",
+            soul_before,
+            artifact.soul_shards,
+            soul_cost=cost,
+            tier_before=spirit_before.tier,
+            tier_after=next_tier_key,
+            spirit_before=spirit_before,
+            spirit_after=spirit_after,
+        )
 
     def _roll_spirit(self, artifact: Artifact) -> SpiritInstance:
         tier = self._roll_tier()

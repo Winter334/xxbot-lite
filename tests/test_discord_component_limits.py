@@ -79,6 +79,7 @@ async def test_views_respect_discord_component_limits() -> None:
                 can_accept_pending=False,
                 can_discard_pending=False,
                 can_rename=True,
+                can_upgrade_tier=True,
             ),
         ),
         RetreatView(1, snapshot=SimpleNamespace(is_retreating=False)),
