@@ -556,16 +556,65 @@ def _format_pvp_log_line(action) -> str:
     )
 
 
+# Discord embed field value 硬上限 1024 字符；这里留出余量避免临界丢字。
+_BATTLE_FIELD_SOFT_LIMIT = 980
+
+
+def _split_round_block(header: str, lines: list[str]) -> list[str]:
+    """将单个回合按行拆成若干不超过软上限的 sub-block，标题加 (上)/(下)/(续N)。"""
+    body = "\n".join(lines) if lines else "这一回合杀机未成。"
+    full = f"{header}\n{body}"
+    if len(full) <= _BATTLE_FIELD_SOFT_LIMIT:
+        return [full]
+
+    # 按行贪心打包
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    current_len = 0
+    # 给标题留出位置（含换行）
+    for line in lines or ["这一回合杀机未成。"]:
+        # 单行本身可能就过长，硬切
+        line_pieces = (
+            [line]
+            if len(line) + 1 <= _BATTLE_FIELD_SOFT_LIMIT - 32
+            else [line[i : i + (_BATTLE_FIELD_SOFT_LIMIT - 64)] for i in range(0, len(line), _BATTLE_FIELD_SOFT_LIMIT - 64)]
+        )
+        for piece in line_pieces:
+            piece_len = len(piece) + (1 if current else 0)
+            # 标题占用预估 24 字符
+            if current and current_len + piece_len > _BATTLE_FIELD_SOFT_LIMIT - 24:
+                chunks.append(current)
+                current = [piece]
+                current_len = len(piece)
+            else:
+                current.append(piece)
+                current_len += piece_len
+    if current:
+        chunks.append(current)
+
+    blocks: list[str] = []
+    total = len(chunks)
+    for idx, chunk in enumerate(chunks):
+        if total == 2:
+            suffix = "（上）" if idx == 0 else "（下）"
+        elif total == 1:
+            suffix = ""
+        else:
+            suffix = f"（{idx + 1}/{total}）"
+        blocks.append(f"{header}{suffix}\n" + "\n".join(chunk))
+    return blocks
+
+
 def _battle_round_blocks(battle) -> list[str]:
     blocks: list[str] = []
     for round_no in range(1, battle.rounds + 1):
-        lines = []
-        for action in battle.logs:
-            if action.round_no != round_no:
-                continue
-            lines.append(_format_pvp_log_line(action))
-        body = "\n".join(lines) if lines else "这一回合杀机未成。"
-        blocks.append(f"**第 {round_no} 回合**\n{body}")
+        lines = [
+            _format_pvp_log_line(action)
+            for action in battle.logs
+            if action.round_no == round_no
+        ]
+        header = f"**第 {round_no} 回合**"
+        blocks.extend(_split_round_block(header, lines))
     if battle.reached_round_limit:
         blocks.append(f"**终局判定**\n战至 {MAX_BATTLE_ROUNDS} 回合上限，主动挑战方判负。")
     return blocks
@@ -576,20 +625,38 @@ def _append_pvp_report_fields(embed: discord.Embed, battle) -> None:
     current: list[str] = []
     current_length = 0
     field_index = 1
+
+    def flush() -> None:
+        nonlocal current, current_length, field_index
+        if not current:
+            return
+        name = "完整战报" if field_index == 1 else f"完整战报 {field_index}"
+        embed.add_field(name=name, value="\n\n".join(current), inline=False)
+        field_index += 1
+        current = []
+        current_length = 0
+
     for block in blocks:
-        extra = len(block) + (2 if current else 0)
-        if current and current_length + extra > 1000:
-            name = "完整战报" if field_index == 1 else f"完整战报 {field_index}"
-            embed.add_field(name=name, value="\n\n".join(current), inline=False)
-            field_index += 1
+        # 单 block 自身就 > 软上限，先 flush 再独占一个 field
+        if len(block) > _BATTLE_FIELD_SOFT_LIMIT:
+            flush()
+            # 再次 _split_round_block 已确保 block 不超 1024，这里保险截断
+            safe_block = block if len(block) <= 1024 else block[:1020] + "…"
+            current = [safe_block]
+            current_length = len(safe_block)
+            flush()
+            continue
+
+        extra = len(block) + (2 if current else 0)  # "\n\n" 拼接
+        if current and current_length + extra > _BATTLE_FIELD_SOFT_LIMIT:
+            flush()
             current = [block]
             current_length = len(block)
             continue
         current.append(block)
         current_length += extra
-    if current:
-        name = "完整战报" if field_index == 1 else f"完整战报 {field_index}"
-        embed.add_field(name=name, value="\n\n".join(current), inline=False)
+
+    flush()
 
 
 def _first_striker_name(battle) -> str:

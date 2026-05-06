@@ -140,6 +140,27 @@ def test_shiyan_consumes_burn_stacks_when_threshold_reached(services) -> None:
     assert any(log.text and "创伤" in log.text for log in battle.logs)
 
 
+def test_shiyan_explodes_even_when_attack_deals_zero_damage(services) -> None:
+    """蚀焰：即使本次普攻被高防完全削为 0 伤害，仍应触发引爆并清空灼烧。"""
+    # 上来就 5 层灼烧，5 层就足以触发
+    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 1})
+    attacker = services.combat.create_combatant(
+        name="蚀焰主",
+        atk=10,           # 极低攻击
+        defense=10,
+        agility=50,
+        affixes=(burn_affix,),
+        spirit_power=SpiritPowerEntry("shiyan", {"per_burn_pct": 50, "wound_stacks": 2}),
+    )
+    # 极高防御 → 普攻被削到 0 伤
+    defender = services.combat.create_combatant(name="铁壁", atk=10, defense=10_000_000, agility=10)
+
+    battle = services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 30))
+
+    # 即使普攻 0 伤，蚀焰仍应触发并写入战报
+    assert any(log.text and "蚀焰引爆" in log.text for log in battle.logs)
+
+
 def test_huajing_converts_reduction_affix_into_recovery(services) -> None:
     reduce_affix = ArtifactAffixEntry(slot=1, affix_id="zhenmai", rolls={"reduce_pct": 50})
     services.combat.max_rounds = 1
