@@ -343,9 +343,6 @@ class CombatService:
                 case "zhenmai":
                     self._add_status(state, _StatusEffect("守势", damage_reduction_pct=_roll(entry.rolls, "reduce_pct", 0), remaining_hits=3))
                     logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 凝起镇脉，获得 3 层守势。"))
-                case "huanbu":
-                    self._add_status(state, _StatusEffect("幻步", dodge_bonus_pct=_roll(entry.rolls, "dodge_pct", 0)))
-                    logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 幻步加身，整场闪避更高。"))
                 case "guben":
                     shield_amount = max(1, state.snapshot.max_hp * _roll(entry.rolls, "shield_pct", 0) // 100)
                     self._add_status(state, _StatusEffect("固本", shield=shield_amount, damage_reduction_pct=_roll(entry.rolls, "reduce_pct", 0)))
@@ -662,9 +659,19 @@ class CombatService:
                     self._add_status(dodger, _StatusEffect("风行", damage_dealt_pct=_roll(entry.rolls, "damage_pct", 0), agility_pct=_roll(entry.rolls, "agi_pct", 0)))
                     logs.append(self._effect_log(round_no, dodger, f"{dodger.snapshot.name} 身法如风，获得 1 层风行。"))
                 case "huanbu":
-                    huanbu_crit_pct = _roll(entry.rolls, "crit_pct", 40) if entry.affix_id == "huanbu" else 40
-                    self._add_status(dodger, _StatusEffect("幻步蓄势", crit_bonus_pct=huanbu_crit_pct, remaining_hits=1))
-                    logs.append(self._effect_log(round_no, dodger, f"{dodger.snapshot.name} 幻步蓄势，下次暴击率提高 {huanbu_crit_pct}%。"))
+                    if self._status_count(dodger, "幻步") >= 3:
+                        continue
+                    self._add_status(
+                        dodger,
+                        _StatusEffect(
+                            "幻步",
+                            dodge_bonus_pct=_roll(entry.rolls, "dodge_pct", 0),
+                            crit_bonus_pct=_roll(entry.rolls, "crit_pct", 0),
+                            remaining_hits=1,
+                        ),
+                    )
+                    layers = self._status_count(dodger, "幻步")
+                    logs.append(self._effect_log(round_no, dodger, f"{dodger.snapshot.name} 幻步叠至第 {layers} 层，灵动闪避兼蓄势暴击。"))
         return logs
 
     def _trigger_spirit_on_dodge(self, round_no: int, dodger: _CombatState) -> list[ActionLog]:
@@ -1494,7 +1501,13 @@ class CombatService:
 
     def _consume_attack_bonuses(self, state: _CombatState) -> None:
         for status in state.statuses:
-            if status.is_active() and status.damage_dealt_pct and status.remaining_hits is not None:
+            if status.is_active() and status.remaining_hits is not None and (
+                status.damage_dealt_pct
+                or status.crit_bonus_pct
+                or status.crit_damage_pct
+                or status.guarantee_crit
+                or status.dodge_bonus_pct
+            ):
                 status.remaining_hits -= 1
         state.statuses = self._active_statuses(state)
 

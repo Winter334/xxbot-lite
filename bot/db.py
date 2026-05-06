@@ -48,6 +48,12 @@ def _migrate_burn_entries_json(raw: str | None, rng: random.Random) -> tuple[str
             if "burn_stacks" not in rolls or "burn_atk_pct" not in rolls:
                 entry["rolls"] = get_artifact_affix_definition("zhuohun").roll(rng)
                 changed = True
+        elif aid == "huanbu":
+            # 幻步重做：旧版 dodge_pct 8~18 / crit_pct 40~75 → 新版 3~7 / 15~30
+            rolls = entry.get("rolls") or {}
+            if rolls.get("dodge_pct", 0) > 7 or rolls.get("crit_pct", 0) > 30:
+                entry["rolls"] = get_artifact_affix_definition("huanbu").roll(rng)
+                changed = True
     return (json.dumps(data, ensure_ascii=False) if changed else raw, changed)
 
 
