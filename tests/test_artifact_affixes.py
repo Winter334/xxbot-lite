@@ -310,8 +310,8 @@ def test_zhuohun_burn_uses_attacker_atk_per_stack(services) -> None:
 
     burn_logs = [log for log in battle.logs if log.text and "层灼烧侵蚀" in log.text]
     assert burn_logs, "应触发至少一次灼烧 DOT"
-    # 第一回合命中后挂 3 层，DOT = 100 * 10% * 3 = 30
-    assert "30 点" in burn_logs[0].text
+    # 第一回合命中后挂 3 层，单层 DOT = 100 * 10% = 10（不再按层数乘）
+    assert "10 点" in burn_logs[0].text
 
 
 def test_jinhuo_bonus_only_applies_against_burning_targets(services) -> None:
@@ -322,7 +322,7 @@ def test_jinhuo_bonus_only_applies_against_burning_targets(services) -> None:
         agility=100,
         affixes=(
             ArtifactAffixEntry(1, "zhuohun", {"burn_stacks": 5, "burn_atk_pct": 5}),
-            ArtifactAffixEntry(2, "jinhuo", {"damage_pct": 50, "per_stack_pct": 10}),
+            ArtifactAffixEntry(2, "jinhuo", {"proc_pct": 100, "burn_stacks_gain": 2}),
         ),
     )
     defender = services.combat.create_combatant(name="木人", atk=1, defense=200, agility=1)
