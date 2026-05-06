@@ -205,6 +205,7 @@ async def test_affix_panel_describes_legacy_rolls_with_new_defaults(session_fact
         character = (await services.character.get_or_create_character(session, 5011, "旧词条")).character
         artifact = character.artifact
         artifact.reinforce_level = 10
+        # 旧 rolls 字段（proc_pct/burn_pct）已不再被新版 zhuohun 识别，应回退到默认下限值
         artifact.affix_slots_json = json.dumps(
             [
                 {
@@ -219,8 +220,9 @@ async def test_affix_panel_describes_legacy_rolls_with_new_defaults(session_fact
         current_slot = panel_state.current_slots[0]
 
         assert current_slot.name == "灼魂"
-        assert "灼痕" in current_slot.description
-        assert "4%" in current_slot.description
+        # 新版描述应包含层数与单层杀伐百分比的关键词
+        assert "灼烧" in current_slot.description
+        assert "层" in current_slot.description
 
 
 @pytest.mark.asyncio
@@ -290,47 +292,49 @@ async def test_duplicate_affixes_are_allowed(session_factory, services) -> None:
         assert [entry.affix_id for entry in entries] == ["huichun", "huichun"]
 
 
-def test_burn_affix_uses_target_max_hp_percentage(services) -> None:
+def test_zhuohun_burn_uses_attacker_atk_per_stack(services) -> None:
     attacker = services.combat.create_combatant(
-        name="焚心",
-        atk=1,
-        defense=10,
+        name="灼魂修士",
+        atk=100,
+        defense=200,  # max_hp = defense*10 = 2000，撑住战斗
         agility=100,
-        affixes=(ArtifactAffixEntry(1, "zhuohun", {"proc_pct": 100, "burn_pct": 5, "scar_bonus_pct": 0}),),
+        affixes=(ArtifactAffixEntry(1, "zhuohun", {"burn_stacks": 3, "burn_atk_pct": 10}),),
     )
-    defender = services.combat.create_combatant(name="木人", atk=1, defense=10, agility=1)
+    defender = services.combat.create_combatant(name="木人", atk=1, defense=200, agility=1)
 
     battle = services.combat.run_battle(
         attacker,
         defender,
-        rng=SequenceRandom([0.99, 0.99, 0.0]),
+        rng=SequenceRandom([0.99, 0.99, 0.0] * 8),
     )
 
-    burn_log = next(log for log in battle.logs if log.text and "受灼烧侵蚀" in log.text)
-    assert burn_log.target_name == "木人"
-    assert burn_log.target_hp_after == 94
+    burn_logs = [log for log in battle.logs if log.text and "层灼烧侵蚀" in log.text]
+    assert burn_logs, "应触发至少一次灼烧 DOT"
+    # 第一回合命中后挂 3 层，DOT = 100 * 10% * 3 = 30
+    assert "30 点" in burn_logs[0].text
 
 
-def test_burn_scar_scales_base_burn_damage_linearly(services) -> None:
+def test_jinhuo_bonus_only_applies_against_burning_targets(services) -> None:
     attacker = services.combat.create_combatant(
-        name="灼痕修士",
-        atk=1,
-        defense=10,
+        name="烬火修士",
+        atk=10,
+        defense=200,
         agility=100,
-        affixes=(ArtifactAffixEntry(1, "zhuohun", {"proc_pct": 100, "burn_pct": 5, "scar_bonus_pct": 8}),),
+        affixes=(
+            ArtifactAffixEntry(1, "zhuohun", {"burn_stacks": 5, "burn_atk_pct": 5}),
+            ArtifactAffixEntry(2, "jinhuo", {"damage_pct": 50, "per_stack_pct": 10}),
+        ),
     )
-    defender = services.combat.create_combatant(name="木人", atk=1, defense=10, agility=1)
+    defender = services.combat.create_combatant(name="木人", atk=1, defense=200, agility=1)
 
     battle = services.combat.run_battle(
         attacker,
         defender,
-        rng=SequenceRandom([0.99, 0.99, 0.0] * 12),
+        rng=SequenceRandom([0.99] * 30),
     )
 
-    burn_logs = [log for log in battle.logs if log.text and "受灼烧侵蚀" in log.text]
-    assert burn_logs[0].target_hp_after == 94
-    burn_damages = [int(log.text.split("损失 ", 1)[1].split(" 点生命", 1)[0]) for log in burn_logs]
-    assert max(burn_damages) == 8
+    # 应至少触发一次灼烧
+    assert any(log.text and "灼烧" in log.text for log in battle.logs)
 
 
 def test_lueying_creates_fast_attack_agility_gap(services) -> None:

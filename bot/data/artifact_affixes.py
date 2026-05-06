@@ -122,12 +122,11 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "zhuohun",
         "灼魂",
         "on_hit",
-        ("proc_pct", 25, 50),
-        ("burn_pct", 2, 6),
-        ("scar_bonus_pct", 4, 8),
+        ("burn_stacks", 2, 4),
+        ("burn_atk_pct", 25, 55),
         description_builder=lambda rolls: (
-            f"命中后有 {rolls['proc_pct']}% 概率附加 2 回合灼烧并叠 1 层灼痕；灼烧造成最大生命 {rolls['burn_pct']}% 伤害，"
-            f"每层灼痕使灼烧伤害提高 {rolls['scar_bonus_pct']}%，最多 8 层"
+            f"命中必定附加 {rolls['burn_stacks']} 层灼烧；灼烧每层每回合造成杀伐 {rolls['burn_atk_pct']}% 伤害，"
+            f"每回合衰减 1 层（多次叠加时单层伤害取较高值）"
         ),
     ),
     _define(
@@ -231,13 +230,6 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         description_builder=lambda rolls: f"前 3 次受击后获得 1 层压阵；每层使下一次伤害提高 {rolls['damage_pct']}%",
     ),
     _define(
-        "ranjin",
-        "燃烬",
-        "round_end",
-        ("damage_pct", 2, 5),
-        description_builder=lambda rolls: f"回合结束时，目标每 2 层灼痕追加最大生命 {rolls['damage_pct']}% 的燃烬伤害；6 层后翻倍",
-    ),
-    _define(
         "liechuang",
         "裂创",
         "on_hit",
@@ -297,35 +289,48 @@ ARTIFACT_AFFIX_DEFINITIONS = (
     ),
     # ── 灼烧流 ──
     _define(
-        "zhuoyin",
-        "灼印",
-        "on_hit",
-        ("proc_pct", 30, 60),
-        ("burn_damage_pct", 3, 8),
-        description_builder=lambda rolls: (
-            f"命中灼烧中的目标时，有 {rolls['proc_pct']}% 概率追加 {rolls['burn_damage_pct']}% 最大生命的灼伤"
-        ),
-    ),
-    _define(
-        "cuihuo",
-        "淬火",
-        "round_start",
-        ("atk_pct", 4, 9),
+        "fenxin",
+        "焚心",
+        "on_burn_apply",
+        ("self_atk_pct", 3, 7),
         ("max_stacks", 4, 6),
         description_builder=lambda rolls: (
-            f"回合开始时，若目标处于灼烧状态，获得 1 层淬火，最多 {rolls['max_stacks']} 层；"
-            f"每层杀伐提高 {rolls['atk_pct']}%"
+            f"每次给目标附加灼烧时，自身获得 1 层焚心，最多 {rolls['max_stacks']} 层；"
+            f"每层提高 {rolls['self_atk_pct']}% 杀伐"
         ),
     ),
     _define(
-        "fentian",
-        "焚天",
+        "jinhuo",
+        "烬火",
         "before_attack",
-        ("damage_pct", 50, 110),
-        ("extend_rounds", 1, 2),
+        ("damage_pct", 20, 55),
+        ("per_stack_pct", 2, 5),
         description_builder=lambda rolls: (
-            f"目标灼痕 ≥4 层时，本次伤害提高 {rolls['damage_pct']}%，"
-            f"并使目标灼烧延长 {rolls['extend_rounds']} 回合"
+            f"攻击灼烧目标时本次伤害提高 {rolls['damage_pct']}%；"
+            f"目标灼烧每超过 3 层额外提高 {rolls['per_stack_pct']}%"
+        ),
+    ),
+    _define(
+        "fenjie",
+        "焚劫",
+        "on_burn_apply",
+        ("vuln_pct", 3, 7),
+        ("heal_down_pct", 4, 9),
+        ("max_stacks", 4, 6),
+        description_builder=lambda rolls: (
+            f"每次给目标附加灼烧时，目标获得 1 层焚劫，最多 {rolls['max_stacks']} 层；"
+            f"每层使目标承伤提高 {rolls['vuln_pct']}%、受疗降低 {rolls['heal_down_pct']}%"
+        ),
+    ),
+    _define(
+        "yujin",
+        "余烬",
+        "on_hit",
+        ("crit_per_stack", 2, 5),
+        ("crit_dmg_per_stack", 3, 7),
+        description_builder=lambda rolls: (
+            f"攻击灼烧目标时，目标每层灼烧提高自身 {rolls['crit_per_stack']}% 暴击率与 "
+            f"{rolls['crit_dmg_per_stack']}% 暴击伤害（仅本次结算）"
         ),
     ),
     # ── 身法流 ──

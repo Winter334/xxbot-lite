@@ -1,11 +1,54 @@
 from __future__ import annotations
 
+import json
+import random
 from pathlib import Path
 
 from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from bot.models.base import Base
+
+
+# 灼烧体系重做：旧词条 → 新词条迁移映射
+_BURN_AFFIX_RENAMES = {
+    "zhuoyin": "fenjie",
+    "cuihuo": "fenxin",
+    "fentian": "jinhuo",
+    "ranjin": "yujin",
+}
+
+
+def _migrate_burn_entries_json(raw: str | None, rng: random.Random) -> tuple[str, bool]:
+    """扫描 affix JSON 列表，替换旧灼烧体系词条 ID 并重 roll；返回 (新 JSON 字符串, 是否变更)。"""
+    if not raw:
+        return raw or "[]", False
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return raw, False
+    if not isinstance(data, list):
+        return raw, False
+    # 延迟 import 避免循环依赖
+    from bot.data.artifact_affixes import get_artifact_affix_definition
+
+    changed = False
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        aid = entry.get("affix_id")
+        if aid in _BURN_AFFIX_RENAMES:
+            new_id = _BURN_AFFIX_RENAMES[aid]
+            entry["affix_id"] = new_id
+            entry["rolls"] = get_artifact_affix_definition(new_id).roll(rng)
+            changed = True
+        elif aid == "zhuohun":
+            rolls = entry.get("rolls") or {}
+            # 旧版 zhuohun 用 burn_pct/scar_bonus_pct，新版用 burn_stacks/burn_atk_pct
+            if "burn_stacks" not in rolls or "burn_atk_pct" not in rolls:
+                entry["rolls"] = get_artifact_affix_definition("zhuohun").roll(rng)
+                changed = True
+    return (json.dumps(data, ensure_ascii=False) if changed else raw, changed)
 
 
 def _prepare_sqlite_path(database_url: str) -> None:
@@ -286,6 +329,33 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
         # 证道战场 -- 命数机制
         if needs_pg_lives_remaining:
             await connection.execute(text("ALTER TABLE proving_ground_runs ADD COLUMN lives_remaining INTEGER NOT NULL DEFAULT 3"))
+
+        # 灼烧体系重做：迁移所有 artifacts 的旧词条 ID
+        artifacts_exists_result = await connection.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name='artifacts'")
+        )
+        if artifacts_exists_result.first():
+            inspector_columns = await connection.run_sync(
+                lambda sync_conn: {column["name"] for column in inspect(sync_conn).get_columns("artifacts")}
+            )
+            if {"affix_slots_json", "affix_pending_json"}.issubset(inspector_columns):
+                rng = random.Random()
+                rows = (
+                    await connection.execute(
+                        text("SELECT id, affix_slots_json, affix_pending_json FROM artifacts")
+                    )
+                ).all()
+                for row in rows:
+                    artifact_id, slots_raw, pending_raw = row
+                    new_slots, slots_changed = _migrate_burn_entries_json(slots_raw, rng)
+                    new_pending, pending_changed = _migrate_burn_entries_json(pending_raw, rng)
+                    if slots_changed or pending_changed:
+                        await connection.execute(
+                            text(
+                                "UPDATE artifacts SET affix_slots_json = :slots, affix_pending_json = :pending WHERE id = :id"
+                            ),
+                            {"slots": new_slots, "pending": new_pending, "id": artifact_id},
+                        )
 
 
 async def init_models(engine: AsyncEngine) -> None:
