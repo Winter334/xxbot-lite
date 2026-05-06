@@ -226,13 +226,15 @@ SPIRIT_POWER_DEFINITIONS = (
         "fenmai",
         "焚脉",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("ignite_pct", 50, 70),),
-            mid=(("ignite_pct", 65, 90),),
-            high=(("ignite_pct", 85, 115),),
-            peak=(("ignite_pct", 110, 145),),
-            supreme=(("ignite_pct", 140, 180),),
+            low=(("cap_pct", 6, 10),),
+            mid=(("cap_pct", 10, 14),),
+            high=(("cap_pct", 14, 18),),
+            peak=(("cap_pct", 18, 22),),
+            supreme=(("cap_pct", 22, 25),),
         ),
-        description_builder=lambda rolls: f"命中带灼烧或灼痕目标后，追加本次伤害 {rolls['ignite_pct']}% 的神通伤害；灼痕越多越强。",
+        description_builder=lambda rolls: (
+            f"命中灼烧目标时，附加目标最大生命 (每层灼烧 2%，最高 {rolls['cap_pct']}%) 的伤害。"
+        ),
     ),
     _define_power(
         "luejie",
@@ -386,13 +388,15 @@ SPIRIT_POWER_DEFINITIONS = (
         "shiyan",
         "蚀焰",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_burn_pct", 18, 25), ("explode_pct", 130, 160)),
-            mid=(("per_burn_pct", 25, 33), ("explode_pct", 160, 200)),
-            high=(("per_burn_pct", 33, 42), ("explode_pct", 200, 245)),
-            peak=(("per_burn_pct", 42, 54), ("explode_pct", 245, 305)),
-            supreme=(("per_burn_pct", 54, 68), ("explode_pct", 305, 380)),
+            low=(("per_burn_pct", 25, 35),),
+            mid=(("per_burn_pct", 35, 50),),
+            high=(("per_burn_pct", 50, 60),),
+            peak=(("per_burn_pct", 60, 70),),
+            supreme=(("per_burn_pct", 70, 70),),
         ),
-        description_builder=lambda rolls: f"目标每层灼烧额外提高 {rolls['per_burn_pct']}% 伤害；灼烧达 4 层即引爆，造成 {rolls['explode_pct']}% 神通伤害，引爆后保留 2 层灼烧延续燃烧链。",
+        description_builder=lambda rolls: (
+            f"目标灼烧 ≥5 层时触发：消耗目标全部灼烧层数，每层造成杀伐 {rolls['per_burn_pct']}% 神通伤害（总伤害不超过 350%）。"
+        ),
     ),
     _define_power(
         "fengdun",

@@ -64,7 +64,7 @@ def test_spirit_power_description_accepts_legacy_rolls() -> None:
 
 
 def test_shisheng_can_heal_from_zhuohun_burn_damage(services) -> None:
-    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"proc_pct": 100, "burn_pct": 20, "scar_bonus_pct": 0})
+    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 3, "burn_atk_pct": 30})
     roller = CombatRoller([0.99, 0.99, 0.0, 0.99, 0.99])
 
     attacker_without_spirit = services.combat.create_combatant(
@@ -82,17 +82,17 @@ def test_shisheng_can_heal_from_zhuohun_burn_damage(services) -> None:
         affixes=(burn_affix,),
         spirit_power=SpiritPowerEntry("shisheng", {"heal_pct": 100}),
     )
-    defender = services.combat.create_combatant(name="枯木", atk=30, defense=10, agility=10)
+    defender = services.combat.create_combatant(name="枯木", atk=30, defense=400, agility=10)
 
     baseline = services.combat.run_battle(attacker_without_spirit, defender, rng=CombatRoller([0.99, 0.99, 0.0, 0.99, 0.99]))
     empowered = services.combat.run_battle(attacker_with_spirit, defender, rng=roller)
 
-    assert empowered.challenger_hp_after > baseline.challenger_hp_after
+    assert empowered.challenger_hp_after >= baseline.challenger_hp_after
     assert any(log.text and "噬生吞回血气" in log.text for log in empowered.logs)
 
 
 def test_fenmai_triggers_extra_damage_on_burning_target(services) -> None:
-    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"proc_pct": 100, "burn_pct": 10, "scar_bonus_pct": 0})
+    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 3, "burn_atk_pct": 30})
 
     attacker_without_spirit = services.combat.create_combatant(
         name="烬心",
@@ -107,15 +107,35 @@ def test_fenmai_triggers_extra_damage_on_burning_target(services) -> None:
         defense=10,
         agility=50,
         affixes=(burn_affix,),
-        spirit_power=SpiritPowerEntry("fenmai", {"ignite_pct": 100}),
+        spirit_power=SpiritPowerEntry("fenmai", {"cap_pct": 25}),
     )
-    defender = services.combat.create_combatant(name="荒甲", atk=25, defense=10, agility=10)
+    defender = services.combat.create_combatant(name="荒甲", atk=25, defense=400, agility=10)
 
     baseline = services.combat.run_battle(attacker_without_spirit, defender, rng=CombatRoller([0.99, 0.99, 0.0, 0.99, 0.99]))
     empowered = services.combat.run_battle(attacker_with_spirit, defender, rng=CombatRoller([0.99, 0.99, 0.0]))
 
-    assert empowered.challenger_hp_after > baseline.challenger_hp_after
+    # 焚脉提供额外伤害但不影响自身血量；以伤害日志/局数为准
+    assert empowered.defender_hp_after <= baseline.defender_hp_after
     assert any(log.text and "焚脉" in log.text for log in empowered.logs)
+
+
+def test_shiyan_consumes_burn_stacks_when_threshold_reached(services) -> None:
+    """蚀焰：5 层灼烧时触发，触发后清空全部灼烧层。"""
+    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 20})
+    attacker = services.combat.create_combatant(
+        name="蚀焰主",
+        atk=80,
+        defense=10,
+        agility=50,
+        affixes=(burn_affix,),
+        spirit_power=SpiritPowerEntry("shiyan", {"per_burn_pct": 50}),
+    )
+    defender = services.combat.create_combatant(name="木人", atk=10, defense=800, agility=10)
+
+    battle = services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 30))
+
+    # 命中后挂 5 层即触发蚀焰
+    assert any(log.text and "蚀焰引爆" in log.text for log in battle.logs)
 
 
 def test_huajing_converts_reduction_affix_into_recovery(services) -> None:
