@@ -120,7 +120,7 @@ def test_fenmai_triggers_extra_damage_on_burning_target(services) -> None:
 
 
 def test_shiyan_consumes_burn_stacks_when_threshold_reached(services) -> None:
-    """蚀焰：5 层灼烧时触发，触发后清空全部灼烧层。"""
+    """蚀焰：5 层灼烧时触发，引爆后清空灼烧并给目标挂创伤。"""
     burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 20})
     attacker = services.combat.create_combatant(
         name="蚀焰主",
@@ -128,7 +128,7 @@ def test_shiyan_consumes_burn_stacks_when_threshold_reached(services) -> None:
         defense=10,
         agility=50,
         affixes=(burn_affix,),
-        spirit_power=SpiritPowerEntry("shiyan", {"per_burn_pct": 50}),
+        spirit_power=SpiritPowerEntry("shiyan", {"per_burn_pct": 50, "wound_stacks": 3}),
     )
     defender = services.combat.create_combatant(name="木人", atk=10, defense=800, agility=10)
 
@@ -136,6 +136,8 @@ def test_shiyan_consumes_burn_stacks_when_threshold_reached(services) -> None:
 
     # 命中后挂 5 层即触发蚀焰
     assert any(log.text and "蚀焰引爆" in log.text for log in battle.logs)
+    # 引爆后给目标附加创伤
+    assert any(log.text and "创伤" in log.text for log in battle.logs)
 
 
 def test_huajing_converts_reduction_affix_into_recovery(services) -> None:

@@ -84,6 +84,7 @@ class _StatusEffect:
     dodge_bonus_pct: int = 0
     shield: int = 0
     guarantee_crit: bool = False
+    is_relight: bool = False
 
     def is_active(self) -> bool:
         duration_ok = self.duration is None or self.duration > 0
@@ -252,15 +253,14 @@ class CombatService:
         self._reduce_wind_stacks(target, 1)
 
         damage = self._current_atk(actor)
-        yujin_crit_pct, yujin_crit_dmg_pct = self._yujin_crit_bonus(actor, target, scene)
-        crit_rate = clamp(0.20 * (self._current_agility(actor) / max(self._current_agility(target), 1)) + (self._crit_bonus_pct(actor) + yujin_crit_pct) / 100, 0.10, 0.90)
+        crit_rate = clamp(0.20 * (self._current_agility(actor) / max(self._current_agility(target), 1)) + self._crit_bonus_pct(actor) / 100, 0.10, 0.90)
         if self._has_guarantee_crit(actor):
             critical = True
             self._consume_guarantee_crit(actor)
         else:
             critical = roller.random() < crit_rate
         if critical:
-            crit_multiplier = 1.5 + 0.5 * damage / max(damage + target.snapshot.defense, 1) + (self._crit_damage_bonus_pct(actor) + yujin_crit_dmg_pct) / 100
+            crit_multiplier = 1.5 + 0.5 * damage / max(damage + target.snapshot.defense, 1) + self._crit_damage_bonus_pct(actor) / 100
             damage = int(damage * crit_multiplier)
 
         before_attack_bonus = self._before_attack_bonus_pct(actor, target, scene)
@@ -528,8 +528,45 @@ class CombatService:
                     self._add_status(actor, _StatusEffect("疾锋", agility_pct=_roll(entry.rolls, "agi_pct", 0), damage_dealt_pct=_roll(entry.rolls, "damage_pct", 0)))
                     logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 疾锋加身，速攻势头更盛。"))
                 case "yujin":
-                    # 余烬：仅本次结算的暴击/暴伤加成由 _yujin_crit_bonus 在攻击主流程中处理；on_hit 不需做任何动作
+                    # 余烬：触发器已迁移至 on_burn_consumed（灼烧被消耗时重燃），on_hit 不再处理
                     pass
+                case "jinhuo":
+                    # 烬火：攻击灼烧目标时，按概率消耗目标 1 层正面状态，将其转化为 N 层灼烧
+                    if not self._has_burn(target):
+                        continue
+                    if self._positive_status_count(target) <= 0:
+                        continue
+                    proc_pct = _roll(entry.rolls, "proc_pct", 0)
+                    if roller.random() > proc_pct / 100:
+                        continue
+                    removed = self._remove_one_positive_status(target)
+                    if removed is None:
+                        continue
+                    gain = _roll(entry.rolls, "burn_stacks_gain", 1)
+                    burn_pct = next(
+                        (
+                            _roll(e.rolls, "burn_atk_pct", 30)
+                            for e in actor.snapshot.affixes
+                            if e.affix_id == "zhuohun"
+                        ),
+                        30,
+                    )
+                    self._apply_burn_to_target(
+                        target,
+                        actor,
+                        stacks=gain,
+                        per_stack_pct=burn_pct,
+                        round_no=round_no,
+                        logs=logs,
+                    )
+                    logs.append(
+                        self._effect_log(
+                            round_no,
+                            target,
+                            f"{actor.snapshot.name} 烬火吞噬 {target.snapshot.name} 的「{removed.name}」，化为 {gain} 层灼烧。",
+                            actor_name=actor.snapshot.name,
+                        )
+                    )
                 case "leiyin":
                     crit_pct = _roll(entry.rolls, "crit_pct", 0)
                     self._add_status(actor, _StatusEffect("雷引", crit_bonus_pct=crit_pct))
@@ -834,7 +871,7 @@ class CombatService:
                 if stacks <= 0:
                     continue
                 source_atk = self._current_atk(status.source) if status.source is not None else state.snapshot.atk
-                burn_damage = max(1, int(source_atk * status.burn_pct / 100) * stacks)
+                burn_damage = max(1, int(source_atk * status.burn_pct / 100))
                 actual_damage = self._apply_damage(state, burn_damage)
                 if actual_damage <= 0:
                     continue
@@ -869,6 +906,19 @@ class CombatService:
                     )
                 died_from_burn = state.hp <= 0
                 burn_logs.extend(self._trigger_spirit_revive(round_no, state))
+                # 灼烧自然烧尽（本次结算后会被 _decay_statuses 扣到 0）→ 触发 on_burn_consumed
+                if (
+                    not died_from_burn
+                    and state.hp > 0
+                    and stacks <= 1
+                    and status.source is not None
+                    and not status.is_relight
+                ):
+                    burn_logs.extend(
+                        self._trigger_on_burn_consumed(
+                            status.source, state, round_no=round_no, roller=roller
+                        )
+                    )
                 if burn_logs:
                     burn_logs[0].target_hp_after = state.hp
                 logs.extend(burn_logs)
@@ -1022,9 +1072,11 @@ class CombatService:
             stacks = self._burn_stacks(target)
             if stacks >= 5:
                 per_burn_pct = power.rolls.get("per_burn_pct", 25)
-                total_pct = min(350, stacks * per_burn_pct)
+                total_pct = stacks * per_burn_pct
                 explode_damage = max(1, actual_damage * total_pct // 100)
                 explode_actual = self._apply_damage(target, explode_damage)
+                # 收集被消耗的灼烧（用于判断是否触发余烬重燃）
+                consumed_burns = [s for s in target.statuses if s.name == "灼烧"]
                 # 触发即消耗目标全部灼烧层数
                 target.statuses = [s for s in target.statuses if s.name != "灼烧"]
                 if explode_actual > 0:
@@ -1036,6 +1088,40 @@ class CombatService:
                             actor_name=actor.snapshot.name,
                         )
                     )
+                # 引爆后给目标附加创伤（按器灵品阶递增 1~5 层，受 5 层上限约束）
+                wound_stacks = power.rolls.get("wound_stacks", 1)
+                if wound_stacks > 0 and target.hp > 0:
+                    current_wounds = self._status_count(target, "创伤")
+                    add_wounds = min(wound_stacks, max(0, 5 - current_wounds))
+                    for _ in range(add_wounds):
+                        self._add_status(
+                            target,
+                            _StatusEffect(
+                                "创伤",
+                                damage_taken_pct=5,
+                                heal_received_pct=-8,
+                                is_debuff=True,
+                                source=actor,
+                            ),
+                        )
+                    if add_wounds > 0:
+                        logs.append(
+                            self._effect_log(
+                                round_no,
+                                target,
+                                f"蚀焰焚痕未消，{target.snapshot.name} 附加 {add_wounds} 层创伤。",
+                                actor_name=actor.snapshot.name,
+                            )
+                        )
+                # 触发余烬重燃（B 方案：引爆消耗也算 on_burn_consumed）
+                if target.hp > 0 and consumed_burns:
+                    has_relight = any(getattr(b, "is_relight", False) for b in consumed_burns)
+                    if not has_relight:
+                        logs.extend(
+                            self._trigger_on_burn_consumed(
+                                actor, target, round_no=round_no, roller=roller
+                            )
+                        )
 
         return logs
 
@@ -1262,6 +1348,7 @@ class CombatService:
         per_stack_pct: int,
         round_no: int,
         logs: list,
+        is_relight: bool = False,
     ) -> None:
         existing = None
         for status in target.statuses:
@@ -1272,6 +1359,11 @@ class CombatService:
             existing.duration = (existing.duration or 0) + stacks
             existing.burn_pct = max(existing.burn_pct, per_stack_pct)
             existing.source = actor
+            # 重燃合并到既有灼烧时，若既有灼烧不是重燃产物，保持原 is_relight=False；
+            # 反之若既有就是重燃，新加入也视作重燃链路
+            if is_relight and not existing.is_relight:
+                # 普通灼烧叠加重燃层数：重燃身份让位于普通灼烧（默认更强势），不改 flag
+                pass
         else:
             self._add_status(
                 target,
@@ -1281,6 +1373,7 @@ class CombatService:
                     burn_pct=per_stack_pct,
                     is_debuff=True,
                     source=actor,
+                    is_relight=is_relight,
                 ),
             )
         logs.append(
@@ -1291,7 +1384,9 @@ class CombatService:
                 actor_name=actor.snapshot.name,
             )
         )
-        self._trigger_on_burn_apply(actor, target, round_no=round_no, logs=logs)
+        # 重燃不再二次触发 on_burn_apply（避免余烬重燃叠焚心/焚劫导致雪球）
+        if not is_relight:
+            self._trigger_on_burn_apply(actor, target, round_no=round_no, logs=logs)
 
     def _trigger_on_burn_apply(
         self,
@@ -1307,25 +1402,29 @@ class CombatService:
                 continue
             match entry.affix_id:
                 case "fenxin":
-                    max_stacks = _roll(entry.rolls, "max_stacks", 4)
-                    if self._status_count(actor, "焚心") >= max_stacks:
+                    max_stacks = _roll(entry.rolls, "max_stacks", 6)
+                    if self._status_count(target, "焚心") >= max_stacks:
                         continue
                     self._add_status(
-                        actor,
+                        target,
                         _StatusEffect(
                             "焚心",
-                            atk_pct=_roll(entry.rolls, "self_atk_pct", 0),
+                            atk_pct=-_roll(entry.rolls, "atk_down_pct", 0),
+                            agility_pct=-_roll(entry.rolls, "agi_down_pct", 0),
+                            is_debuff=True,
+                            source=actor,
                         ),
                     )
                     logs.append(
                         self._effect_log(
                             round_no,
-                            actor,
-                            f"{actor.snapshot.name} 焚心凝聚，杀伐继续攀升。",
+                            target,
+                            f"{actor.snapshot.name} 的焚心烙下印记，{target.snapshot.name} 杀伐与身法俱损。",
+                            actor_name=actor.snapshot.name,
                         )
                     )
                 case "fenjie":
-                    max_stacks = _roll(entry.rolls, "max_stacks", 4)
+                    max_stacks = _roll(entry.rolls, "max_stacks", 6)
                     if self._status_count(target, "焚劫") >= max_stacks:
                         continue
                     self._add_status(
@@ -1346,6 +1445,49 @@ class CombatService:
                             actor_name=actor.snapshot.name,
                         )
                     )
+
+    def _trigger_on_burn_consumed(
+        self,
+        actor: _CombatState,
+        target: _CombatState,
+        *,
+        round_no: int,
+        roller: random.Random,
+    ) -> list[ActionLog]:
+        """灼烧被消耗时触发（蚀焰引爆 / 自然烧尽）。当前仅用于余烬词条重燃。"""
+        logs: list[ActionLog] = []
+        if target.hp <= 0:
+            return logs
+        for entry in actor.snapshot.affixes:
+            affix_def = get_artifact_affix_definition(entry.affix_id)
+            if affix_def.trigger != "on_burn_consumed":
+                continue
+            if entry.affix_id == "yujin":
+                proc_pct = _roll(entry.rolls, "proc_pct", 0)
+                if roller.random() > proc_pct / 100:
+                    continue
+                stacks = _roll(entry.rolls, "relight_stacks", 2)
+                burn_pct = _roll(entry.rolls, "relight_burn_pct", 20)
+                relight_logs: list = []
+                self._apply_burn_to_target(
+                    target,
+                    actor,
+                    stacks=stacks,
+                    per_stack_pct=burn_pct,
+                    round_no=round_no,
+                    logs=relight_logs,
+                    is_relight=True,
+                )
+                logs.extend(relight_logs)
+                logs.append(
+                    self._effect_log(
+                        round_no,
+                        target,
+                        f"{actor.snapshot.name} 余烬未熄，{target.snapshot.name} 重新点燃 {stacks} 层灼烧。",
+                        actor_name=actor.snapshot.name,
+                    )
+                )
+        return logs
 
     def _yujin_crit_bonus(
         self,

@@ -292,31 +292,32 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "fenxin",
         "焚心",
         "on_burn_apply",
-        ("self_atk_pct", 3, 7),
-        ("max_stacks", 4, 6),
+        ("atk_down_pct", 6, 12),
+        ("agi_down_pct", 6, 12),
+        ("max_stacks", 6, 8),
         description_builder=lambda rolls: (
-            f"每次给目标附加灼烧时，自身获得 1 层焚心，最多 {rolls['max_stacks']} 层；"
-            f"每层提高 {rolls['self_atk_pct']}% 杀伐"
+            f"每次给目标附加灼烧时，目标获得 1 层焚心，最多 {rolls['max_stacks']} 层；"
+            f"每层使目标杀伐降低 {rolls['atk_down_pct']}%、身法降低 {rolls['agi_down_pct']}%"
         ),
     ),
     _define(
         "jinhuo",
         "烬火",
-        "before_attack",
-        ("damage_pct", 20, 55),
-        ("per_stack_pct", 2, 5),
+        "on_hit",
+        ("proc_pct", 50, 90),
+        ("burn_stacks_gain", 1, 2),
         description_builder=lambda rolls: (
-            f"攻击灼烧目标时本次伤害提高 {rolls['damage_pct']}%；"
-            f"目标灼烧每超过 3 层额外提高 {rolls['per_stack_pct']}%"
+            f"攻击灼烧目标时，{rolls['proc_pct']}% 概率消耗目标 1 层正面状态，"
+            f"将其转化为 {rolls['burn_stacks_gain']} 层灼烧"
         ),
     ),
     _define(
         "fenjie",
         "焚劫",
         "on_burn_apply",
-        ("vuln_pct", 3, 7),
-        ("heal_down_pct", 4, 9),
-        ("max_stacks", 4, 6),
+        ("vuln_pct", 6, 12),
+        ("heal_down_pct", 8, 15),
+        ("max_stacks", 6, 8),
         description_builder=lambda rolls: (
             f"每次给目标附加灼烧时，目标获得 1 层焚劫，最多 {rolls['max_stacks']} 层；"
             f"每层使目标承伤提高 {rolls['vuln_pct']}%、受疗降低 {rolls['heal_down_pct']}%"
@@ -325,12 +326,13 @@ ARTIFACT_AFFIX_DEFINITIONS = (
     _define(
         "yujin",
         "余烬",
-        "on_hit",
-        ("crit_per_stack", 2, 5),
-        ("crit_dmg_per_stack", 3, 7),
+        "on_burn_consumed",
+        ("proc_pct", 35, 70),
+        ("relight_stacks", 2, 4),
+        ("relight_burn_pct", 20, 40),
         description_builder=lambda rolls: (
-            f"攻击灼烧目标时，目标每层灼烧提高自身 {rolls['crit_per_stack']}% 暴击率与 "
-            f"{rolls['crit_dmg_per_stack']}% 暴击伤害（仅本次结算）"
+            f"目标灼烧被消耗（自然烧尽或被引爆）时，{rolls['proc_pct']}% 概率重新点燃 "
+            f"{rolls['relight_stacks']} 层灼烧（每层 {rolls['relight_burn_pct']}% 杀伐）"
         ),
     ),
     # ── 身法流 ──

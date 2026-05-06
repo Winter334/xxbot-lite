@@ -521,6 +521,11 @@ class SpiritService:
         if not isinstance(rolls, dict):
             return None
         parsed_rolls = {str(key): int(value) for key, value in rolls.items() if isinstance(value, int)}
+        # 老存档兼容：蚀焰早期版本没有 wound_stacks 字段，按 tier 补齐
+        # low=1 / mid=2 / high=3 / peak=4 / supreme=5
+        if power_id == "shiyan" and "wound_stacks" not in parsed_rolls:
+            _SHIYAN_WOUND_BY_TIER = {"low": 1, "mid": 2, "high": 3, "peak": 4, "supreme": 5}
+            parsed_rolls["wound_stacks"] = _SHIYAN_WOUND_BY_TIER.get(tier, 1)
         return SpiritInstance(tier=tier, stats=tuple(sorted(stat_entries, key=lambda item: SPIRIT_STATS.index(item.stat))), power=SpiritPowerEntry(power_id=power_id, rolls=parsed_rolls))
 
     def _store_spirit(self, artifact: Artifact, field_name: str, spirit: SpiritInstance | None) -> None:

@@ -388,14 +388,15 @@ SPIRIT_POWER_DEFINITIONS = (
         "shiyan",
         "蚀焰",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_burn_pct", 25, 35),),
-            mid=(("per_burn_pct", 35, 50),),
-            high=(("per_burn_pct", 50, 60),),
-            peak=(("per_burn_pct", 60, 70),),
-            supreme=(("per_burn_pct", 70, 70),),
+            low=(("per_burn_pct", 25, 35), ("wound_stacks", 1, 1)),
+            mid=(("per_burn_pct", 35, 50), ("wound_stacks", 2, 2)),
+            high=(("per_burn_pct", 50, 60), ("wound_stacks", 3, 3)),
+            peak=(("per_burn_pct", 60, 70), ("wound_stacks", 4, 4)),
+            supreme=(("per_burn_pct", 70, 70), ("wound_stacks", 5, 5)),
         ),
         description_builder=lambda rolls: (
-            f"目标灼烧 ≥5 层时触发：消耗目标全部灼烧层数，每层造成杀伐 {rolls['per_burn_pct']}% 神通伤害（总伤害不超过 350%）。"
+            f"目标灼烧 ≥5 层时触发：消耗目标全部灼烧层数，每层造成杀伐 {rolls['per_burn_pct']}% 神通伤害（无上限），"
+            f"引爆后给目标附加 {rolls['wound_stacks']} 层创伤。"
         ),
     ),
     _define_power(
