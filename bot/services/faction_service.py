@@ -29,6 +29,7 @@ INFAMY_BY_REALM = {
     "heti": 135,
     "dacheng": 185,
     "dujie": 300,
+    "weixian": 450,
 }
 
 ROBBERY_SOUL_STEAL_BASIS_POINTS = 1000

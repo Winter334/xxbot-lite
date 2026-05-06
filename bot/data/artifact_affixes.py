@@ -347,11 +347,11 @@ ARTIFACT_AFFIX_DEFINITIONS = (
     _define(
         "huanbu",
         "幻步",
-        "battle_start",
-        ("dodge_pct", 8, 18),
-        ("crit_pct", 40, 75),
+        "on_dodge",
+        ("dodge_pct", 3, 7),
+        ("crit_pct", 15, 30),
         description_builder=lambda rolls: (
-            f"整场闪避率提高 {rolls['dodge_pct']}%；闪避后下次攻击暴击率提高 {rolls['crit_pct']}%"
+            f"闪避后获得 1 层幻步，最多 3 层；每层提供 {rolls['dodge_pct']}% 闪避与 {rolls['crit_pct']}% 暴击率，发动攻击后清除整层状态"
         ),
     ),
     _define(
