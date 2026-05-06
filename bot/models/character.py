@@ -59,6 +59,7 @@ class Character(Base, IdentityMixin, TimestampMixin):
     last_bounty_hunt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_bounty_defeated_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     title: Mapped[str] = mapped_column(String(64), default="未立尊号")
+    custom_title: Mapped[str | None] = mapped_column(String(48), nullable=True)
     combat_power: Mapped[int] = mapped_column(BigInteger, default=0)
     best_ladder_rank: Mapped[int] = mapped_column(Integer, default=1)
     current_ladder_rank: Mapped[int] = mapped_column(Integer, default=1, index=True)

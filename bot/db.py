@@ -117,6 +117,7 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                 "sect_task_state_json" not in character_columns,
                 "lingshi" not in character_columns,
                 "honor_tags_json" not in character_columns,
+                "custom_title" not in character_columns,
                 "spawned_on" not in resource_site_columns,
                 "expires_on" not in resource_site_columns,
                 "affix_slots_json" not in artifact_columns,
@@ -178,6 +179,7 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             needs_sect_task_state_json,
             needs_lingshi,
             needs_honor_tags_json,
+            needs_custom_title,
             needs_site_spawned_on,
             needs_site_expires_on,
             needs_affix_slots,
@@ -271,6 +273,8 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN lingshi BIGINT NOT NULL DEFAULT 0"))
         if needs_honor_tags_json:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN honor_tags_json TEXT NOT NULL DEFAULT '[]'"))
+        if needs_custom_title:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN custom_title VARCHAR(48)"))
         if needs_site_spawned_on:
             await connection.execute(text("ALTER TABLE world_resource_sites ADD COLUMN spawned_on DATE"))
             await connection.execute(text("UPDATE world_resource_sites SET spawned_on = COALESCE(spawned_on, settlement_day, DATE('now'))"))

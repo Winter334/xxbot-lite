@@ -1450,9 +1450,11 @@ class ProvingGroundService:
         if character.is_traveling:
             return PGEnterResult(False, "游历中，需先归来。")
 
-        # 境界检查：仅渡劫圆满可进入
-        if not (character.realm_key == "dujie" and character.stage_key == "perfect"):
-            return PGEnterResult(False, "仅渡劫圆满境界方可踏入证道战场。")
+        # 境界检查：渡劫圆满及以上（伪仙）方可进入
+        is_dujie_perfect = character.realm_key == "dujie" and character.stage_key == "perfect"
+        is_weixian = character.realm_key == "weixian"
+        if not (is_dujie_perfect or is_weixian):
+            return PGEnterResult(False, "需达渡劫圆满及以上境界方可踏入证道战场。")
 
         # 气机检查
         if character.current_qi < PG_ENTRY_QI_COST:
