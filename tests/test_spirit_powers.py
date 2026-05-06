@@ -20,12 +20,12 @@ class CombatRoller:
 def test_spirit_power_pool_expands_to_twenty_entries() -> None:
     power_ids = {definition.power_id for definition in SPIRIT_POWER_DEFINITIONS}
 
-    assert len(SPIRIT_POWER_DEFINITIONS) == 23
+    assert len(SPIRIT_POWER_DEFINITIONS) == 24
     assert {"shisheng", "jueming", "xuanjia", "fanji", "guifeng", "niepan", "jinmai", "xuekuang"} <= power_ids
     assert {"fenmai", "luejie", "chengshi", "lingyong", "zhuying", "huajing", "duofeng", "zhenling"} <= power_ids
     assert {"chunsheng", "suijue", "mingche", "zhuifeng"} <= power_ids
     # 新增神通
-    assert {"leifa", "shiyan", "fengdun"} <= power_ids
+    assert {"leifa", "shiyan", "fengdun", "lingyu"} <= power_ids
 
 
 @pytest.mark.asyncio
@@ -159,6 +159,73 @@ def test_shiyan_explodes_even_when_attack_deals_zero_damage(services) -> None:
 
     # 即使普攻 0 伤，蚀焰仍应触发并写入战报
     assert any(log.text and "蚀焰引爆" in log.text for log in battle.logs)
+
+
+def test_shiyan_explosion_respects_damage_reduction(services) -> None:
+    """蚀焰：高减伤目标受到的引爆伤害应被减伤管线削减（对比无/有守势两场）。"""
+    import re
+    # 沿用 test_shiyan_consumes_burn_stacks_when_threshold_reached 的成功 setup
+    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 20})
+
+    def run_one(defender_affixes):
+        attacker = services.combat.create_combatant(
+            name="蚀焰主", atk=80, defense=10, agility=50,
+            affixes=(burn_affix,),
+            spirit_power=SpiritPowerEntry("shiyan", {"per_burn_pct": 50, "wound_stacks": 3}),
+        )
+        defender = services.combat.create_combatant(
+            name="守势", atk=10, defense=800, agility=10, affixes=defender_affixes,
+        )
+        return services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 30))
+
+    battle_no = run_one(())
+    battle_red = run_one((ArtifactAffixEntry(slot=1, affix_id="zhenmai", rolls={"reduce_pct": 80}),))
+
+    explode_no = next((log for log in battle_no.logs if log.text and "蚀焰引爆" in log.text), None)
+    explode_red = next((log for log in battle_red.logs if log.text and "蚀焰引爆" in log.text), None)
+    assert explode_no is not None and explode_red is not None
+
+    def extract_dmg(log):
+        m = re.search(r"造成\s*([0-9]+)\s*点伤害", log.text)
+        return int(m.group(1)) if m else None
+
+    dmg_no = extract_dmg(explode_no)
+    dmg_red = extract_dmg(explode_red)
+    assert dmg_no is not None and dmg_red is not None, f"无法解析伤害: {explode_no.text} | {explode_red.text}"
+    # 守势 80% 减伤应让伤害显著降低（>50%）
+    assert dmg_red < dmg_no * 0.5, f"无减伤伤害 {dmg_no}, 守势减伤后 {dmg_red}"
+
+
+def test_lingyong_grants_starting_lingshi_stacks(services) -> None:
+    """灵涌：战斗开始即获得 start_stacks 层灵势，每层灵势提供 per_stack_pct% 增伤。"""
+    attacker = services.combat.create_combatant(
+        name="灵涌主", atk=100, defense=10, agility=50,
+        spirit_power=SpiritPowerEntry("lingyong", {"start_stacks": 3, "per_stack_pct": 4}),
+    )
+    defender = services.combat.create_combatant(name="木人", atk=1, defense=100, agility=10)
+    services.combat.max_rounds = 1
+    battle = services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 10))
+
+    # battle_start 应给攻方叠 3 层灵势（带灵涌器灵专属日志）
+    assert any(log.text and "灵涌" in log.text and "3 层" in log.text for log in battle.logs)
+
+
+def test_lingyu_provides_reduction_in_first_six_rounds_only(services) -> None:
+    """灵御：前 6 回合每层灵势提供减伤；第 7 回合起效果消失。"""
+    juling_affix = ArtifactAffixEntry(slot=1, affix_id="juling", rolls={"atk_pct": 1, "late_damage_pct": 1})
+    # defense=1000 => hp=10000，能撑 7 回合验证灵御回合限制
+    defender = services.combat.create_combatant(
+        name="灵御主", atk=1, defense=1000, agility=10,
+        affixes=(juling_affix,),
+        spirit_power=SpiritPowerEntry("lingyu", {"reduce_per_stack_pct": 8, "self_damage_down_per_stack_pct": 8}),
+    )
+    attacker = services.combat.create_combatant(name="施压", atk=500, defense=10, agility=50)
+    services.combat.max_rounds = 8
+    battle = services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 60))
+
+    # 战斗中应能持续到至少 6 回合（说明灵御保命有效）
+    rounds_seen = max((log.round_no for log in battle.logs), default=0)
+    assert rounds_seen >= 6, f"灵御应保命至少 6 回合，实际 {rounds_seen}"
 
 
 def test_huajing_converts_reduction_affix_into_recovery(services) -> None:
