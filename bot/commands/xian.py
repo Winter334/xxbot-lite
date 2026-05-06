@@ -83,7 +83,7 @@ class XianCommands(commands.Cog):
     async def tower(self, interaction: discord.Interaction) -> None:
         await run_private_tower_sequence(self.bot, interaction, owner_user_id=interaction.user.id, display_name=interaction.user.display_name)
 
-    @app_commands.command(name="证道", description="踏入证道战场，以裸身面板闯关构筑（渡劫圆满可用）。")
+    @app_commands.command(name="证道", description="踏入证道战场，以裸身面板闯关构筑（渡劫圆满及以上可用）。")
     async def proving_ground(self, interaction: discord.Interaction) -> None:
         embed, view = await build_pg_entry_message(self.bot, interaction.user.id, interaction.user.display_name)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

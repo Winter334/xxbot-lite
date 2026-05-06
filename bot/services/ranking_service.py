@@ -227,6 +227,11 @@ class RankingService:
             elif realm_top and realm_top.id == character.id:
                 title = f"{self.character_service.get_stage(character).realm_name}第一人"
 
+        # 自定义尊号优先级最高（仅渡劫期及以上玩家可设置）
+        custom_title = (character.custom_title or "").strip()
+        if custom_title:
+            title = custom_title
+
         honor_tags: list[str] = []
         if power_top and power_top.id == character.id:
             honor_tags.append("盖世无双")

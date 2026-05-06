@@ -1510,6 +1510,69 @@ class PanelView(OwnerLockedView):
         embed, view = await build_pg_entry_message(bot, interaction.user.id, interaction.user.display_name)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+    @discord.ui.button(label="立尊号", style=discord.ButtonStyle.secondary, emoji="👑", row=2)
+    async def custom_title_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        async with bot.session_factory() as session:
+            character = await bot.character_service.get_character_by_discord_id(session, interaction.user.id)
+            if character is None:
+                await interaction.response.send_message("尚未踏入仙途，无法立尊号。", ephemeral=True)
+                return
+            if (character.realm_index or 0) < 9:
+                await interaction.response.send_message("尚未踏足渡劫之境，岂敢妄立尊号。", ephemeral=True)
+                return
+            if (character.custom_title or "").strip():
+                await interaction.response.send_message(
+                    f"你已立下尊号「{character.custom_title}」，不可再改。", ephemeral=True
+                )
+                return
+        await interaction.response.send_modal(CustomTitleModal())
+
+
+_CUSTOM_TITLE_PATTERN = __import__("re").compile(r"^[\u4e00-\u9fffA-Za-z0-9]+$")
+
+
+async def apply_custom_title(bot: "XianBot", user_id: int, raw: str) -> tuple[bool, str, list[str]]:
+    """设置自定义尊号。返回 (是否成功, 反馈消息, 广播列表)。"""
+    text_value = (raw or "").strip()
+    if not text_value:
+        return False, "尊号不可为空。", []
+    if len(text_value) > 12:
+        return False, "尊号最多 12 字。", []
+    if not _CUSTOM_TITLE_PATTERN.match(text_value):
+        return False, "尊号仅允许中文、英文与数字。", []
+    async with bot.session_factory() as session:
+        character = await bot.character_service.get_character_by_discord_id(session, user_id)
+        if character is None:
+            return False, "尚未踏入仙途。", []
+        if (character.realm_index or 0) < 9:
+            return False, "尚未踏足渡劫之境，岂敢妄立尊号。", []
+        if (character.custom_title or "").strip():
+            return False, f"你已立下尊号「{character.custom_title}」，不可再改。", []
+        character.custom_title = text_value
+        await session.commit()
+        broadcast = f"📜 **{character.player.display_name}** 自此立下尊号「**{text_value}**」，名震寰宇。"
+    return True, f"自此你便是「{text_value}」。", [broadcast]
+
+
+class CustomTitleModal(discord.ui.Modal, title="立下尊号"):
+    title_input = discord.ui.TextInput(
+        label="尊号（1~12 字，仅限中英文数字）",
+        min_length=1,
+        max_length=12,
+        required=True,
+        placeholder="例如：青冥剑主",
+    )
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        success, message, broadcasts = await apply_custom_title(
+            bot, interaction.user.id, str(self.title_input.value)
+        )
+        await interaction.response.send_message(message, ephemeral=True)
+        if success:
+            await _send_broadcasts(bot, broadcasts)
+
 
 class ReincarnationConfirmView(OwnerLockedView):
     def __init__(self, owner_user_id: int) -> None:
