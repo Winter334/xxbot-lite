@@ -48,6 +48,8 @@ class RankingService:
         limit: int = 10,
     ) -> LeaderboardResult:
         characters = await self.character_service.list_characters(session)
+        # NPC 仅作经济填充剂，不参与任何榜单
+        characters = [char for char in characters if not char.is_npc]
         self.faction_service.sync_many(characters)
         if category == "power":
             ordered = sorted(characters, key=lambda char: (-self.character_service.calculate_total_stats(char).combat_power, char.id))
@@ -200,6 +202,8 @@ class RankingService:
 
     async def get_titles(self, session: AsyncSession, character: Character) -> tuple[str, tuple[str, ...], str]:
         characters = await self.character_service.list_characters(session)
+        # NPC 不参与尊号/荣誉计算
+        characters = [char for char in characters if not char.is_npc]
         self.faction_service.sync_many(characters)
         title = "未立尊号"
         if character.current_ladder_rank == 1:

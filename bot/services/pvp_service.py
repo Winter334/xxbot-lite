@@ -91,6 +91,10 @@ class PvpService:
         if challenger.id == defender.id:
             return SparChallengeResult(False, "你还不至于自己和自己切磋。", None)
 
+        # NPC 仅作经济填充剂，不参与切磋
+        if challenger.is_npc or defender.is_npc:
+            return SparChallengeResult(False, "对方似乎并非正经修士，无意与你切磋。", None)
+
         allowed, reason = self.can_spar(challenger, actor_label="你")
         if not allowed:
             return SparChallengeResult(False, reason or "当前不可切磋。", None)
@@ -128,6 +132,10 @@ class PvpService:
     async def open_arena(self, session: AsyncSession, challenger: Character, stake_soul: int) -> ArenaOpenResult:
         if stake_soul <= 0:
             return ArenaOpenResult(False, "开擂至少要押上 1 点器魂。", 0, 0)
+
+        # NPC 不开擂
+        if challenger.is_npc:
+            return ArenaOpenResult(False, "你当前不可开擂。", 0, 0)
 
         allowed, reason = self.can_pvp(challenger, actor_label="你", action_name="开擂")
         if not allowed:
