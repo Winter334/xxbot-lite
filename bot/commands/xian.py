@@ -47,6 +47,16 @@ class XianCommands(commands.Cog):
     def __init__(self, bot: XianBot) -> None:
         self.bot = bot
 
+    async def _ensure_npc_pool(self) -> None:
+        """懒结算触发 NPC 每日刷新；失败不阻塞玩家命令。"""
+        try:
+            async with self.bot.session_factory() as session:
+                await self.bot.npc_service.ensure_daily_pool(session)
+                await session.commit()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("NPC 每日刷新失败")
+
     async def _send_with_broadcasts(
         self,
         interaction: discord.Interaction,
@@ -68,6 +78,7 @@ class XianCommands(commands.Cog):
 
     @app_commands.command(name="修仙", description="打开你的修仙主面板。")
     async def panel(self, interaction: discord.Interaction) -> None:
+        await self._ensure_npc_pool()
         await self._send_with_broadcasts(
             interaction,
             await build_panel_message(
@@ -112,6 +123,7 @@ class XianCommands(commands.Cog):
         interaction: discord.Interaction,
         category: app_commands.Choice[str] | None = None,
     ) -> None:
+        await self._ensure_npc_pool()
         await self._send_with_broadcasts(
             interaction,
             await build_leaderboard_message(
@@ -173,6 +185,7 @@ class XianCommands(commands.Cog):
     @app_commands.command(name="面板", description="查看其他修士的公开面板。")
     @app_commands.describe(user="要查看的道友")
     async def inspect_panel(self, interaction: discord.Interaction, user: discord.Member) -> None:
+        await self._ensure_npc_pool()
         await self._send_with_broadcasts(
             interaction,
             await build_panel_message(

@@ -17,6 +17,7 @@ from bot.services.fate_service import FateService
 from bot.services.faction_service import FactionService
 from bot.services.idle_service import IdleService
 from bot.services.ladder_service import LadderService
+from bot.services.npc_service import NpcService
 from bot.services.pvp_service import PvpService
 from bot.services.ranking_service import RankingService
 from bot.services.sect_service import SectService
@@ -50,9 +51,24 @@ class XianBot(commands.Bot):
         self.travel_service = TravelService(self.fate_service, rng)
         self.proving_ground_service = ProvingGroundService(self.combat_service, rng)
         self.broadcast_service = BroadcastService(settings)
+        self.npc_service = NpcService(
+            rng,
+            self.character_service,
+            self.fate_service,
+            self.artifact_service,
+            self.spirit_service,
+        )
 
     async def setup_hook(self) -> None:
         await init_models(self.engine)
+        # 启动兜底：确保当日 NPC 池已生成（懒结算 + 启动触发）
+        async with self.session_factory() as session:
+            try:
+                await self.npc_service.ensure_daily_pool(session)
+                await session.commit()
+            except Exception:
+                logging.getLogger(__name__).exception("初始化 NPC 池失败")
+                await session.rollback()
         await self.load_extension("bot.commands.xian")
         await self.tree.sync()
 
