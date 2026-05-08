@@ -190,13 +190,17 @@ SPIRIT_POWER_DEFINITIONS = (
         "niepan",
         "涅槃",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("heal_pct", 25, 32), ("reduce_pct", 55, 65)),
-            mid=(("heal_pct", 30, 38), ("reduce_pct", 65, 75)),
-            high=(("heal_pct", 36, 46), ("reduce_pct", 75, 85)),
-            peak=(("heal_pct", 44, 56), ("reduce_pct", 85, 94)),
-            supreme=(("heal_pct", 52, 68), ("reduce_pct", 92, 100)),
+            low=(("revive_hp_pct", 20, 28), ("cost_stacks", 12, 12), ("per_revive_atk_pct", 5, 8), ("per_revive_speed_pct", 4, 7)),
+            mid=(("revive_hp_pct", 25, 33), ("cost_stacks", 10, 10), ("per_revive_atk_pct", 7, 11), ("per_revive_speed_pct", 6, 9)),
+            high=(("revive_hp_pct", 30, 40), ("cost_stacks", 8, 8), ("per_revive_atk_pct", 10, 14), ("per_revive_speed_pct", 8, 12)),
+            peak=(("revive_hp_pct", 36, 48), ("cost_stacks", 7, 7), ("per_revive_atk_pct", 13, 18), ("per_revive_speed_pct", 10, 15)),
+            supreme=(("revive_hp_pct", 42, 55), ("cost_stacks", 6, 6), ("per_revive_atk_pct", 16, 22), ("per_revive_speed_pct", 13, 18)),
         ),
-        description_builder=lambda rolls: f"首次致死时不死，回复 {rolls['heal_pct']}% 最大生命，并获得 2 次 {rolls['reduce_pct']}% 守势。",
+        description_builder=lambda rolls: (
+            f"濒死时若生息层数 ≥ {rolls.get('cost_stacks', 12)}，消耗 {rolls.get('cost_stacks', 12)} 层生息复活，"
+            f"回复 {rolls.get('revive_hp_pct', rolls.get('heal_pct', 20))}% 最大生命；每次复活后永久提高 "
+            f"{rolls.get('per_revive_atk_pct', 5)}% 杀伐与 {rolls.get('per_revive_speed_pct', 4)}% 身法（可叠加）。"
+        ),
     ),
     _define_power(
         "jinmai",
@@ -342,13 +346,16 @@ SPIRIT_POWER_DEFINITIONS = (
         "chunsheng",
         "春生",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("damage_pct", 35, 50),),
-            mid=(("damage_pct", 50, 68),),
-            high=(("damage_pct", 68, 86),),
-            peak=(("damage_pct", 86, 108),),
-            supreme=(("damage_pct", 108, 130),),
+            low=(("heal_received_pct", 25, 40), ("convert_pct", 30, 45), ("heal_shengxi_bonus", 1, 1)),
+            mid=(("heal_received_pct", 38, 55), ("convert_pct", 42, 58), ("heal_shengxi_bonus", 1, 1)),
+            high=(("heal_received_pct", 52, 70), ("convert_pct", 55, 72), ("heal_shengxi_bonus", 1, 2)),
+            peak=(("heal_received_pct", 65, 85), ("convert_pct", 68, 88), ("heal_shengxi_bonus", 1, 2)),
+            supreme=(("heal_received_pct", 80, 100), ("convert_pct", 80, 105), ("heal_shengxi_bonus", 2, 2)),
         ),
-        description_builder=lambda rolls: f"每次受到治疗后，下一次造成伤害提高 {rolls['damage_pct']}%；治疗溢出时额外凝成守势。",
+        description_builder=lambda rolls: (
+            f"自身受到的治疗提高 {rolls['heal_received_pct']}%；治疗后按治疗量的 {rolls['convert_pct']}% 转化为下次攻击的固定追击伤害；"
+            f"每次受到治疗时额外叠加 {rolls['heal_shengxi_bonus']} 层生息（不计入护元上限）。"
+        ),
     ),
     _define_power(
         "suijue",
@@ -406,11 +413,11 @@ SPIRIT_POWER_DEFINITIONS = (
         "shiyan",
         "蚀焰",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_burn_pct", 25, 35), ("wound_stacks", 1, 1)),
-            mid=(("per_burn_pct", 35, 50), ("wound_stacks", 2, 2)),
-            high=(("per_burn_pct", 50, 60), ("wound_stacks", 3, 3)),
-            peak=(("per_burn_pct", 60, 70), ("wound_stacks", 4, 4)),
-            supreme=(("per_burn_pct", 70, 70), ("wound_stacks", 5, 5)),
+            low=(("per_burn_pct", 22, 32), ("wound_stacks", 1, 1)),
+            mid=(("per_burn_pct", 30, 44), ("wound_stacks", 2, 2)),
+            high=(("per_burn_pct", 42, 58), ("wound_stacks", 3, 3)),
+            peak=(("per_burn_pct", 55, 72), ("wound_stacks", 4, 4)),
+            supreme=(("per_burn_pct", 68, 88), ("wound_stacks", 5, 5)),
         ),
         description_builder=lambda rolls: (
             f"命中且目标灼烧 ≥5 层时触发：消耗目标全部灼烧层数，每层造成 {rolls['per_burn_pct']}% 杀伐神通伤害（无上限），"

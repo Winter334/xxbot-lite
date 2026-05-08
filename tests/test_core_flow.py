@@ -9,6 +9,7 @@ from bot.data.resource_sites import SITE_NAME_POOLS
 from bot.data.fates import FATE_DEFINITIONS
 from bot.data.realms import get_stage
 from bot.data.spirits import SpiritPowerEntry
+from bot.data.artifact_affixes import ArtifactAffixEntry
 from bot.models.world_resource_site import WorldResourceSite
 from bot.services.travel_service import TravelService
 from bot.ui.panel import (
@@ -468,12 +469,18 @@ async def test_panel_embed_shows_spirit_summary(session_factory, services) -> No
 async def test_niepan_spirit_power_revives_once_in_combat(session_factory, services) -> None:
     roller = CombatRoller([0.99] * 40)
     attacker = services.combat.create_combatant(name="斩者", atk=500, defense=30, agility=50)
+    # 新版涅槃需要事先囤好生息层数，搭配 huichun 在跌破 50%/25% 时叠生息
+    huichun_entry = ArtifactAffixEntry(slot=1, affix_id="huichun", rolls={"heal_pct": 1, "shengxi_stacks": 8})
     defender = services.combat.create_combatant(
         name="守者",
         atk=20,
         defense=20,
         agility=10,
-        spirit_power=SpiritPowerEntry("niepan", {"heal_pct": 50, "reduce_pct": 80}),
+        spirit_power=SpiritPowerEntry(
+            "niepan",
+            {"revive_hp_pct": 50, "cost_stacks": 4, "per_revive_atk_pct": 30, "per_revive_speed_pct": 10},
+        ),
+        affixes=[huichun_entry],
     )
 
     result = services.combat.run_battle(attacker, defender, rng=roller)

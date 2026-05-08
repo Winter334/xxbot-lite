@@ -58,9 +58,11 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
 
 
 def test_spirit_power_description_accepts_legacy_rolls() -> None:
+    # 旧 rolls 仅有 heal_pct，新描述需要兜底使用旧字段或默认值
     description = get_spirit_power_definition("niepan").describe({"heal_pct": 42})
 
-    assert "守势" in description
+    assert "生息" in description
+    assert "复活" in description
 
 
 def test_shisheng_can_heal_from_zhuohun_burn_damage(services) -> None:
