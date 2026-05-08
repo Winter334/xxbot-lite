@@ -82,6 +82,10 @@ class Character(Base, IdentityMixin, TimestampMixin):
     pg_invest_affix_slots: Mapped[int] = mapped_column(Integer, default=0)
     pg_invest_spirit_unlocked: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # NPC 经济填充剂
+    is_npc: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    npc_spawned_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+
     player = relationship("Player", back_populates="character")
     sect = relationship("Sect", back_populates="members", foreign_keys=[sect_id])
     artifact = relationship("Artifact", back_populates="character", uselist=False, cascade="all, delete-orphan")
