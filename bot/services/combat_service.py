@@ -85,11 +85,30 @@ class _StatusEffect:
     shield: int = 0
     guarantee_crit: bool = False
     is_relight: bool = False
+    bonus_damage: int = 0  # 春生固定追打载体：下次攻击附加固定伤害
 
     def is_active(self) -> bool:
         duration_ok = self.duration is None or self.duration > 0
         hits_ok = self.remaining_hits is None or self.remaining_hits > 0
         return duration_ok and hits_ok
+
+
+@dataclass(slots=True, frozen=True)
+class _DamageProfile:
+    """伤害类型描述：决定该笔伤害走哪些计算管线。"""
+
+    can_be_buffed: bool = True   # 是否吃 actor 的增伤（damage_dealt_pct + damage_dealt_basis_points）
+    can_be_vulned: bool = True   # 是否吃 target 的承伤（damage_taken_pct + damage_taken_basis_points）
+    can_be_reduced: bool = True  # 是否吃 target 的减伤（damage_reduction_pct + damage_reduction_basis_points）
+    can_be_shielded: bool = True # 是否被护盾抵挡
+
+
+# 灼烧 DOT：吃增伤 + 承伤；不吃减伤、不被护盾抵挡（DOT 穿透守势/护盾）
+_BURN_DOT_PROFILE = _DamageProfile(can_be_buffed=True, can_be_vulned=True, can_be_reduced=False, can_be_shielded=False)
+# 蚀焰引爆：不吃增伤；吃承伤 + 减伤 + 护盾
+_SHIYAN_PROFILE = _DamageProfile(can_be_buffed=False, can_be_vulned=True, can_be_reduced=True, can_be_shielded=True)
+# 春生固定追打：不吃增伤（已是固定值）；吃承伤 + 减伤 + 护盾
+_CHUNSHENG_BONUS_PROFILE = _DamageProfile(can_be_buffed=False, can_be_vulned=True, can_be_reduced=True, can_be_shielded=True)
 
 
 @dataclass(slots=True)
@@ -107,6 +126,15 @@ class _CombatState:
     consecutive_crits: int = 0
     first_round: bool = True
     current_round: int = 0
+    # v6 战斗重做新增字段
+    effective_max_hp: int = 0  # 运行期可变的最大生命（归元词条会提升），0 表示尚未初始化（fallback 至 snapshot.max_hp）
+    niepan_revive_count: int = 0  # 涅槃复活累计次数（每次叠加 atk/speed buff）
+    huichun_triggered_thresholds: set[int] = field(default_factory=set)  # huichun 已触发的阈值（50/25）
+    huyuan_heal_stacks: dict[int, int] = field(default_factory=dict)  # huyuan 单词条治疗叠加层数计数（key 为 affix 在 affixes 元组中的 index）
+
+    def get_max_hp(self) -> int:
+        """获取当前最大生命（优先使用 effective_max_hp，未初始化时回落 snapshot）。"""
+        return self.effective_max_hp if self.effective_max_hp > 0 else self.snapshot.max_hp
 
 
 class CombatService:
@@ -160,7 +188,9 @@ class CombatService:
         roller = rng or self.rng
         scene = set(scene_tags)
         challenger_state = _CombatState(challenger, challenger.max_hp)
+        challenger_state.effective_max_hp = challenger.max_hp
         defender_state = _CombatState(defender, defender.max_hp)
+        defender_state.effective_max_hp = defender.max_hp
         logs: list[ActionLog] = []
 
         logs.extend(self._trigger_battle_start(1, challenger_state, scene))
@@ -323,6 +353,16 @@ class CombatService:
         logs.extend(self._trigger_spirit_revive(round_no, target))
         logs.extend(self._trigger_spirit_revive(round_no, actor))
 
+        # 春生·追击：命中后按 bonus_damage 走 _CHUNSHENG_BONUS_PROFILE 施加固定追打伤害（不吃增伤、吃承伤+减伤+护盾）
+        chunsheng_followups = [s for s in actor.statuses if s.name == "春生·追击" and s.is_active() and s.bonus_damage > 0]
+        if chunsheng_followups and target.hp > 0:
+            for s in chunsheng_followups:
+                bonus_actual = self._apply_typed_damage(target, s.bonus_damage, _CHUNSHENG_BONUS_PROFILE, actor=actor)
+                if bonus_actual > 0:
+                    logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 春生回返一击，追加 {bonus_actual} 点伤害。", actor_name=actor.snapshot.name))
+                s.remaining_hits = 0
+            actor.statuses = self._active_statuses(actor)
+
         if logs:
             logs[0].target_hp_after = target.hp
         self._consume_attack_bonuses(actor)
@@ -347,12 +387,23 @@ class CombatService:
                     self._add_status(state, _StatusEffect("守势", damage_reduction_pct=_roll(entry.rolls, "reduce_pct", 0), remaining_hits=3))
                     logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 凝起镇脉，获得 3 层守势。"))
                 case "guben":
-                    shield_amount = max(1, state.snapshot.max_hp * _roll(entry.rolls, "shield_pct", 0) // 100)
-                    self._add_status(state, _StatusEffect("固本", shield=shield_amount, damage_reduction_pct=_roll(entry.rolls, "reduce_pct", 0)))
-                    logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 凝起固本护盾，抵消 {shield_amount} 伤害并降低受伤。"))
+                    shield_amount = max(1, state.get_max_hp() * _roll(entry.rolls, "shield_pct", 0) // 100)
+                    self._add_status(state, _StatusEffect("固本", shield=shield_amount))
+                    logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 凝起固本护盾，抵消 {shield_amount} 伤害（免疫净化）。"))
                 case "xianji":
                     self._add_status(state, _StatusEffect("先机", agility_pct=_roll(entry.rolls, "initiative_pct", 0)))
                     logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 先机独占，起手快人一步。"))
+                case "guiyuan":
+                    # 归元：开局永久提高最大生命（属性预加），同步治疗等量生命
+                    bonus = max(1, state.snapshot.max_hp * _roll(entry.rolls, "max_hp_pct", 0) // 100)
+                    self._modify_max_hp(state, bonus, also_heal=True)
+                    logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 归元充盈，最大生命提高 {bonus}（同步补满至新上限）。"))
+                case "huyuan":
+                    # 护元：开局叠加 start_stacks 层生息（不计入 huyuan 自身的治疗叠加上限）
+                    start_stacks = _roll(entry.rolls, "start_stacks", 1)
+                    for _ in range(start_stacks):
+                        self._add_status(state, _StatusEffect("生息"))
+                    logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 护元运转，开局叠加 {start_stacks} 层生息。"))
         # 器灵 battle_start 钩子：在词条 battle_start 之后触发，便于联动聚灵等词条
         logs.extend(self._trigger_spirit_battle_start(round_no, state))
         return logs
@@ -388,6 +439,30 @@ class CombatService:
 
     def _trigger_round_start(self, round_no: int, state: _CombatState, opponent: _CombatState, roller: random.Random, scene: set[str]) -> list[ActionLog]:
         logs: list[ActionLog] = []
+        # 养元 / 续命 回合开始钩子（多件可叠加，依词条顺序执行）
+        for entry in state.snapshot.affixes:
+            if not self._scene_matches(entry, scene):
+                continue
+            if entry.affix_id == "yangyuan" and state.hp > 0:
+                heal_pct = _roll(entry.rolls, "heal_pct", 0)
+                if heal_pct > 0:
+                    max_hp = state.get_max_hp()
+                    amount = max(1, int(max_hp * heal_pct / 100))
+                    before = state.hp
+                    state.hp = min(max_hp, state.hp + amount)
+                    healed = state.hp - before
+                    if healed > 0:
+                        self._trigger_heal_followups(state, healed)
+                        logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 养元运转，回复 {healed} 点生命。"))
+            elif entry.affix_id == "xuming" and state.hp > 0:
+                cost = _roll(entry.rolls, "cost_stacks", 1)
+                consumed = self._consume_shengxi(state, cost)
+                if consumed > 0:
+                    heal_per_stack = _roll(entry.rolls, "heal_per_stack", 0)
+                    heal_pct = consumed * heal_per_stack
+                    if heal_pct > 0:
+                        healed = self._heal(state, heal_pct)
+                        logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 续命发动，消耗 {consumed} 层生息回复 {healed} 点生命。"))
         for entry in state.snapshot.affixes:
             if not self._scene_matches(entry, scene):
                 continue
@@ -854,16 +929,25 @@ class CombatService:
 
     def _trigger_on_low_hp(self, round_no: int, target: _CombatState, hp_after_hit: int, scene: set[str]) -> list[ActionLog]:
         logs: list[ActionLog] = []
-        if 50 not in target.low_hp_marks and hp_after_hit * 100 < target.snapshot.max_hp * 50:
-            target.low_hp_marks.add(50)
+        max_hp = target.get_max_hp()
+        # 回春：50% 与 25% 各触发一次
+        for threshold in (50, 25):
+            if threshold in target.huichun_triggered_thresholds:
+                continue
+            if hp_after_hit * 100 >= max_hp * threshold:
+                continue
+            target.huichun_triggered_thresholds.add(threshold)
             for entry in target.snapshot.affixes:
                 if entry.affix_id != "huichun" or not self._scene_matches(entry, scene):
                     continue
                 healed = self._heal(target, _roll(entry.rolls, "heal_pct", 0))
-                self._add_status(target, _StatusEffect("生息", heal_received_pct=_roll(entry.rolls, "heal_bonus_pct", 8)))
-                self._add_status(target, _StatusEffect("生息", heal_received_pct=_roll(entry.rolls, "heal_bonus_pct", 8)))
-                logs.append(self._effect_log(round_no, target, f"{target.snapshot.name} 的回春发动，回复了 {healed} 点生命，并留下生息。"))
-        if 35 not in target.low_hp_marks and hp_after_hit * 100 < target.snapshot.max_hp * 35:
+                stacks = _roll(entry.rolls, "shengxi_stacks", 2)
+                for _ in range(stacks):
+                    self._add_status(target, _StatusEffect("生息"))
+                logs.append(self._effect_log(round_no, target, f"{target.snapshot.name} 的回春发动（生命跌破 {threshold}%），回复 {healed} 点生命并叠加 {stacks} 层生息。"))
+        if 50 not in target.low_hp_marks and hp_after_hit * 100 < max_hp * 50:
+            target.low_hp_marks.add(50)
+        if 35 not in target.low_hp_marks and hp_after_hit * 100 < max_hp * 35:
             target.low_hp_marks.add(35)
             for entry in target.snapshot.affixes:
                 if entry.affix_id != "buqu" or not self._scene_matches(entry, scene):
@@ -905,8 +989,8 @@ class CombatService:
                 if stacks <= 0:
                     continue
                 source_atk = self._current_atk(status.source) if status.source is not None else state.snapshot.atk
-                burn_damage = max(1, int(source_atk * status.burn_pct / 100))
-                actual_damage = self._apply_damage(state, burn_damage)
+                raw_damage = max(1, int(source_atk * status.burn_pct / 100))
+                actual_damage = self._apply_typed_damage(state, raw_damage, _BURN_DOT_PROFILE, actor=status.source)
                 if actual_damage <= 0:
                     continue
                 burn_logs = [
@@ -1021,21 +1105,8 @@ class CombatService:
                 consumed_burns = [s for s in target.statuses if s.name == "灼烧"]
                 # 触发即消耗目标全部灼烧层数
                 target.statuses = [s for s in target.statuses if s.name != "灼烧"]
-                # 蚀焰伤害走减伤管线（增伤/承伤/减伤/命格基点）；不暴击、不消耗护盾、不触发 _before_attack_bonus
-                shiyan_dmg = base_damage
-                shiyan_dmg = int(shiyan_dmg * (1 + self._damage_dealt_pct(actor) / 100))
-                shiyan_dmg = int(shiyan_dmg * (1 + self._damage_taken_pct(target) / 100))
-                shiyan_reduction = self._damage_reduction_pct(target)
-                shiyan_dmg = max(1, int(shiyan_dmg * max(0.05, 1 - (shiyan_reduction / 100))))
-                shiyan_dmg = int(shiyan_dmg * (1 + actor.snapshot.damage_dealt_basis_points / 10_000))
-                if target.snapshot.realm_index > actor.snapshot.realm_index:
-                    shiyan_dmg = int(shiyan_dmg * (1 + actor.snapshot.versus_higher_realm_damage_basis_points / 10_000))
-                shiyan_dmg = int(shiyan_dmg * (1 + target.snapshot.damage_taken_basis_points / 10_000))
-                shiyan_dmg = max(1, int(shiyan_dmg * max(0.05, 1 - (target.snapshot.damage_reduction_basis_points / 10_000))))
-                # 蚀焰伤害可被护盾抵挡（护盾完全吃掉时仍消耗灼烧 + 挂创伤）
-                if self._total_shield(target) > 0:
-                    shiyan_dmg = self._consume_shield(target, shiyan_dmg)
-                explode_actual = self._apply_damage(target, shiyan_dmg)
+                # 蚀焰伤害通过统一管线 _SHIYAN_PROFILE：吃增伤/承伤/减伤/护盾，不暴击、不触发 _before_attack_bonus
+                explode_actual = self._apply_typed_damage(target, base_damage, _SHIYAN_PROFILE, actor=actor)
                 # 无论实际伤害是否为 0，都明确播报"引爆 + 消耗灼烧"事件
                 logs.append(
                     self._effect_log(
@@ -1252,19 +1323,46 @@ class CombatService:
 
     def _trigger_spirit_revive(self, round_no: int, state: _CombatState) -> list[ActionLog]:
         power = state.snapshot.spirit_power
-        if power is None or power.power_id != "niepan" or state.hp > 0 or state.revive_used:
+        if power is None or power.power_id != "niepan" or state.hp > 0:
             return []
-        state.revive_used = True
-        heal_amount = max(1, int(state.snapshot.max_hp * power.rolls["heal_pct"] / 100))
-        state.hp = heal_amount
-        self._add_status(state, _StatusEffect("涅槃护体", damage_reduction_pct=power.rolls["reduce_pct"], remaining_hits=2))
+        cost = max(1, int(power.rolls.get("cost_stacks", 6)))
+        # 必须有足够生息才能复活
+        consumed = self._consume_shengxi(state, cost)
+        if consumed < cost:
+            # 生息不足，回滚（_consume_shengxi 已部分消耗时也回不来——但这里采用"先检查再消耗"逻辑）
+            return []
+        revive_pct = max(1, int(power.rolls.get("revive_hp_pct", 30)))
+        max_hp = state.get_max_hp()
+        heal_amount = max(1, int(max_hp * revive_pct / 100))
+        state.hp = min(max_hp, heal_amount)
+        state.niepan_revive_count += 1
+        # 累加 atk_pct + agility_pct 永久 buff（duration=None，hits=None）
+        atk_bonus = max(0, int(power.rolls.get("per_revive_atk_pct", 0)))
+        speed_bonus = max(0, int(power.rolls.get("per_revive_speed_pct", 0)))
+        if atk_bonus > 0 or speed_bonus > 0:
+            self._add_status(state, _StatusEffect("涅槃·余烬", atk_pct=atk_bonus, agility_pct=speed_bonus))
         return [
             self._effect_log(
                 round_no,
                 state,
-                f"{state.snapshot.name} 于绝境中涅槃再起，回复 {heal_amount} 点生命，并得 2 次护体减伤。",
+                f"{state.snapshot.name} 涅槃再起（第 {state.niepan_revive_count} 次），消耗 {cost} 层生息回复 {heal_amount} 点生命；杀伐 +{atk_bonus}%、身法 +{speed_bonus}%（持续生效）。",
             )
         ]
+
+    def _consume_shengxi(self, state: _CombatState, amount: int) -> int:
+        """消耗 amount 层生息（每个 _StatusEffect("生息") 计为 1 层）。返回实际消耗数量。
+
+        若可用层数不足，不做任何消耗（事务式：要么全消耗，要么不消耗）。
+        """
+        if amount <= 0:
+            return 0
+        shengxi_indices = [i for i, st in enumerate(state.statuses) if st.name == "生息" and st.is_active()]
+        if len(shengxi_indices) < amount:
+            return 0
+        # 移除前 amount 个（自前向后）
+        to_remove = set(shengxi_indices[:amount])
+        state.statuses = [st for i, st in enumerate(state.statuses) if i not in to_remove]
+        return amount
 
     def _before_attack_bonus_pct(self, actor: _CombatState, target: _CombatState, scene: set[str]) -> int:
         total = 0
@@ -1397,7 +1495,8 @@ class CombatService:
         return sum(1 for status in self._active_statuses(state) if status.is_debuff)
 
     def _positive_status_count(self, state: _CombatState) -> int:
-        return sum(1 for status in self._active_statuses(state) if not status.is_debuff)
+        # 护盾（shield > 0）免疫净化：不计入可净化的正向状态总数
+        return sum(1 for status in self._active_statuses(state) if not status.is_debuff and status.shield <= 0)
 
     def _has_burn(self, state: _CombatState) -> bool:
         return any(status.name == "灼烧" and status.burn_pct > 0 for status in self._active_statuses(state))
@@ -1636,7 +1735,8 @@ class CombatService:
         return removed
 
     def _remove_one_positive_status(self, state: _CombatState) -> _StatusEffect | None:
-        positives = [status for status in self._active_statuses(state) if not status.is_debuff]
+        # 护盾（shield > 0）免疫净化
+        positives = [status for status in self._active_statuses(state) if not status.is_debuff and status.shield <= 0]
         if not positives:
             return None
         positives.sort(key=lambda status: 0 if status.name in {"灵势", "守势", "登霄"} else 1)
@@ -1663,11 +1763,76 @@ class CombatService:
         state.hp = max(0, state.hp - damage)
         return before - state.hp
 
+    def _apply_typed_damage(
+        self,
+        state: _CombatState,
+        raw_damage: int,
+        profile: _DamageProfile,
+        actor: "_CombatState | None" = None,
+    ) -> int:
+        """按 profile 对 state 施加伤害。可选地按 actor 走增伤、按 state 走承伤/减伤/护盾。
+
+        - can_be_buffed: 吃 actor 的 damage_dealt_pct + damage_dealt_basis_points
+        - can_be_vulned: 吃 state 的 damage_taken_pct + damage_taken_basis_points
+        - can_be_reduced: 吃 state 的 damage_reduction_pct + damage_reduction_basis_points（双重 max(0.1, ...) 兜底合并为单次）
+        - can_be_shielded: 走 _consume_shield 抵挡
+
+        Note: actor.hp <= 0 时（DOT 来源已死亡），buff 通道自动失效，退化为裸基础伤害。
+        """
+        if raw_damage <= 0 or state.hp <= 0:
+            return 0
+        damage = max(1, int(raw_damage))
+        # 增伤通道（actor 死亡时退化为裸打）
+        if profile.can_be_buffed and actor is not None and actor.hp > 0:
+            buff_pct = self._damage_dealt_pct(actor)
+            basis = actor.snapshot.damage_dealt_basis_points
+            damage = int(damage * (1 + buff_pct / 100))
+            damage = int(damage * (1 + basis / 10_000))
+            damage = max(1, damage)
+        # 承伤通道
+        if profile.can_be_vulned:
+            vuln_pct = self._damage_taken_pct(state)
+            vuln_basis = state.snapshot.damage_taken_basis_points
+            damage = int(damage * (1 + vuln_pct / 100))
+            damage = int(damage * (1 + vuln_basis / 10_000))
+            damage = max(1, damage)
+        # 减伤通道（合并双重 max(0.05, ...) 为单次 max(0.1, ...)）
+        if profile.can_be_reduced:
+            reduce_pct = self._damage_reduction_pct(state)
+            reduce_basis = state.snapshot.damage_reduction_basis_points
+            combined = 1 - (reduce_pct / 100) - (reduce_basis / 10_000)
+            damage = max(1, int(damage * max(0.1, combined)))
+        # 护盾抵挡
+        if profile.can_be_shielded:
+            damage = self._consume_shield(state, damage)
+            if damage <= 0:
+                return 0
+        return self._apply_damage(state, damage)
+
+    def _modify_max_hp(self, state: _CombatState, delta: int, also_heal: bool = True) -> int:
+        """运行期改变 effective_max_hp，可选地按 delta 同步治疗（不走 heal_received 加成、不触发 heal_followups）。
+
+        - delta > 0: 提升上限并按等量补血（用于归元类词条）
+        - delta < 0: 降低上限并截断当前 hp
+        返回实际变更量。
+        """
+        if delta == 0:
+            return 0
+        before_max = state.get_max_hp()
+        new_max = max(1, before_max + delta)
+        state.effective_max_hp = new_max
+        if delta > 0 and also_heal:
+            state.hp = min(new_max, state.hp + delta)
+        elif delta < 0:
+            state.hp = min(state.hp, new_max)
+        return new_max - before_max
+
     def _heal(self, state: _CombatState, heal_pct: int) -> int:
         heal_pct = max(1, int(heal_pct * max(0.1, 1 + self._heal_received_pct(state) / 100)))
-        amount = max(1, int(state.snapshot.max_hp * heal_pct / 100))
+        max_hp = state.get_max_hp()
+        amount = max(1, int(max_hp * heal_pct / 100))
         before = state.hp
-        state.hp = min(state.snapshot.max_hp, state.hp + amount)
+        state.hp = min(max_hp, state.hp + amount)
         healed = state.hp - before
         self._trigger_heal_followups(state, healed)
         return healed
@@ -1677,8 +1842,9 @@ class CombatService:
             return 0
         amount = max(1, damage * heal_pct // 100)
         amount = max(1, int(amount * max(0.1, 1 + self._heal_received_pct(state) / 100)))
+        max_hp = state.get_max_hp()
         before = state.hp
-        state.hp = min(state.snapshot.max_hp, state.hp + amount)
+        state.hp = min(max_hp, state.hp + amount)
         healed = state.hp - before
         self._trigger_heal_followups(state, healed)
         return healed
@@ -1687,13 +1853,26 @@ class CombatService:
         if healed <= 0:
             return
         power = state.snapshot.spirit_power
+        # 春生：固定追打 + 治疗时额外叠生息
         if power is not None and power.power_id == "chunsheng":
-            self._add_status(state, _StatusEffect("春生", damage_dealt_pct=power.rolls["damage_pct"], remaining_hits=1))
-        for entry in state.snapshot.affixes:
-            if entry.affix_id != "guiyuan":
+            convert_pct = power.rolls.get("convert_pct", 0)
+            if convert_pct > 0:
+                bonus = max(1, int(healed * convert_pct / 100))
+                # 用 _StatusEffect.bonus_damage 携带固定追打值（下次攻击命中后以 _CHUNSHENG_BONUS_PROFILE 结算）
+                self._add_status(state, _StatusEffect("春生·追击", bonus_damage=bonus, remaining_hits=1))
+            shengxi_bonus = power.rolls.get("heal_shengxi_bonus", 0)
+            for _ in range(shengxi_bonus):
+                # 春生自带的额外生息层数（不计入护元上限）
+                self._add_status(state, _StatusEffect("生息"))
+        # 护元（huyuan）：自身受到治疗时按 affix index 独立叠层（不超过 per_battle_cap）
+        for index, entry in enumerate(state.snapshot.affixes):
+            if entry.affix_id != "huyuan":
                 continue
-            self._add_status(state, _StatusEffect("生息", heal_received_pct=_roll(entry.rolls, "heal_bonus_pct", 8)))
-            self._add_status(state, _StatusEffect("归元", damage_dealt_pct=_roll(entry.rolls, "damage_pct", 0), remaining_hits=1))
+            cap = _roll(entry.rolls, "per_battle_cap", 5)
+            current = state.huyuan_heal_stacks.get(index, 0)
+            if current < cap:
+                state.huyuan_heal_stacks[index] = current + 1
+                self._add_status(state, _StatusEffect("生息"))
 
     def _trigger_cleanse_followups(self, state: _CombatState) -> None:
         power = state.snapshot.spirit_power

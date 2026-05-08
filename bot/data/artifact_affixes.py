@@ -154,11 +154,10 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "huichun",
         "回春",
         "on_low_hp",
-        ("heal_pct", 25, 55),
-        ("heal_bonus_pct", 8, 16),
+        ("heal_pct", 30, 100),
+        ("shengxi_stacks", 2, 5),
         description_builder=lambda rolls: (
-            f"生命首次低于 50% 时回复 {rolls['heal_pct']}% 最大生命，并获得 2 层生息；"
-            f"每层生息提高受疗 {rolls['heal_bonus_pct']}%"
+            f"生命首次低于 50% 与 25% 时各触发一次：回复 {rolls['heal_pct']}% 最大生命并叠加 {rolls['shengxi_stacks']} 层生息。"
         ),
     ),
     _define(
@@ -262,12 +261,10 @@ ARTIFACT_AFFIX_DEFINITIONS = (
     _define(
         "guiyuan",
         "归元",
-        "on_heal",
-        ("damage_pct", 30, 75),
-        ("heal_bonus_pct", 6, 12),
+        "battle_start",
+        ("max_hp_pct", 8, 42),
         description_builder=lambda rolls: (
-            f"每次受到治疗后获得 1 层生息；出手时消耗 1 层使本次伤害提高 {rolls['damage_pct']}%，"
-            f"每层生息提高受疗 {rolls['heal_bonus_pct']}%"
+            f"战斗开始时永久提高 {rolls['max_hp_pct']}% 最大生命（同步治疗等量生命）；多件可叠加。"
         ),
     ),
     _define(
@@ -426,10 +423,8 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "固本",
         "battle_start",
         ("shield_pct", 25, 50),
-        ("reduce_pct", 10, 25),
         description_builder=lambda rolls: (
-            f"战斗开始获得 {rolls['shield_pct']}% 最大生命的护盾；"
-            f"护盾存在时受到伤害降低 {rolls['reduce_pct']}%"
+            f"战斗开始获得 {rolls['shield_pct']}% 最大生命的护盾（护盾免疫净化）。"
         ),
     ),
     _define(
@@ -452,6 +447,37 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("damage_pct", 25, 60),
         description_builder=lambda rolls: (
             f"整场身法提高 {rolls['initiative_pct']}%（影响先手判定）；首回合攻击伤害提高 {rolls['damage_pct']}%"
+        ),
+    ),
+    _define(
+        "huyuan",
+        "护元",
+        "battle_start",
+        ("start_stacks", 1, 4),
+        ("per_battle_cap", 3, 7),
+        description_builder=lambda rolls: (
+            f"战斗开始时叠加 {rolls['start_stacks']} 层生息；自身受到治疗时额外叠加 1 层生息，"
+            f"本词条单局最多叠加 {rolls['per_battle_cap']} 层（多件分别独立计数）。"
+        ),
+    ),
+    _define(
+        "yangyuan",
+        "养元",
+        "round_start",
+        ("heal_pct", 1, 10),
+        description_builder=lambda rolls: (
+            f"每回合开始时回复 {rolls['heal_pct']}% 最大生命（多件可叠加）。"
+        ),
+    ),
+    _define(
+        "xuming",
+        "续命",
+        "round_start",
+        ("cost_stacks", 1, 4),
+        ("heal_per_stack", 2, 15),
+        description_builder=lambda rolls: (
+            f"每回合开始时若生息层数大于 {rolls['cost_stacks']}，消耗 {rolls['cost_stacks']} 层生息回复 "
+            f"{rolls['cost_stacks']} × {rolls['heal_per_stack']}% 最大生命。"
         ),
     ),
 )
