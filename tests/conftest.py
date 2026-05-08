@@ -16,6 +16,7 @@ from bot.services.fate_service import FateService
 from bot.services.faction_service import FactionService
 from bot.services.idle_service import IdleService
 from bot.services.ladder_service import LadderService
+from bot.services.npc_service import NpcService
 from bot.services.pvp_service import PvpService
 from bot.services.ranking_service import RankingService
 from bot.services.sect_service import SectService
@@ -40,6 +41,7 @@ class ServiceBundle:
     pvp: PvpService
     ranking: RankingService
     travel: TravelService
+    npc: NpcService
 
 
 @pytest.fixture
@@ -73,4 +75,5 @@ def services() -> ServiceBundle:
     pvp = PvpService(character, combat, sect)
     ranking = RankingService(character, artifact, spirit, faction)
     travel = TravelService(fate, rng)
-    return ServiceBundle(fate, artifact, spirit, sect, character, idle, combat, faction, tower, breakthrough, ladder, pvp, ranking, travel)
+    npc = NpcService(rng, character, fate, artifact, spirit)
+    return ServiceBundle(fate, artifact, spirit, sect, character, idle, combat, faction, tower, breakthrough, ladder, pvp, ranking, travel, npc)
