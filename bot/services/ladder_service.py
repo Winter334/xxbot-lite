@@ -54,9 +54,14 @@ class LadderService:
         if character.current_ladder_rank <= 1:
             return []
         lower_bound = max(1, character.current_ladder_rank - self.challenge_range)
+        # NPC 不参与论道挑战
         statement = (
             select(Character.current_ladder_rank)
-            .where(Character.current_ladder_rank >= lower_bound, Character.current_ladder_rank < character.current_ladder_rank)
+            .where(
+                Character.current_ladder_rank >= lower_bound,
+                Character.current_ladder_rank < character.current_ladder_rank,
+                Character.is_npc.is_(False),
+            )
             .order_by(Character.current_ladder_rank.asc())
         )
         ranks = list((await session.scalars(statement)).all())
@@ -129,11 +134,26 @@ class LadderService:
         )
 
     async def move_to_bottom(self, session: AsyncSession, character: Character) -> None:
-        total = int((await session.scalar(select(func.count(Character.id)))) or 0)
+        # 总数与下移序列均排除 NPC（NPC 用 9000+ 占位 rank，不参与真人论道排序）
+        total = int(
+            (
+                await session.scalar(
+                    select(func.count(Character.id)).where(Character.is_npc.is_(False))
+                )
+            )
+            or 0
+        )
         current_rank = character.current_ladder_rank
         if current_rank >= total:
             return
-        statement = select(Character).where(Character.current_ladder_rank > current_rank).order_by(Character.current_ladder_rank.asc())
+        statement = (
+            select(Character)
+            .where(
+                Character.current_ladder_rank > current_rank,
+                Character.is_npc.is_(False),
+            )
+            .order_by(Character.current_ladder_rank.asc())
+        )
         trailing = list((await session.scalars(statement)).all())
         for entry in trailing:
             hydrated = await self.character_service.get_character_by_rank(session, entry.current_ladder_rank)
