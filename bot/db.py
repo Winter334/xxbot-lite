@@ -143,6 +143,9 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                 # 证道战场 -- 命数机制
                 "proving_ground_runs" in table_names and "lives_remaining" not in pg_run_columns,
                 "proving_ground_runs" in table_names and "soul_shards_earned" not in pg_run_columns,
+                # NPC 经济填充剂
+                "is_npc" not in character_columns,
+                "npc_spawned_on" not in character_columns,
             )
 
         (
@@ -205,6 +208,9 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             # 证道战场 -- 命数机制
             needs_pg_lives_remaining,
             needs_pg_soul_shards_earned,
+            # NPC 经济填充剂
+            needs_is_npc,
+            needs_npc_spawned_on,
         ) = await connection.run_sync(_collect_missing_columns)
         if needs_retreat_column:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN is_retreating BOOLEAN NOT NULL DEFAULT 0"))
@@ -344,6 +350,12 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
         # 证道战场 -- 器魂产出
         if needs_pg_soul_shards_earned:
             await connection.execute(text("ALTER TABLE proving_ground_runs ADD COLUMN soul_shards_earned BIGINT NOT NULL DEFAULT 0"))
+        # NPC 经济填充剂
+        if needs_is_npc:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN is_npc BOOLEAN NOT NULL DEFAULT 0"))
+            await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_characters_is_npc ON characters(is_npc)"))
+        if needs_npc_spawned_on:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN npc_spawned_on DATE"))
 
         # 灼烧体系重做：迁移所有 artifacts 的旧词条 ID
         artifacts_exists_result = await connection.execute(
