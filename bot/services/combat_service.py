@@ -304,7 +304,7 @@ class CombatService:
         damage = int(damage * (1 + before_attack_bonus / 100))
         damage = int(damage * (1 + self._damage_dealt_pct(actor) / 100))
         damage = int(damage * (1 + self._damage_taken_pct(target) / 100))
-        effective_reduction = max(0, self._damage_reduction_pct(target) - self._pierce_pct(actor, scene))
+        effective_reduction = max(0, self._damage_reduction_pct(target) - self._pierce_pct(actor, scene, target))
         damage = max(1, int(damage * max(0.05, 1 - (effective_reduction / 100))))
         damage = int(damage * (1 + self._spirit_damage_bonus_pct(actor, target, before_attack_bonus) / 100))
         damage = int(damage * (1 + actor.snapshot.damage_dealt_basis_points / 10_000))
@@ -320,6 +320,32 @@ class CombatService:
             damage = self._consume_shield(target, damage)
         actual_damage = self._apply_damage(target, damage)
         target.hits_taken += 1
+        # 雷殛标记：受击时每层雷殛额外承受一份轻量真伤（吃韧性），来源神通取自标记 source
+        if target.hp > 0:
+            leihen_statuses = [s for s in self._active_statuses(target) if s.name == "雷殛"]
+            for status in leihen_statuses:
+                source = status.source
+                if source is None or source.snapshot.spirit_power is None:
+                    continue
+                if source.snapshot.spirit_power.power_id != "leifa":
+                    continue
+                mark_pct = source.snapshot.spirit_power.rolls.get("mark_damage_pct", 0)
+                if mark_pct <= 0:
+                    continue
+                base_atk = self._current_atk(actor)
+                mark_raw = max(1, base_atk * mark_pct // 100)
+                mark_actual = self._apply_damage(target, mark_raw)
+                if mark_actual > 0:
+                    logs.append(
+                        self._effect_log(
+                            round_no,
+                            target,
+                            f"{source.snapshot.name} 的雷殛在 {target.snapshot.name} 身上炸开，追加 {mark_actual} 点雷殛真伤。",
+                            actor_name=source.snapshot.name,
+                        )
+                    )
+                if target.hp <= 0:
+                    break
         low_hp_after_hit = target.hp
         self._consume_hit_reduction_statuses(target)
 
@@ -327,7 +353,6 @@ class CombatService:
         logs.extend(self._trigger_on_hit(round_no, actor, target, actual_damage, roller, scene))
         if critical:
             actor.consecutive_crits += 1
-            self._decay_leiyin_stacks(actor)
             logs.extend(self._trigger_on_crit(round_no, actor, target, actual_damage, roller, scene))
         else:
             actor.consecutive_crits = 0
@@ -680,11 +705,6 @@ class CombatService:
                             actor_name=actor.snapshot.name,
                         )
                     )
-                case "leiyin":
-                    crit_pct = _roll(entry.rolls, "crit_pct", 0)
-                    self._add_status(actor, _StatusEffect("雷引", crit_bonus_pct=crit_pct))
-                    leiyin_layers = self._status_count(actor, "雷引")
-                    logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 雷引第 {leiyin_layers} 层蓄势，暴击锐意渐涨。"))
                 case "duoling":
                     if roller.random() > _roll(entry.rolls, "proc_pct", 0) / 100:
                         continue
@@ -725,8 +745,45 @@ class CombatService:
                 case "tianwei":
                     if self._status_count(actor, "天威") >= 6:
                         continue
-                    self._add_status(actor, _StatusEffect("天威", crit_damage_pct=_roll(entry.rolls, "crit_damage_pct", 0)))
-                    logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 天威加身，暴击杀势更猛。"))
+                    self._add_status(
+                        actor,
+                        _StatusEffect(
+                            "天威",
+                            crit_bonus_pct=_roll(entry.rolls, "crit_pct", 0),
+                            crit_damage_pct=_roll(entry.rolls, "crit_damage_pct", 0),
+                        ),
+                    )
+                    logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 天威加身，暴击率与杀势同涨。"))
+                case "leiyin":
+                    next_damage_pct = _roll(entry.rolls, "next_damage_pct", 0)
+                    self._add_status(
+                        actor,
+                        _StatusEffect("雷引", damage_dealt_pct=next_damage_pct, remaining_hits=1),
+                    )
+                    actor.spirit_proc_rounds["leiyin_crit_count"] = (
+                        actor.spirit_proc_rounds.get("leiyin_crit_count", 0) + 1
+                    )
+                    logs.append(
+                        self._effect_log(
+                            round_no,
+                            actor,
+                            f"{actor.snapshot.name} 雷引蓄势，下一击伤害提高 {next_damage_pct}%。",
+                        )
+                    )
+                    if actor.spirit_proc_rounds["leiyin_crit_count"] >= 3:
+                        actor.spirit_proc_rounds["leiyin_crit_count"] = 0
+                        burst_pct = _roll(entry.rolls, "burst_pct", 0)
+                        burst_damage = max(1, target.snapshot.max_hp * burst_pct // 100)
+                        burst_actual = self._apply_damage(target, burst_damage, respects_resilience=False)
+                        if burst_actual > 0:
+                            logs.append(
+                                self._effect_log(
+                                    round_no,
+                                    target,
+                                    f"{actor.snapshot.name} 雷引三激，唤出小型雷劫，造成 {burst_actual} 点真伤。",
+                                    actor_name=actor.snapshot.name,
+                                )
+                            )
                 case "pokong":
                     if target.hp <= 0:
                         continue
@@ -854,50 +911,47 @@ class CombatService:
         power = actor.snapshot.spirit_power
         if power is None or power.power_id != "leifa" or target.hp <= 0:
             return []
-        base_pct = power.rolls["thunder_pct"]
-        chain_bonus = (actor.consecutive_crits - 1) * power.rolls["chain_pct"] if actor.consecutive_crits > 1 else 0
-        thunder_pct = base_pct + chain_bonus
+        # 暴击追加雷罚伤害（吃韧性）
+        thunder_pct = power.rolls.get("thunder_pct", 0)
         thunder_damage = max(1, actual_damage * thunder_pct // 100)
         thunder_actual = self._apply_damage(target, thunder_damage)
         logs: list[ActionLog] = []
         if thunder_actual > 0:
-            chain_text = f"（连锁 ×{actor.consecutive_crits}）" if actor.consecutive_crits > 1 else ""
             logs.append(
                 self._effect_log(
                     round_no,
                     target,
-                    f"{actor.snapshot.name} 引雷罚天降{chain_text}，追加 {thunder_actual} 点雷伤。",
+                    f"{actor.snapshot.name} 引雷罚天降，追加 {thunder_actual} 点雷伤。",
                     actor_name=actor.snapshot.name,
                 )
             )
-        # 雷引叠层：暴击命中给目标累计 1 层；满 3 层引爆造成最大生命百分比的雷劫伤害
         if target.hp <= 0:
             return logs
-        leiyin_layers = self._target_leiyin_count(target)
-        if leiyin_layers < 3:
-            self._add_target_leiyin(target, actor)
-            leiyin_layers += 1
+        # 暴击给目标烙下雷殛标记（上限 3 层）
+        leihen_layers = self._target_leihen_count(target)
+        if leihen_layers < 3:
+            self._add_target_leihen(target, actor)
+            leihen_layers += 1
             logs.append(
                 self._effect_log(
                     round_no,
                     target,
-                    f"{actor.snapshot.name} 在 {target.snapshot.name} 身上烙下雷引（{leiyin_layers}/3）。",
+                    f"{actor.snapshot.name} 在 {target.snapshot.name} 身上烙下雷殛（{leihen_layers}/3）。",
                     actor_name=actor.snapshot.name,
                 )
             )
-        if leiyin_layers >= 3:
-            # 雷劫百分比：取 thunder_pct/12，区间 [6, 15]
-            judgment_pct = max(6, min(15, base_pct // 12))
+        # 雷殛叠满 3 层立即引爆（豁免韧性）并清除全部雷殛
+        if leihen_layers >= 3:
+            judgment_pct = power.rolls.get("judgment_pct", 0)
             judgment_damage = max(1, target.snapshot.max_hp * judgment_pct // 100)
-            # 雷劫引爆为"机制性必杀真伤"，豁免境界基础韧性
             judgment_actual = self._apply_damage(target, judgment_damage, respects_resilience=False)
-            self._clear_target_leiyin(target)
+            self._clear_target_leihen(target)
             if judgment_actual > 0:
                 logs.append(
                     self._effect_log(
                         round_no,
                         target,
-                        f"{actor.snapshot.name} 引动雷劫，雷引尽炸，造成 {judgment_actual} 点雷劫真伤。",
+                        f"{actor.snapshot.name} 引动雷劫，雷殛尽炸，造成 {judgment_actual} 点雷劫真伤。",
                         actor_name=actor.snapshot.name,
                     )
                 )
@@ -919,18 +973,15 @@ class CombatService:
             new_statuses.append(status)
         state.statuses = new_statuses
 
-    def _target_leiyin_count(self, state: _CombatState) -> int:
-        """目标身上「敌方雷引」层数（与施法者无关，按目标视角统计）。"""
-        return sum(1 for s in self._active_statuses(state) if s.name == "敌雷引")
+    def _target_leihen_count(self, state: _CombatState) -> int:
+        """目标身上「雷殛」层数（按目标视角统计）。"""
+        return sum(1 for s in self._active_statuses(state) if s.name == "雷殛")
 
-    def _add_target_leiyin(self, target: _CombatState, actor: _CombatState) -> None:
-        self._add_status(target, _StatusEffect("敌雷引", is_debuff=True, source=actor))
+    def _add_target_leihen(self, target: _CombatState, actor: _CombatState) -> None:
+        self._add_status(target, _StatusEffect("雷殛", is_debuff=True, source=actor))
 
-    def _clear_target_leiyin(self, target: _CombatState) -> None:
-        target.statuses = [s for s in target.statuses if s.name != "敌雷引"]
-
-    def _decay_leiyin_stacks(self, state: _CombatState) -> None:
-        state.statuses = [s for s in state.statuses if s.name != "雷引"]
+    def _clear_target_leihen(self, target: _CombatState) -> None:
+        target.statuses = [s for s in target.statuses if s.name != "雷殛"]
 
     def _trigger_on_low_hp(self, round_no: int, target: _CombatState, hp_after_hit: int, scene: set[str]) -> list[ActionLog]:
         logs: list[ActionLog] = []
@@ -1475,18 +1526,18 @@ class CombatService:
             total += self._status_count(state, "灵势") * power.rolls.get("reduce_per_stack_pct", 0)
         return total
 
-    def _pierce_pct(self, actor: _CombatState, scene: set[str]) -> int:
+    def _pierce_pct(self, actor: _CombatState, scene: set[str], target: _CombatState | None = None) -> int:
         total = 0
         dengxiao_layers = self._status_count(actor, "登霄")
         if dengxiao_layers >= 6:
             for entry in actor.snapshot.affixes:
                 if entry.affix_id == "dengxiao" and self._scene_matches(entry, scene):
                     total += _roll(entry.rolls, "pierce_pct", 0) * (dengxiao_layers - 5)
-        tianwei_layers = self._status_count(actor, "天威")
-        if tianwei_layers > 0:
+        leihen_layers = self._target_leihen_count(target) if target is not None else 0
+        if leihen_layers > 0:
             for entry in actor.snapshot.affixes:
                 if entry.affix_id == "liekong" and self._scene_matches(entry, scene):
-                    total += _roll(entry.rolls, "pierce_pct", 0) * tianwei_layers
+                    total += _roll(entry.rolls, "pierce_pct", 0) * leihen_layers
         return total
 
     def _heal_received_pct(self, state: _CombatState) -> int:
@@ -1695,7 +1746,12 @@ class CombatService:
         return sum(status.crit_bonus_pct for status in self._active_statuses(state))
 
     def _crit_damage_bonus_pct(self, state: _CombatState) -> int:
-        return sum(status.crit_damage_pct for status in self._active_statuses(state))
+        total = sum(status.crit_damage_pct for status in self._active_statuses(state))
+        # 雷罚神通：常驻暴击伤害基底
+        power = state.snapshot.spirit_power
+        if power is not None and power.power_id == "leifa":
+            total += power.rolls.get("crit_damage_base_pct", 0)
+        return total
 
     def _dodge_bonus_pct(self, state: _CombatState) -> int:
         return sum(status.dodge_bonus_pct for status in self._active_statuses(state))
