@@ -190,16 +190,17 @@ SPIRIT_POWER_DEFINITIONS = (
         "niepan",
         "涅槃",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("revive_hp_pct", 20, 28), ("cost_stacks", 12, 12), ("per_revive_atk_pct", 5, 8), ("per_revive_speed_pct", 4, 7)),
-            mid=(("revive_hp_pct", 25, 33), ("cost_stacks", 10, 10), ("per_revive_atk_pct", 7, 11), ("per_revive_speed_pct", 6, 9)),
-            high=(("revive_hp_pct", 30, 40), ("cost_stacks", 8, 8), ("per_revive_atk_pct", 10, 14), ("per_revive_speed_pct", 8, 12)),
-            peak=(("revive_hp_pct", 36, 48), ("cost_stacks", 7, 7), ("per_revive_atk_pct", 13, 18), ("per_revive_speed_pct", 10, 15)),
-            supreme=(("revive_hp_pct", 42, 55), ("cost_stacks", 6, 6), ("per_revive_atk_pct", 16, 22), ("per_revive_speed_pct", 13, 18)),
+            low=(("revive_hp_pct", 28, 36), ("cost_stacks", 12, 12), ("per_revive_atk_pct", 6, 10), ("per_revive_speed_pct", 5, 9), ("revive_shield_pct", 15, 20)),
+            mid=(("revive_hp_pct", 35, 44), ("cost_stacks", 10, 10), ("per_revive_atk_pct", 8, 13), ("per_revive_speed_pct", 7, 11), ("revive_shield_pct", 20, 26)),
+            high=(("revive_hp_pct", 44, 55), ("cost_stacks", 8, 8), ("per_revive_atk_pct", 12, 17), ("per_revive_speed_pct", 10, 15), ("revive_shield_pct", 26, 32)),
+            peak=(("revive_hp_pct", 55, 66), ("cost_stacks", 7, 7), ("per_revive_atk_pct", 15, 21), ("per_revive_speed_pct", 12, 18), ("revive_shield_pct", 32, 40)),
+            supreme=(("revive_hp_pct", 66, 80), ("cost_stacks", 6, 6), ("per_revive_atk_pct", 19, 26), ("per_revive_speed_pct", 16, 22), ("revive_shield_pct", 40, 50)),
         ),
         description_builder=lambda rolls: (
             f"濒死时若生息层数 ≥ {rolls.get('cost_stacks', 12)}，消耗 {rolls.get('cost_stacks', 12)} 层生息复活，"
             f"回复 {rolls.get('revive_hp_pct', rolls.get('heal_pct', 20))}% 最大生命；每次复活后永久提高 "
-            f"{rolls.get('per_revive_atk_pct', 5)}% 杀伐与 {rolls.get('per_revive_speed_pct', 4)}% 身法（可叠加）。"
+            f"{rolls.get('per_revive_atk_pct', 5)}% 杀伐与 {rolls.get('per_revive_speed_pct', 4)}% 身法（可叠加）；"
+            f"并获得最大生命 {rolls.get('revive_shield_pct', 0)}% 的余烬护盾。"
         ),
     ),
     _define_power(
