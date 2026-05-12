@@ -134,6 +134,10 @@ class NpcService:
             "max_bounty": max((c.bounty_soul for c in real_chars), default=0),
             "max_virtue": max((c.virtue for c in real_chars), default=0),
             "max_infamy": max((c.infamy for c in real_chars), default=0),
+            "max_soul_shards": max(
+                (c.artifact.soul_shards for c in real_chars if c.artifact),
+                default=0,
+            ),
             "max_travel_atk": max((c.travel_atk_pct for c in real_chars), default=0),
             "max_travel_def": max((c.travel_def_pct for c in real_chars), default=0),
             "max_travel_agi": max((c.travel_agi_pct for c in real_chars), default=0),
@@ -200,7 +204,7 @@ class NpcService:
         )
         if is_demonic:
             faction = "demonic"
-            bounty = self.rng.randint(1, caps["max_bounty"])
+            bounty = self._roll_bounty(caps["max_bounty"])
             infamy = (
                 self.rng.randint(100, max(101, caps["max_infamy"]))
                 if caps["max_infamy"] > 0
@@ -219,6 +223,8 @@ class NpcService:
 
         # ---- 6. 灵石（三段分布 × caps 限制） ----
         lingshi = self._roll_lingshi(caps["max_lingshi"])
+        # ---- 6b. 器魂（三段分布，偏激进；劫掠一次只能抢 10%）----
+        soul_shards = self._roll_soul_shards(caps["max_soul_shards"])
 
         # ---- 7. 法宝强化等级 + 三维成长 ----
         reinforce_cap = min(caps["max_reinforce"], stage.reinforce_cap)
@@ -271,6 +277,7 @@ class NpcService:
             faction=faction,
             virtue=virtue,
             infamy=infamy,
+            historical_max_infamy=infamy,
             luck=luck,
             bounty_soul=bounty,
             current_ladder_rank=placeholder_rank,
@@ -288,7 +295,7 @@ class NpcService:
             atk_bonus=atk_b,
             def_bonus=def_b,
             agi_bonus=agi_b,
-            soul_shards=0,
+            soul_shards=soul_shards,
             affix_slots_json="[]",
             affix_pending_json="[]",
             spirit_name=None,
@@ -337,18 +344,59 @@ class NpcService:
     # ------------------------------------------------------------------
 
     def _roll_lingshi(self, max_lingshi: int) -> int:
-        """灵石三段分布：30% 穷 / 50% 中 / 20% 富，硬上限 ≤ 全服最高。"""
+        """灵石三段分布：30% 穷 / 50% 中 / 20% 富，硬上限 ≤ 全服最高。
+
+        2026-05-13 砍乘数：原 0.05-0.30 / 0.30-1.00 / 1.00-1.50（最高 150%）
+                          → 0.05-0.20 / 0.20-0.60 / 0.60-1.00（最高 100%）
+        理由：配合恶名清空机制，控制 NPC 经济注入。
+        """
         if max_lingshi <= 0:
             return 0
         bucket = self.rng.random()
         if bucket < 0.30:
-            mult = self.rng.uniform(0.05, 0.30)
+            mult = self.rng.uniform(0.05, 0.20)
         elif bucket < 0.80:
-            mult = self.rng.uniform(0.30, 1.00)
+            mult = self.rng.uniform(0.20, 0.60)
         else:
-            mult = self.rng.uniform(1.00, 1.50)
+            mult = self.rng.uniform(0.60, 1.00)
         amount = int(max_lingshi * mult)
         return min(amount, max_lingshi)
+
+    def _roll_bounty(self, max_bounty: int) -> int:
+        """悬赏三段分布（保守）：50% 低 / 35% 中 / 15% 高。
+
+        悬赏被正道讨伐时一次性全部带走，相对劫掠（10%）回报更高，
+        因此 NPC 携带的悬赏值偏保守，配合主人讨伐自然清空机制控制总量。
+        """
+        if max_bounty <= 0:
+            return 0
+        bucket = self.rng.random()
+        if bucket < 0.50:
+            mult = self.rng.uniform(0.05, 0.20)
+        elif bucket < 0.85:
+            mult = self.rng.uniform(0.20, 0.45)
+        else:
+            mult = self.rng.uniform(0.45, 0.70)
+        amount = max(1, int(max_bounty * mult))
+        return min(amount, max_bounty)
+
+    def _roll_soul_shards(self, max_soul_shards: int) -> int:
+        """器魂三段分布（激进）：20% 低 / 50% 中 / 30% 高。
+
+        劫掠一次只能抢走 10%，因此 NPC 携带器魂可以稍微激进些，
+        保证魔道劫掠玩法有持续产出。
+        """
+        if max_soul_shards <= 0:
+            return 0
+        bucket = self.rng.random()
+        if bucket < 0.20:
+            mult = self.rng.uniform(0.10, 0.30)
+        elif bucket < 0.70:
+            mult = self.rng.uniform(0.30, 0.70)
+        else:
+            mult = self.rng.uniform(0.70, 1.10)
+        amount = int(max_soul_shards * mult)
+        return min(amount, max_soul_shards)
 
     # ------------------------------------------------------------------
     # 法宝三维成长模拟
