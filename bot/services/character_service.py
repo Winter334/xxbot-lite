@@ -448,6 +448,7 @@ class CharacterService:
     def build_combatant(self, character: Character, *, title: str | None = None) -> CombatantSnapshot:
         snapshot = self.build_snapshot(character, title=title)
         fate = self.fate_service.get_fate(character.fate_key)
+        stage = self.get_stage(character)
         return CombatantSnapshot(
             name=snapshot.player_name,
             atk=snapshot.total_atk,
@@ -463,6 +464,7 @@ class CharacterService:
             damage_taken_basis_points=fate.damage_taken_basis_points,
             damage_reduction_basis_points=fate.damage_reduction_basis_points,
             versus_higher_realm_damage_basis_points=fate.versus_higher_realm_damage_basis_points,
+            base_resilience=stage.base_resilience,
         )
 
     def can_reincarnate_today(self, character: Character) -> bool:

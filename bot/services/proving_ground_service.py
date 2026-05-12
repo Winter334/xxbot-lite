@@ -895,6 +895,7 @@ class ProvingGroundService:
             damage_taken_basis_points=snap.damage_taken_basis_points,
             damage_reduction_basis_points=snap.damage_reduction_basis_points,
             versus_higher_realm_damage_basis_points=snap.versus_higher_realm_damage_basis_points,
+            base_resilience=snap.base_resilience,
         )
         return name, enemy
 
@@ -1412,6 +1413,7 @@ class ProvingGroundService:
             max_hp=int(player.max_hp * 1.2),
             affixes=player.affixes,
             spirit_power=player.spirit_power,
+            base_resilience=player.base_resilience,
         )
         battle = self.combat_service.run_battle(player, demon, scene_tags=(PG_SCENE_TAG,))
         if battle.challenger_won:
