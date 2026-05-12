@@ -102,7 +102,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("atk_pct", 4, 9),
         ("late_damage_pct", 10, 18),
         description_builder=lambda rolls: (
-            f"每回合开始获得 1 层灵势，最多 12 层；每层杀伐提高 {rolls['atk_pct']}%，"
+            f"每回合开始获得 1 层灵势，最多 8 层；每层杀伐提高 {rolls['atk_pct']}%，"
             f"并额外提高 {rolls['late_damage_pct']}% 造成伤害"
         ),
     ),
@@ -283,7 +283,8 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("agi_pct", 20, 40),
         ("damage_pct", 15, 30),
         description_builder=lambda rolls: (
-            f"前 3 回合命中后获得 1 层疾锋，最多 3 层；每层提高 {rolls['agi_pct']}% 身法与 {rolls['damage_pct']}% 伤害"
+            f"前 3 回合命中后获得 1 层疾锋（每层持续 3 回合），最多 3 层；"
+            f"每层提高 {rolls['agi_pct']}% 身法与 {rolls['damage_pct']}% 伤害"
         ),
     ),
     # ── 灼烧流 ──
