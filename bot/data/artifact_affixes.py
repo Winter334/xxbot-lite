@@ -271,8 +271,10 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "cangbi",
         "藏壁",
         "on_be_hit",
-        ("reduce_pct", 35, 75),
-        description_builder=lambda rolls: f"每回合首次受击降低 {rolls['reduce_pct']}% 伤害，并获得 1 层守势",
+        ("reduce_pct", 25, 50),
+        description_builder=lambda rolls: (
+            f"每回合首次受击时，获得 1 层守势（本层抵消 {rolls['reduce_pct']}% 受击伤害）。"
+        ),
     ),
     _define(
         "jifeng",
