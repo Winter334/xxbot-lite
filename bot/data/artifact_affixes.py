@@ -371,27 +371,30 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "tianwei",
         "天威",
         "on_crit",
-        ("crit_damage_pct", 8, 18),
+        ("crit_pct", 4, 7),
+        ("crit_damage_pct", 8, 13),
         description_builder=lambda rolls: (
-            f"暴击后获得 1 层天威，最多 6 层；每层提高 {rolls['crit_damage_pct']}% 暴击伤害"
+            f"暴击后获得 1 层天威，最多 6 层；每层提高 {rolls['crit_pct']}% 暴击率与 {rolls['crit_damage_pct']}% 暴击伤害"
         ),
     ),
     _define(
         "leiyin",
         "雷引",
-        "on_hit",
-        ("crit_pct", 8, 18),
+        "on_crit",
+        ("next_damage_pct", 18, 28),
+        ("burst_pct", 4, 7),
         description_builder=lambda rolls: (
-            f"每次命中提高 {rolls['crit_pct']}% 暴击率；暴击后清除所有层数"
+            f"暴击后蓄势：下一次出手伤害提高 {rolls['next_damage_pct']}%；每累计 3 次暴击触发一次小型雷劫，"
+            f"造成 {rolls['burst_pct']}% 最大生命的真伤（豁免韧性）"
         ),
     ),
     _define(
         "liekong",
         "裂空",
         "before_attack",
-        ("pierce_pct", 6, 14),
+        ("pierce_pct", 15, 25),
         description_builder=lambda rolls: (
-            f"自身有天威层数时，每层无视 {rolls['pierce_pct']}% 减伤"
+            f"对身上有雷殛标记的目标，每层雷殛额外无视 {rolls['pierce_pct']}% 减伤"
         ),
     ),
     # ── 净化流 ──

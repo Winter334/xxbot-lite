@@ -399,15 +399,41 @@ SPIRIT_POWER_DEFINITIONS = (
         "leifa",
         "雷罚",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("thunder_pct", 42, 58), ("chain_pct", 14, 20)),
-            mid=(("thunder_pct", 58, 78), ("chain_pct", 20, 28)),
-            high=(("thunder_pct", 78, 102), ("chain_pct", 28, 36)),
-            peak=(("thunder_pct", 102, 130), ("chain_pct", 36, 45)),
-            supreme=(("thunder_pct", 130, 160), ("chain_pct", 45, 56)),
+            low=(
+                ("crit_damage_base_pct", 18, 24),
+                ("thunder_pct", 38, 52),
+                ("mark_damage_pct", 6, 9),
+                ("judgment_pct", 7, 9),
+            ),
+            mid=(
+                ("crit_damage_base_pct", 24, 32),
+                ("thunder_pct", 52, 70),
+                ("mark_damage_pct", 8, 12),
+                ("judgment_pct", 9, 11),
+            ),
+            high=(
+                ("crit_damage_base_pct", 32, 42),
+                ("thunder_pct", 70, 92),
+                ("mark_damage_pct", 11, 15),
+                ("judgment_pct", 11, 13),
+            ),
+            peak=(
+                ("crit_damage_base_pct", 42, 54),
+                ("thunder_pct", 92, 118),
+                ("mark_damage_pct", 14, 18),
+                ("judgment_pct", 13, 15),
+            ),
+            supreme=(
+                ("crit_damage_base_pct", 54, 68),
+                ("thunder_pct", 118, 148),
+                ("mark_damage_pct", 17, 22),
+                ("judgment_pct", 15, 18),
+            ),
         ),
         description_builder=lambda rolls: (
-            f"暴击时追加 {rolls['thunder_pct']}% 雷罚伤害并叠加 1 层雷引；连续暴击每次额外提高 {rolls['chain_pct']}%，未暴击时重置。"
-            f"雷引达 3 层引爆，造成等同最大生命 {min(15, max(6, rolls['thunder_pct']//12))}% 的雷劫伤害并清除全部雷引。"
+            f"常驻 +{rolls['crit_damage_base_pct']}% 暴击伤害。暴击时追加 {rolls['thunder_pct']}% 雷罚伤害并给目标烙下 1 层雷殛（上限 3 层）；"
+            f"雷殛存在时每次受击额外承受 {rolls['mark_damage_pct']}% 普攻伤害的雷殛真伤（吃韧性）。"
+            f"雷殛叠满 3 层立即引爆，造成最大生命 {rolls['judgment_pct']}% 的雷劫真伤（豁免韧性）并清除全部雷殛。"
         ),
     ),
     _define_power(
