@@ -107,8 +107,8 @@ class _DamageProfile:
 
 # 灼烧 DOT：吃增伤 + 承伤；不吃减伤、不被护盾抵挡（DOT 穿透守势/护盾）
 _BURN_DOT_PROFILE = _DamageProfile(can_be_buffed=True, can_be_vulned=True, can_be_reduced=False, can_be_shielded=False)
-# 蚀焰引爆：不吃增伤；吃承伤 + 减伤 + 护盾
-_SHIYAN_PROFILE = _DamageProfile(can_be_buffed=False, can_be_vulned=True, can_be_reduced=True, can_be_shielded=True)
+# 蚀焰引爆：不吃增伤、不吃减伤（穿透减伤）；吃承伤 + 护盾
+_SHIYAN_PROFILE = _DamageProfile(can_be_buffed=False, can_be_vulned=True, can_be_reduced=False, can_be_shielded=True)
 # 春生固定追打：不吃增伤（已是固定值）；吃承伤 + 减伤 + 护盾
 _CHUNSHENG_BONUS_PROFILE = _DamageProfile(can_be_buffed=False, can_be_vulned=True, can_be_reduced=True, can_be_shielded=True)
 
@@ -454,7 +454,7 @@ class CombatService:
                         juling_atk_pct = _roll(entry.rolls, "atk_pct", 0)
                         break
                 for _ in range(start_stacks):
-                    if self._status_count(state, "灵势") >= 12:
+                    if self._status_count(state, "灵势") >= 8:
                         break
                     self._add_status(state, _StatusEffect("灵势", atk_pct=juling_atk_pct))
                 logs.append(
@@ -497,7 +497,7 @@ class CombatService:
                 continue
             match entry.affix_id:
                 case "juling":
-                    if self._status_count(state, "灵势") >= 12:
+                    if self._status_count(state, "灵势") >= 8:
                         continue
                     self._add_status(state, _StatusEffect("灵势", atk_pct=_roll(entry.rolls, "atk_pct", 0)))
                     current_layers = self._status_count(state, "灵势")
@@ -663,7 +663,7 @@ class CombatService:
                 case "jifeng":
                     if round_no > 3 or self._status_count(actor, "疾锋") >= 3:
                         continue
-                    self._add_status(actor, _StatusEffect("疾锋", agility_pct=_roll(entry.rolls, "agi_pct", 0), damage_dealt_pct=_roll(entry.rolls, "damage_pct", 0)))
+                    self._add_status(actor, _StatusEffect("疾锋", duration=3, agility_pct=_roll(entry.rolls, "agi_pct", 0), damage_dealt_pct=_roll(entry.rolls, "damage_pct", 0)))
                     logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 疾锋加身，速攻势头更盛。"))
                 case "yujin":
                     # 余烬：触发器已迁移至 on_burn_consumed（灼烧被消耗时重燃），on_hit 不再处理
