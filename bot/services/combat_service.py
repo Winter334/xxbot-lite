@@ -28,6 +28,7 @@ class CombatantSnapshot:
     damage_taken_basis_points: int = 0
     damage_reduction_basis_points: int = 0
     versus_higher_realm_damage_basis_points: int = 0
+    base_resilience: int = 0  # 境界基础韧性 %（0-36），所有伤害均扣，仅"机制性必杀真伤"豁免
 
 
 @dataclass(slots=True)
@@ -101,6 +102,7 @@ class _DamageProfile:
     can_be_vulned: bool = True   # 是否吃 target 的承伤（damage_taken_pct + damage_taken_basis_points）
     can_be_reduced: bool = True  # 是否吃 target 的减伤（damage_reduction_pct + damage_reduction_basis_points）
     can_be_shielded: bool = True # 是否被护盾抵挡
+    respects_resilience: bool = True  # 是否吃目标的境界基础韧性（仅"机制性必杀类真伤"豁免）
 
 
 # 灼烧 DOT：吃增伤 + 承伤；不吃减伤、不被护盾抵挡（DOT 穿透守势/护盾）
@@ -159,6 +161,7 @@ class CombatService:
         damage_taken_basis_points: int = 0,
         damage_reduction_basis_points: int = 0,
         versus_higher_realm_damage_basis_points: int = 0,
+        base_resilience: int = 0,
     ) -> CombatantSnapshot:
         return CombatantSnapshot(
             name,
@@ -175,6 +178,7 @@ class CombatService:
             damage_taken_basis_points,
             damage_reduction_basis_points,
             versus_higher_realm_damage_basis_points,
+            base_resilience,
         )
 
     def run_battle(
@@ -885,7 +889,8 @@ class CombatService:
             # 雷劫百分比：取 thunder_pct/12，区间 [6, 15]
             judgment_pct = max(6, min(15, base_pct // 12))
             judgment_damage = max(1, target.snapshot.max_hp * judgment_pct // 100)
-            judgment_actual = self._apply_damage(target, judgment_damage)
+            # 雷劫引爆为"机制性必杀真伤"，豁免境界基础韧性
+            judgment_actual = self._apply_damage(target, judgment_damage, respects_resilience=False)
             self._clear_target_leiyin(target)
             if judgment_actual > 0:
                 logs.append(
@@ -1341,11 +1346,19 @@ class CombatService:
         speed_bonus = max(0, int(power.rolls.get("per_revive_speed_pct", 0)))
         if atk_bonus > 0 or speed_bonus > 0:
             self._add_status(state, _StatusEffect("涅槃·余烬", atk_pct=atk_bonus, agility_pct=speed_bonus))
+        shield_pct = max(0, int(power.rolls.get("revive_shield_pct", 0)))
+        shield_amount = 0
+        if shield_pct > 0:
+            shield_amount = max(1, state.get_max_hp() * shield_pct // 100)
+            self._add_status(state, _StatusEffect("涅槃·余烬护盾", shield=shield_amount))
+        base_msg = f"{state.snapshot.name} 涅槃再起（第 {state.niepan_revive_count} 次），消耗 {cost} 层生息回复 {heal_amount} 点生命；杀伐 +{atk_bonus}%、身法 +{speed_bonus}%（持续生效）。"
+        if shield_amount > 0:
+            base_msg += f"凝起余烬护盾 {shield_amount}。"
         return [
             self._effect_log(
                 round_no,
                 state,
-                f"{state.snapshot.name} 涅槃再起（第 {state.niepan_revive_count} 次），消耗 {cost} 层生息回复 {heal_amount} 点生命；杀伐 +{atk_bonus}%、身法 +{speed_bonus}%（持续生效）。",
+                base_msg,
             )
         ]
 
@@ -1756,9 +1769,25 @@ class CombatService:
     def _add_status(self, state: _CombatState, status: _StatusEffect) -> None:
         state.statuses.append(status)
 
-    def _apply_damage(self, state: _CombatState, damage: int) -> int:
+    def _apply_damage(
+        self,
+        state: _CombatState,
+        damage: int,
+        *,
+        respects_resilience: bool = True,
+    ) -> int:
+        """最底层扣血。
+        - respects_resilience=True（默认）：扣减 state.snapshot.base_resilience % 后再扣血。
+          普攻、反棘、归锋、追击、雷罚雷伤、灼烧 DOT、春生、蚀焰 等所有伤害管线最终都汇聚到这里。
+        - respects_resilience=False：豁免境界韧性。仅"机制性必杀真伤"使用，如雷劫引爆。
+        - 绝命斩杀直接 `target.hp = 0`，不走本函数，天然豁免。
+        """
         if damage <= 0 or state.hp <= 0:
             return 0
+        if respects_resilience:
+            resilience = max(0, min(95, state.snapshot.base_resilience))
+            if resilience > 0:
+                damage = max(1, damage * (100 - resilience) // 100)
         before = state.hp
         state.hp = max(0, state.hp - damage)
         return before - state.hp
@@ -1807,7 +1836,7 @@ class CombatService:
             damage = self._consume_shield(state, damage)
             if damage <= 0:
                 return 0
-        return self._apply_damage(state, damage)
+        return self._apply_damage(state, damage, respects_resilience=profile.respects_resilience)
 
     def _modify_max_hp(self, state: _CombatState, delta: int, also_heal: bool = True) -> int:
         """运行期改变 effective_max_hp，可选地按 delta 同步治疗（不走 heal_received 加成、不触发 heal_followups）。
