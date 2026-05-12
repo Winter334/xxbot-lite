@@ -163,10 +163,13 @@ def test_shiyan_explodes_even_when_attack_deals_zero_damage(services) -> None:
     assert any(log.text and "蚀焰引爆" in log.text for log in battle.logs)
 
 
-def test_shiyan_explosion_respects_damage_reduction(services) -> None:
-    """蚀焰：高减伤目标受到的引爆伤害应被减伤管线削减（对比无/有守势两场）。"""
+def test_shiyan_explosion_bypasses_damage_reduction(services) -> None:
+    """蚀焰：引爆伤害穿透减伤管线（仍吃护盾/承伤/韧性，但豁免减伤）。
+
+    2026-05-13 平衡调整：原本蚀焰引爆吃减伤，导致面对高减伤目标时强度过低；
+    现在改为穿透减伤后，引爆伤害不再受 zhenmai 等减伤词条影响。
+    """
     import re
-    # 沿用 test_shiyan_consumes_burn_stacks_when_threshold_reached 的成功 setup
     burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 20})
 
     def run_one(defender_affixes):
@@ -194,8 +197,8 @@ def test_shiyan_explosion_respects_damage_reduction(services) -> None:
     dmg_no = extract_dmg(explode_no)
     dmg_red = extract_dmg(explode_red)
     assert dmg_no is not None and dmg_red is not None, f"无法解析伤害: {explode_no.text} | {explode_red.text}"
-    # 守势 80% 减伤应让伤害显著降低（>50%）
-    assert dmg_red < dmg_no * 0.5, f"无减伤伤害 {dmg_no}, 守势减伤后 {dmg_red}"
+    # 蚀焰引爆穿透减伤：守势 80% 减伤后伤害应保持一致
+    assert dmg_red == dmg_no, f"无减伤伤害 {dmg_no}, 守势减伤后 {dmg_red}（蚀焰应穿透减伤）"
 
 
 def test_lingyong_grants_starting_lingshi_stacks(services) -> None:
