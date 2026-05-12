@@ -112,6 +112,20 @@ class FactionService:
         for character in characters:
             self.sync_character_state(character)
 
+    def _apply_infamy_gain(self, character: Character, gain: int) -> int:
+        """统一的恶名增加入口，同步刷新历史最大值。
+
+        返回实际增加的恶名值（始终等于入参 gain，便于链式赋值）。
+        历史最大值用于劫掠时计算"快速回升"的 5% 阶梯加成，
+        在讨伐清空 infamy 时不会被清零（这是设计意图）。
+        """
+        if gain <= 0:
+            return 0
+        character.infamy = (character.infamy or 0) + gain
+        if character.infamy > (character.historical_max_infamy or 0):
+            character.historical_max_infamy = character.infamy
+        return gain
+
     def join_faction(self, character: Character, faction_key: str) -> tuple[bool, str]:
         if faction_key not in {"righteous", "demonic"}:
             return False, "此道未立，暂不可入。"
@@ -120,6 +134,7 @@ class FactionService:
         character.faction = faction_key
         character.virtue = 0
         character.infamy = 0
+        character.historical_max_infamy = 0
         character.bounty_soul = 0
         if faction_key == "demonic":
             character.last_bounty_growth_on = today_shanghai()
@@ -275,9 +290,14 @@ class FactionService:
         hunter.virtue += reward_soul
         hunter.luck += 10
         target.bounty_soul = 0
+        # 讨伐成功清空当前恶名（避免被堵门反复刷成资源包）；
+        # historical_max_infamy 保留，作为下次再作恶时"快速回升"的依据
+        cleared_infamy = target.infamy or 0
+        target.infamy = 0
         target.last_bounty_defeated_on = today_shanghai()
         hunter.last_highlight_text = f"方才承悬赏讨伐 {target.player.display_name} 得手。"
-        target.last_highlight_text = f"方才被正道修士 {hunter.player.display_name} 讨伐。"
+        target.last_highlight_text = f"方才被正道修士 {hunter.player.display_name} 讨伐，恶名一笔勾销。"
+        _ = cleared_infamy  # 当前不计入战利品，保留变量备扩展
         if self.sect_service is not None:
             self.sect_service.record_task_event(hunter, "faction_bounty_win")
         return FactionActionResult(
@@ -309,7 +329,7 @@ class FactionService:
         same_faction_halved = target.faction == "demonic"
         defeated_penalty_applied = self.robbery_defeat_penalty_active(robber, now=current_time)
         if not battle.challenger_won:
-            robber.infamy += 3
+            self._apply_infamy_gain(robber, 3)
             robber.last_highlight_text = f"方才劫掠 {target.player.display_name} 失手。"
             return FactionActionResult(
                 False,
@@ -345,7 +365,11 @@ class FactionService:
             target.luck -= stolen_luck
             robber.luck += stolen_luck
 
-        infamy_gain = INFAMY_BY_REALM.get(target.realm_key, 3)
+        # 恶名增量 = 基础（按目标境界） + 历史最大恶名 × 5%（快速回升机制）
+        # 讨伐清空当前 infamy 但 historical_max_infamy 保留，再次作恶时阶梯式回升
+        base_infamy_gain = INFAMY_BY_REALM.get(target.realm_key, 3)
+        escalation = int((robber.historical_max_infamy or 0) * 0.05)
+        infamy_gain = base_infamy_gain + escalation
         # 系统额外注入器魂和灵石 bonus
         bonus_soul = self.robbery_bonus_soul(
             target,
@@ -360,7 +384,7 @@ class FactionService:
             same_faction_halved=same_faction_halved,
         )
         robber.lingshi += bonus_lingshi
-        robber.infamy += infamy_gain
+        self._apply_infamy_gain(robber, infamy_gain)
         robber.last_highlight_text = f"方才劫掠 {target.player.display_name} 得手。"
         target.last_highlight_text = f"方才遭 {robber.player.display_name} 劫掠。"
         if self.sect_service is not None:

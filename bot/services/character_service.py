@@ -283,6 +283,7 @@ class CharacterService:
             faction="neutral",
             virtue=0,
             infamy=0,
+            historical_max_infamy=0,
             luck=self.fate_service.random_initial_luck(),
             bounty_soul=0,
             current_ladder_rank=initial_rank,
@@ -553,6 +554,7 @@ class CharacterService:
         character.faction = "neutral"
         character.virtue = 0
         character.infamy = 0
+        character.historical_max_infamy = 0
         character.luck = self.fate_service.random_initial_luck()
         character.bounty_soul = 0
         character.last_bounty_growth_on = None

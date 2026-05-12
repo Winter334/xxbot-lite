@@ -146,6 +146,8 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                 # NPC 经济填充剂
                 "is_npc" not in character_columns,
                 "npc_spawned_on" not in character_columns,
+                # 恶名阶梯（讨伐清空 + 历史最大追踪）
+                "historical_max_infamy" not in character_columns,
             )
 
         (
@@ -211,6 +213,8 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             # NPC 经济填充剂
             needs_is_npc,
             needs_npc_spawned_on,
+            # 恶名阶梯
+            needs_historical_max_infamy,
         ) = await connection.run_sync(_collect_missing_columns)
         if needs_retreat_column:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN is_retreating BOOLEAN NOT NULL DEFAULT 0"))
@@ -356,6 +360,10 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_characters_is_npc ON characters(is_npc)"))
         if needs_npc_spawned_on:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN npc_spawned_on DATE"))
+        if needs_historical_max_infamy:
+            await connection.execute(text("ALTER TABLE characters ADD COLUMN historical_max_infamy BIGINT NOT NULL DEFAULT 0"))
+            # 把现有 infamy 当成历史最大值回填
+            await connection.execute(text("UPDATE characters SET historical_max_infamy = infamy WHERE infamy > historical_max_infamy"))
 
         # 灼烧体系重做：迁移所有 artifacts 的旧词条 ID
         artifacts_exists_result = await connection.execute(

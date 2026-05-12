@@ -52,6 +52,7 @@ class Character(Base, IdentityMixin, TimestampMixin):
     faction: Mapped[str] = mapped_column(String(16), default="neutral")
     virtue: Mapped[int] = mapped_column(BigInteger, default=0)
     infamy: Mapped[int] = mapped_column(BigInteger, default=0)
+    historical_max_infamy: Mapped[int] = mapped_column(BigInteger, default=0)
     luck: Mapped[int] = mapped_column(BigInteger, default=0)
     bounty_soul: Mapped[int] = mapped_column(BigInteger, default=0)
     last_bounty_growth_on: Mapped[date | None] = mapped_column(Date, nullable=True)
