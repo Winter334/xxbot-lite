@@ -124,25 +124,42 @@ class NpcService:
     # ------------------------------------------------------------------
 
     def _compute_caps(self, real_chars: list[Character]) -> dict[str, int]:
-        """从真人样本计算各项资源上限。"""
+        """从真人样本计算各项资源上限。
+
+        经济资源（灵石/悬赏/器魂）使用去极值上限，
+        防止单个极端玩家污染全体 NPC 池导致经济崩溃。
+        """
         return {
             "max_reinforce": max(
                 (c.artifact.reinforce_level for c in real_chars if c.artifact),
                 default=0,
             ),
-            "max_lingshi": max((c.lingshi for c in real_chars), default=0),
-            "max_bounty": max((c.bounty_soul for c in real_chars), default=0),
+            "max_lingshi": self._dampened_cap([c.lingshi for c in real_chars]),
+            "max_bounty": self._dampened_cap([c.bounty_soul for c in real_chars]),
             "max_virtue": max((c.virtue for c in real_chars), default=0),
             "max_infamy": max((c.infamy for c in real_chars), default=0),
-            "max_soul_shards": max(
-                (c.artifact.soul_shards for c in real_chars if c.artifact),
-                default=0,
+            "max_soul_shards": self._dampened_cap(
+                [c.artifact.soul_shards for c in real_chars if c.artifact],
             ),
             "max_travel_atk": max((c.travel_atk_pct for c in real_chars), default=0),
             "max_travel_def": max((c.travel_def_pct for c in real_chars), default=0),
             "max_travel_agi": max((c.travel_agi_pct for c in real_chars), default=0),
             "max_spirit_tier_idx": self._max_spirit_tier_idx(real_chars),
         }
+
+    @staticmethod
+    def _dampened_cap(values: list[int], drop_top: int = 1) -> int:
+        """去极端值上限：排序后跳过最高 N 个值，再取 max。
+
+        防止单个超高值（如一次性讨伐获得巨额器魂）拉高全体 NPC 上限，
+        同时保留多数玩家的真实水平作为 NPC 生成参考。样本不足时保守回落。
+        """
+        if not values:
+            return 0
+        sorted_vals = sorted(values, reverse=True)
+        # 至少保留一个值
+        keep_from = min(drop_top, len(sorted_vals) - 1)
+        return sorted_vals[keep_from]
 
     def _max_spirit_tier_idx(self, chars: list[Character]) -> int:
         """全服真人器灵的最高品阶索引（-1 表示尚无器灵）。"""

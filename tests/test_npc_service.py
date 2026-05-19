@@ -333,10 +333,10 @@ async def test_compute_caps_with_empty_list_returns_zero_caps(services) -> None:
 
 
 @pytest.mark.asyncio
-async def test_compute_caps_picks_max_across_real_players(
+async def test_compute_caps_dampened_for_economy_resources(
     session_factory, services
 ) -> None:
-    """caps 应取多个真人样本的最大值。"""
+    """经济资源（灵石/悬赏/器魂）应使用去极值上限，跳过最高值防止离群污染。"""
     async with session_factory() as session:
         a = await _create_real_player(
             session, services, discord_id=9001, name="A", lingshi=500, bounty=10
@@ -350,8 +350,10 @@ async def test_compute_caps_picks_max_across_real_players(
         await session.flush()
 
         caps = services.npc._compute_caps([a, b, c])
-        assert caps["max_lingshi"] == 2000
-        assert caps["max_bounty"] == 99
+        # 去掉最高值 2000 后，max 为 500
+        assert caps["max_lingshi"] == 500
+        # 去掉最高值 99 后，max 为 10
+        assert caps["max_bounty"] == 10
 
 
 def test_realm_distribution_counts_pairs() -> None:
