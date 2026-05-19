@@ -70,22 +70,19 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "ningshen",
         "凝神",
         "on_hit",
-        ("proc_pct", 35, 70),
-        ("atk_pct", 3, 7),
+        ("atk_pct", 4, 9),
         description_builder=lambda rolls: (
-            f"造成伤害后有 {rolls['proc_pct']}% 概率凝成 1 层灵势；每层灵势提高 {rolls['atk_pct']}% 杀伐，最多 8 层"
+            f"造成伤害后必定凝成 1 层灵势；每层灵势提高 {rolls['atk_pct']}% 杀伐，最多 10 层"
         ),
     ),
     _define(
         "lueying",
         "掠影",
         "battle_start",
-        ("agi_pct", 35, 80),
-        ("proc_pct", 30, 60),
-        ("agi_down_pct", 8, 16),
+        ("agi_pct", 30, 70),
+        ("drain_pct", 3, 7),
         description_builder=lambda rolls: (
-            f"整场身法提高 {rolls['agi_pct']}%；命中后有 {rolls['proc_pct']}% 概率附加 1 层破步，"
-            f"每层使目标身法降低 {rolls['agi_down_pct']}%，最多 4 层"
+            f"整场身法提高 {rolls['agi_pct']}%；命中时必定汲取目标 {rolls['drain_pct']}% 身法转移至自身（整场生效，有上限）。"
         ),
     ),
     _define(
@@ -102,7 +99,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("atk_pct", 4, 9),
         ("late_damage_pct", 10, 18),
         description_builder=lambda rolls: (
-            f"每回合开始获得 1 层灵势，最多 8 层；每层杀伐提高 {rolls['atk_pct']}%，"
+            f"每回合开始获得 1 层灵势，最多 10 层；每层杀伐提高 {rolls['atk_pct']}%，"
             f"并额外提高 {rolls['late_damage_pct']}% 造成伤害"
         ),
     ),
@@ -242,20 +239,19 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "suoling",
         "锁灵",
         "on_hit",
-        ("proc_pct", 35, 70),
-        ("damage_pct", 25, 65),
+        ("stacks", 1, 3),
+        ("buff_pct", 5, 15),
         description_builder=lambda rolls: (
-            f"命中带正面层数的目标时，有 {rolls['proc_pct']}% 概率打散 1 层，并追加本次伤害 {rolls['damage_pct']}%"
+            f"命中必定净化敌方 {rolls['stacks']} 层正面效果；每净化 1 层自身获得 {rolls['buff_pct']}% 伤害加成（持续 2 回合）"
         ),
     ),
     _define(
         "jinghua",
         "净华",
         "round_start",
-        ("proc_pct", 35, 70),
-        ("reduce_pct", 20, 45),
+        ("stacks", 1, 4),
         description_builder=lambda rolls: (
-            f"回合开始若自身有负面层数，有 {rolls['proc_pct']}% 概率净化 1 层，并获得 1 层 {rolls['reduce_pct']}% 守势"
+            f"每回合开始必定净化自身 {rolls['stacks']} 层负面效果。"
         ),
     ),
     _define(
@@ -280,11 +276,10 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "jifeng",
         "疾锋",
         "on_hit",
-        ("agi_pct", 20, 40),
-        ("damage_pct", 15, 30),
+        ("agi_pct", 15, 30),
+        ("damage_pct", 10, 22),
         description_builder=lambda rolls: (
-            f"前 3 回合命中后获得 1 层疾锋（每层持续 3 回合），最多 3 层；"
-            f"每层提高 {rolls['agi_pct']}% 身法与 {rolls['damage_pct']}% 伤害"
+            f"命中后获得 1 层疾锋（最多 3 层）；每层提高 {rolls['agi_pct']}% 身法与 {rolls['damage_pct']}% 伤害。受击时失去 1 层。不限回合。"
         ),
     ),
     # ── 灼烧流 ──
@@ -340,10 +335,10 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "fengxing",
         "风行",
         "on_dodge",
-        ("damage_pct", 10, 22),
-        ("agi_pct", 8, 16),
+        ("damage_pct", 12, 28),
+        ("heal_pct", 2, 6),
         description_builder=lambda rolls: (
-            f"闪避后获得 1 层风行，最多 5 层；每层提高 {rolls['damage_pct']}% 伤害与 {rolls['agi_pct']}% 身法"
+            f"闪避后获得 1 层风行（最多 5 层）；攻击时消耗全部层数，每层提高本次伤害 {rolls['damage_pct']}% 并回复 {rolls['heal_pct']}% 最大生命。"
         ),
     ),
     _define(
@@ -351,20 +346,19 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "幻步",
         "on_dodge",
         ("dodge_pct", 3, 7),
-        ("crit_pct", 15, 30),
+        ("counter_pct", 25, 55),
         description_builder=lambda rolls: (
-            f"闪避后获得 1 层幻步，最多 3 层；每层提供 {rolls['dodge_pct']}% 闪避与 {rolls['crit_pct']}% 暴击率，发动攻击后清除整层状态"
+            f"闪避后获得 1 层幻步（最多 3 层）；每层提供 {rolls['dodge_pct']}% 闪避；"
+            f"满 3 层时闪避将触发反击，造成 {rolls['counter_pct']}% 杀伐伤害。暴击后消散 1 层。"
         ),
     ),
     _define(
         "pokong",
         "破空",
         "on_crit",
-        ("proc_pct", 25, 55),
-        ("agi_scale_pct", 3, 7),
+        ("damage_ratio_pct", 55, 80),
         description_builder=lambda rolls: (
-            f"暴击时有 {rolls['proc_pct']}% 基础概率触发追击（额外一次攻击），"
-            f"身法差每 10% 额外提高 {rolls['agi_scale_pct']}% 概率"
+            f"暴击后必定发动一次追击，造成 {rolls['damage_ratio_pct']}% 杀伐伤害（不享受增伤加成）。"
         ),
     ),
     # ── 暴击流 ──
@@ -403,24 +397,20 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "qingxin",
         "清心",
         "round_start",
-        ("proc_pct", 35, 70),
-        ("heal_pct", 2, 5),
+        ("stacks", 1, 2),
+        ("heal_pct", 1, 10),
         description_builder=lambda rolls: (
-            f"每回合有 {rolls['proc_pct']}% 概率净化 1 层负面；"
-            f"净化成功后回复 {rolls['heal_pct']}% 最大生命"
+            f"每回合开始必定净化自身 {rolls['stacks']} 层负面效果；"
+            f"若成功净化，回复 {rolls['heal_pct']}% 最大生命"
         ),
     ),
     _define(
         "zhuanji",
         "转机",
-        "on_be_hit",
-        ("proc_pct", 25, 55),
+        "on_cleanse",
         ("damage_pct", 15, 35),
-        ("agi_pct", 10, 25),
-        ("reduce_pct", 20, 45),
         description_builder=lambda rolls: (
-            f"受击时若有负面层数，有 {rolls['proc_pct']}% 概率将 1 层负面转化为增益"
-            f"（随机：{rolls['damage_pct']}% 增伤/{rolls['reduce_pct']}% 守势/{rolls['agi_pct']}% 身法）"
+            f"任意净化效果触发时，每净化 1 层追加 {rolls['damage_pct']}% 杀伐伤害（多次净化叠加计算）"
         ),
     ),
     # ── 通用中立 ──
@@ -449,10 +439,10 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "xianji",
         "先机",
         "battle_start",
-        ("initiative_pct", 20, 50),
-        ("damage_pct", 25, 60),
+        ("agi_pct", 20, 50),
+        ("dodge_bonus_pct", 8, 18),
         description_builder=lambda rolls: (
-            f"整场身法提高 {rolls['initiative_pct']}%（影响先手判定）；首回合攻击伤害提高 {rolls['damage_pct']}%"
+            f"整场身法提高 {rolls['agi_pct']}%（影响先手判定）；前 2 回合额外获得 {rolls['dodge_bonus_pct']}% 闪避率。"
         ),
     ),
     _define(
@@ -484,6 +474,45 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         description_builder=lambda rolls: (
             f"每回合开始时若生息层数大于 {rolls['cost_stacks']}，消耗 {rolls['cost_stacks']} 层生息回复 "
             f"{rolls['cost_stacks']} × {rolls['heal_per_stack']}% 最大生命。"
+        ),
+    ),
+    _define(
+        "huisheng",
+        "秽生",
+        "round_start",
+        ("stacks", 1, 3),
+        ("ally_pct", 35, 80),
+        description_builder=lambda rolls: (
+            f"每回合附加 {rolls['stacks']} 层随机负面效果到随机目标；有 {rolls['ally_pct']}% 概率选择敌方，否则选择自身。"
+        ),
+    ),
+    _define(
+        "lingyi",
+        "灵溢",
+        "round_start",
+        ("stacks", 1, 3),
+        ("ally_pct", 35, 80),
+        description_builder=lambda rolls: (
+            f"每回合附加 {rolls['stacks']} 层随机增益效果到随机目标；有 {rolls['ally_pct']}% 概率选择自身，否则选择敌方。"
+        ),
+    ),
+    _define(
+        "fanshi",
+        "反噬",
+        "on_effect_lost",
+        ("damage_pct", 15, 35),
+        description_builder=lambda rolls: (
+            f"敌方每失去 1 个正面效果（过期/被净化/被打散），对其造成 {rolls['damage_pct']}% 杀伐伤害。"
+        ),
+    ),
+    _define(
+        "tanshi",
+        "贪噬",
+        "on_gain_positive",
+        ("per_stack_pct", 3, 8),
+        ("max_stacks", 5, 10),
+        description_builder=lambda rolls: (
+            f"自身每获得 1 个正面效果叠 1 层贪噬；每层提高 {rolls['per_stack_pct']}% 造成伤害，最多 {rolls['max_stacks']} 层。（贪噬自身的层数不计入触发）"
         ),
     ),
 )

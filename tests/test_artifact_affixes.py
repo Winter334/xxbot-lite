@@ -368,7 +368,7 @@ def test_dengxiao_scales_as_late_game_affix(services) -> None:
     assert any(log.text and "登霄势涨" in log.text for log in battle.logs)
 
 
-def test_juling_scales_to_eight_layers_as_late_game_affix(services) -> None:
+def test_juling_scales_to_ten_layers_as_late_game_affix(services) -> None:
     challenger = services.combat.create_combatant(
         name="聚灵修士",
         atk=1,
@@ -381,9 +381,9 @@ def test_juling_scales_to_eight_layers_as_late_game_affix(services) -> None:
     battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 144))
 
     juling_logs = [log for log in battle.logs if log.text and "聚灵凝成第" in log.text]
-    assert any("第 7 层灵势" in log.text for log in juling_logs)
-    assert any("第 8 层灵势" in log.text for log in juling_logs)
-    assert not any("第 9 层灵势" in log.text for log in juling_logs)
+    assert any("第 9 层灵势" in log.text for log in juling_logs)
+    assert any("第 10 层灵势" in log.text for log in juling_logs)
+    assert not any("第 11 层灵势" in log.text for log in juling_logs)
 
 
 def test_duplicate_juling_affixes_stack_faster_without_breaking_cap(services) -> None:
@@ -402,13 +402,13 @@ def test_duplicate_juling_affixes_stack_faster_without_breaking_cap(services) ->
     battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 144))
 
     juling_logs = [log for log in battle.logs if log.text and "聚灵凝成第" in log.text]
-    assert any("第 8 层灵势" in log.text for log in juling_logs)
-    assert not any("第 9 层灵势" in log.text for log in juling_logs)
-    assert len(juling_logs) == 8
+    assert any("第 10 层灵势" in log.text for log in juling_logs)
+    assert not any("第 11 层灵势" in log.text for log in juling_logs)
+    assert len(juling_logs) == 10
 
 
-def test_jifeng_stacks_decay_after_three_rounds(services) -> None:
-    """疾锋：每层 duration=3，叠满 3 层后第 6 回合应已全部消散。"""
+def test_jifeng_stacks_persist_and_lose_on_be_hit(services) -> None:
+    """疾锋：不限回合、无 duration 限制；受击时失去 1 层。"""
     challenger = services.combat.create_combatant(
         name="疾锋修士",
         atk=10,
@@ -416,15 +416,17 @@ def test_jifeng_stacks_decay_after_three_rounds(services) -> None:
         agility=80,
         affixes=(ArtifactAffixEntry(1, "jifeng", {"agi_pct": 30, "damage_pct": 20}),),
     )
-    defender = services.combat.create_combatant(name="守塔修士", atk=1, defense=100, agility=1)
+    # 守塔修士敏捷极低但攻击力足够，保证攻方被击中
+    defender = services.combat.create_combatant(name="守塔修士", atk=50, defense=1000, agility=1)
 
-    services.combat.max_rounds = 8
+    services.combat.max_rounds = 6
     battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 80))
 
     jifeng_gain_logs = [log for log in battle.logs if log.text and "疾锋加身" in log.text]
-    # 前 3 回合每回合可叠 1 层（命中触发），共 3 次入账
-    assert len(jifeng_gain_logs) == 3
-    # 第 1 层在回合 1 入场 duration=3 → 回合 4 末扣到 0；最后 1 层在回合 3 入场 → 回合 6 末扣到 0
-    # 因此回合 7+ 不应再有任何与疾锋相关的状态保留（无法直接断言 status，但能确认数量不增）
-    later_gain = [log for log in battle.logs if log.text and "疾锋加身" in log.text]
-    assert len(later_gain) == 3, "round_no > 3 后不应再触发疾锋叠层"
+    # 每回合攻方命中叠 1 层，但守方命中攻方时消散 1 层——由于攻方永不闪避守方低敏攻击，
+    # 攻方每层必定在当回合被击散，因此每回合 gain 1 次，6 回合共 6 次入账
+    assert len(jifeng_gain_logs) == 6
+
+    loss_logs = [log for log in battle.logs if log.text and "疾锋减弱" in log.text]
+    # 受击时消散：6 回合各一次
+    assert len(loss_logs) == 6
