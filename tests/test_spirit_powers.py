@@ -22,8 +22,8 @@ def test_spirit_power_pool_expands_to_twenty_entries() -> None:
 
     assert len(SPIRIT_POWER_DEFINITIONS) == 24
     assert {"shisheng", "jueming", "xuanjia", "fanji", "guifeng", "niepan", "jinmai", "xuekuang"} <= power_ids
-    assert {"fenmai", "luejie", "chengshi", "lingyong", "zhuying", "huajing", "duofeng", "zhenling"} <= power_ids
-    assert {"chunsheng", "suijue", "mingche", "zhuifeng"} <= power_ids
+    assert {"fenmai", "luejie", "chengshi", "lingyong", "zhuying", "huajing", "duofeng"} <= power_ids
+    assert {"chunsheng", "suijue", "dishi", "qiedao", "zhuifeng"} <= power_ids
     # 新增神通
     assert {"leifa", "shiyan", "fengdun", "lingyu"} <= power_ids
 
@@ -163,11 +163,11 @@ def test_shiyan_explodes_even_when_attack_deals_zero_damage(services) -> None:
     assert any(log.text and "蚀焰引爆" in log.text for log in battle.logs)
 
 
-def test_shiyan_explosion_bypasses_damage_reduction(services) -> None:
-    """蚀焰：引爆伤害穿透减伤管线（仍吃护盾/承伤/韧性，但豁免减伤）。
+def test_shiyan_explosion_respects_damage_reduction(services) -> None:
+    """蚀焰：引爆伤害吃减伤管线（不吃护盾/增伤，吃承伤/减伤）。
 
-    2026-05-13 平衡调整：原本蚀焰引爆吃减伤，导致面对高减伤目标时强度过低；
-    现在改为穿透减伤后，引爆伤害不再受 zhenmai 等减伤词条影响。
+    2026-05-19 平衡调整：蚀焰 profile 改为 can_be_reduced=True, can_be_shielded=False，
+    引爆伤害现在受 zhenmai 等减伤词条影响，但不再被护盾吸收。
     """
     import re
     burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 20})
@@ -197,8 +197,8 @@ def test_shiyan_explosion_bypasses_damage_reduction(services) -> None:
     dmg_no = extract_dmg(explode_no)
     dmg_red = extract_dmg(explode_red)
     assert dmg_no is not None and dmg_red is not None, f"无法解析伤害: {explode_no.text} | {explode_red.text}"
-    # 蚀焰引爆穿透减伤：守势 80% 减伤后伤害应保持一致
-    assert dmg_red == dmg_no, f"无减伤伤害 {dmg_no}, 守势减伤后 {dmg_red}（蚀焰应穿透减伤）"
+    # 蚀焰引爆吃减伤：守势 80% 减伤后伤害应明显降低
+    assert dmg_red < dmg_no, f"无减伤伤害 {dmg_no}, 守势减伤后 {dmg_red}（蚀焰应受减伤影响）"
 
 
 def test_lingyong_grants_starting_lingshi_stacks(services) -> None:
