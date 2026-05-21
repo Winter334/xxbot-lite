@@ -114,6 +114,34 @@ class SpiritTierUpgradeResult:
     spirit_after: SpiritInstance | None = None
 
 
+# ── 旧数据 clamp：2026-05-21 涤世/蚀焰平衡调整 ──────────────────────────
+# 玩家已存储的旧器灵 roll 值如果超过新上限，加载时自动截断
+_SHIYAN_PER_BURN_MAX = {"low": 28, "mid": 40, "high": 50, "peak": 50, "supreme": 50}
+_DISHI_MAX = {
+    "low": {"kind_pct": 27, "stack_pct": 9},
+    "mid": {"kind_pct": 36, "stack_pct": 11},
+    "high": {"kind_pct": 44, "stack_pct": 14},
+    "peak": {"kind_pct": 54, "stack_pct": 17},
+    "supreme": {"kind_pct": 66, "stack_pct": 21},
+}
+
+
+def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int]) -> dict[str, int]:
+    """将旧版本超标的 roll 值截断到当前 tier 上限。"""
+    clamped = dict(rolls)
+    if power_id == "shiyan":
+        cap = _SHIYAN_PER_BURN_MAX.get(tier)
+        if cap is not None and clamped.get("per_burn_pct", 0) > cap:
+            clamped["per_burn_pct"] = cap
+    elif power_id == "dishi":
+        caps = _DISHI_MAX.get(tier)
+        if caps is not None:
+            for key in ("kind_pct", "stack_pct"):
+                if clamped.get(key, 0) > caps[key]:
+                    clamped[key] = caps[key]
+    return clamped
+
+
 class SpiritService:
     def __init__(self, rng: random.Random | None = None) -> None:
         self.rng = rng or random.Random()
@@ -526,6 +554,8 @@ class SpiritService:
         if power_id == "shiyan" and "wound_stacks" not in parsed_rolls:
             _SHIYAN_WOUND_BY_TIER = {"low": 1, "mid": 2, "high": 3, "peak": 4, "supreme": 5}
             parsed_rolls["wound_stacks"] = _SHIYAN_WOUND_BY_TIER.get(tier, 1)
+        # 旧数据 clamp：2026-05-21 平衡调整后，超标旧值自动截断至新上限
+        parsed_rolls = _clamp_legacy_rolls(power_id, tier, parsed_rolls)
         return SpiritInstance(tier=tier, stats=tuple(sorted(stat_entries, key=lambda item: SPIRIT_STATS.index(item.stat))), power=SpiritPowerEntry(power_id=power_id, rolls=parsed_rolls))
 
     def _store_spirit(self, artifact: Artifact, field_name: str, spirit: SpiritInstance | None) -> None:
