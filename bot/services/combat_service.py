@@ -107,8 +107,8 @@ class _DamageProfile:
 
 # 灼烧 DOT：吃增伤 + 承伤；不吃减伤、不被护盾抵挡（DOT 穿透守势/护盾）
 _BURN_DOT_PROFILE = _DamageProfile(can_be_buffed=True, can_be_vulned=True, can_be_reduced=False, can_be_shielded=False)
-# 蚀焰引爆：不吃增伤；吃承伤 + 减伤；不暴击、不吃护盾
-_SHIYAN_PROFILE = _DamageProfile(can_be_buffed=False, can_be_vulned=True, can_be_reduced=True, can_be_shielded=False)
+# 蚀焰引爆：不吃增伤；吃承伤 + 减伤；不暴击；可被护盾抵挡
+_SHIYAN_PROFILE = _DamageProfile(can_be_buffed=False, can_be_vulned=True, can_be_reduced=True, can_be_shielded=True)
 # 春生固定追打：不吃增伤（已是固定值）；吃承伤 + 减伤 + 护盾
 _CHUNSHENG_BONUS_PROFILE = _DamageProfile(can_be_buffed=False, can_be_vulned=True, can_be_reduced=True, can_be_shielded=True)
 
@@ -134,6 +134,7 @@ class _CombatState:
     huichun_triggered_thresholds: set[int] = field(default_factory=set)  # huichun 已触发的阈值（50/25）
     huyuan_heal_stacks: dict[int, int] = field(default_factory=dict)  # huyuan 单词条治疗叠加层数计数（key 为 affix 在 affixes 元组中的 index）
     is_first_mover: bool = False  # 追风：是否先手（首回合先行动者）
+    dishi_last_round: int = 0  # 涤世上次触发回合（用于 1 回合冷却）
 
     def get_max_hp(self) -> int:
         """获取当前最大生命（优先使用 effective_max_hp，未初始化时回落 snapshot）。"""
@@ -757,6 +758,8 @@ class CombatService:
                     removed = self._remove_one_positive_status(target)
                     if removed is None:
                         continue
+                    # 反噬：敌方正面效果被烬火消耗后触发
+                    logs.extend(self._trigger_on_effect_lost_to_enemy(round_no, actor, target, 1))
                     gain = _roll(entry.rolls, "burn_stacks_gain", 1)
                     burn_pct = next(
                         (
@@ -1229,7 +1232,7 @@ class CombatService:
             and target.hp > 0
         ):
             stacks = self._burn_stacks(target)
-            if stacks >= 4:
+            if stacks >= 6:
                 per_burn_pct = power.rolls.get("per_burn_pct", 25)
                 total_pct = stacks * per_burn_pct
                 # 蚀焰伤害基底改为 actor 当前杀伐 × total_pct%（避免 0 伤普攻引爆为 0）
@@ -2298,12 +2301,17 @@ class CombatService:
         power = state.snapshot.spirit_power
         if power is None or power.power_id != "dishi":
             return []
+        # 1 回合冷却：触发后需跳过 1 回合才能再次触发
+        if state.dishi_last_round > 0 and round_no <= state.dishi_last_round + 1:
+            return []
         total_stacks = self._total_effect_stacks(state) + self._total_effect_stacks(opponent)
         threshold = power.rolls.get("threshold", 0)
         if total_stacks < threshold:
             return []
         unique_names = self._unique_effect_names(state) | self._unique_effect_names(opponent)
         kind_count = len(unique_names)
+        # 反噬：涤世清除前记录敌方正面效果层数，清除后触发反噬回调
+        opponent_positive_count_before = self._positive_status_count(opponent)
         total_removed = self._remove_all_status_effects(state) + self._remove_all_status_effects(opponent)
         kind_pct = power.rolls.get("kind_pct", 0)
         stack_pct = power.rolls.get("stack_pct", 0)
@@ -2323,6 +2331,11 @@ class CombatService:
             )
         # 涤世净化后触发转机（双方各走一遍）
         logs.extend(self._trigger_cleanse_followups(round_no, state, total_removed, opponent))
+        # 反噬：敌方正面效果被涤世清除后触发
+        if opponent_positive_count_before > 0 and opponent.hp > 0:
+            logs.extend(self._trigger_on_effect_lost_to_enemy(round_no, state, opponent, opponent_positive_count_before))
+        # 记录冷却
+        state.dishi_last_round = round_no
         return logs
 
     def _effect_log(

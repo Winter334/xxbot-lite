@@ -122,7 +122,7 @@ def test_fenmai_triggers_extra_damage_on_burning_target(services) -> None:
 
 
 def test_shiyan_consumes_burn_stacks_when_threshold_reached(services) -> None:
-    """蚀焰：5 层灼烧时触发，引爆后清空灼烧并给目标挂创伤。"""
+    """蚀焰：灼烧 ≥6 层时触发，引爆后清空灼烧并给目标挂创伤。"""
     burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 20})
     attacker = services.combat.create_combatant(
         name="蚀焰主",
@@ -144,7 +144,7 @@ def test_shiyan_consumes_burn_stacks_when_threshold_reached(services) -> None:
 
 def test_shiyan_explodes_even_when_attack_deals_zero_damage(services) -> None:
     """蚀焰：即使本次普攻被高防完全削为 0 伤害，仍应触发引爆并清空灼烧。"""
-    # 上来就 5 层灼烧，5 层就足以触发
+    # 两轮命中 → 10 层灼烧（≥6 触发）
     burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 1})
     attacker = services.combat.create_combatant(
         name="蚀焰主",
@@ -164,10 +164,9 @@ def test_shiyan_explodes_even_when_attack_deals_zero_damage(services) -> None:
 
 
 def test_shiyan_explosion_respects_damage_reduction(services) -> None:
-    """蚀焰：引爆伤害吃减伤管线（不吃护盾/增伤，吃承伤/减伤）。
+    """蚀焰：引爆伤害吃减伤管线（吃承伤/减伤/护盾，不吃增伤）。
 
-    2026-05-19 平衡调整：蚀焰 profile 改为 can_be_reduced=True, can_be_shielded=False，
-    引爆伤害现在受 zhenmai 等减伤词条影响，但不再被护盾吸收。
+    2026-05-21 平衡调整：蚀焰 profile can_be_shielded 改为 True，护盾可抵挡引爆伤害。
     """
     import re
     burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 20})
