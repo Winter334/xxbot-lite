@@ -86,11 +86,15 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ),
     ),
     _define(
-        "zhenmai",
-        "镇脉",
-        "battle_start",
-        ("reduce_pct", 25, 55),
-        description_builder=lambda rolls: f"战斗开始获得 3 层守势；每层抵消一次受击的 {rolls['reduce_pct']}% 伤害",
+        "zhoufu",
+        "咒缚",
+        "round_start",
+        ("reduce_down_pct", 3, 10),
+        ("max_stacks", 7, 7),
+        description_builder=lambda rolls: (
+            f"每回合给敌方附加 1 层「咒缚」（每层降减伤 {rolls['reduce_down_pct']}%，最多 {rolls['max_stacks']} 层）+ 1 层绝命印记；"
+            f"咒缚被净化时每层额外叠加 1 层绝命印记。"
+        ),
     ),
     _define(
         "juling",
@@ -138,13 +142,14 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ),
     ),
     _define(
-        "fengfeng",
-        "封锋",
+        "manzhou",
+        "蔓咒",
         "on_hit",
-        ("proc_pct", 25, 50),
-        ("atk_down_pct", 6, 12),
+        ("atk_down_pct", 4, 12),
+        ("max_stacks", 7, 7),
         description_builder=lambda rolls: (
-            f"命中后有 {rolls['proc_pct']}% 概率附加 1 层断锋；每层使目标杀伐降低 {rolls['atk_down_pct']}%，最多 4 层"
+            f"命中附加 1 层「蔓咒」（每层降杀伐 {rolls['atk_down_pct']}%，最多 {rolls['max_stacks']} 层）+ 1 层绝命印记；"
+            f"目标有蔓咒时回合结束自动叠加 1 层。"
         ),
     ),
     _define(
@@ -200,15 +205,15 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         description_builder=lambda rolls: f"攻击带守势、高减伤或生命比例高于自身的目标时，本次伤害提高 {rolls['damage_pct']}%",
     ),
     _define(
-        "buqu",
-        "不屈",
+        "liekai",
+        "裂铠",
         "on_low_hp",
-        ("heal_pct", 15, 35),
-        ("reduce_pct", 35, 70),
-        ("damage_pct", 60, 130),
+        ("shield_pct", 30, 60),
+        ("backlash_pct", 50, 90),
         description_builder=lambda rolls: (
-            f"首次生命低于 35% 时回复 {rolls['heal_pct']}%，获得 2 层 {rolls['reduce_pct']}% 守势，"
-            f"并使下一次伤害提高 {rolls['damage_pct']}%"
+            f"生命低于 30% 时获得「裂铠」护盾（{rolls['shield_pct']}% 最大生命）；"
+            f"护盾存在时受击给攻击者附加 1 层绝命印记；"
+            f"护盾破碎时对击碎者造成吸收量 {rolls['backlash_pct']}% 伤害 + 3 层绝命印记。"
         ),
     ),
     _define(
@@ -424,15 +429,14 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ),
     ),
     _define(
-        "duoling",
-        "夺灵",
+        "shiyin",
+        "噬印",
         "on_hit",
-        ("proc_pct", 30, 60),
-        ("heal_pct", 3, 7),
-        ("heal_down_pct", 4, 8),
+        ("proc_pct", 40, 70),
+        ("drain_per_mark_pct", 2, 4),
         description_builder=lambda rolls: (
-            f"命中后有 {rolls['proc_pct']}% 概率吸取 {rolls['heal_pct']}% 最大生命，"
-            f"并附加 1 层创伤（降低受疗 {rolls['heal_down_pct']}%），创伤最多 3 层"
+            f"命中后有 {rolls['proc_pct']}% 概率吸取目标「绝命印记层数×{rolls['drain_per_mark_pct']}%」最大生命；"
+            f"若目标无绝命印记则附加 1 层。"
         ),
     ),
     _define(

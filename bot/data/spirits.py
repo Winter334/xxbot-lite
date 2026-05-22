@@ -142,13 +142,13 @@ SPIRIT_POWER_DEFINITIONS = (
         "jueming",
         "绝命",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("execute_threshold_pct", 12, 16),),
-            mid=(("execute_threshold_pct", 15, 20),),
-            high=(("execute_threshold_pct", 18, 24),),
-            peak=(("execute_threshold_pct", 22, 28),),
-            supreme=(("execute_threshold_pct", 26, 34),),
+            low=(("max_stacks", 12, 12), ("damage_pct", 30, 40)),
+            mid=(("max_stacks", 10, 10), ("damage_pct", 35, 50)),
+            high=(("max_stacks", 8, 8), ("damage_pct", 45, 60)),
+            peak=(("max_stacks", 7, 7), ("damage_pct", 50, 68)),
+            supreme=(("max_stacks", 6, 6), ("damage_pct", 55, 75)),
         ),
-        description_builder=lambda rolls: f"造成伤害后，若目标生命低于 {rolls['execute_threshold_pct']}%，则直接斩灭；目标负面层数会小幅抬高斩杀线。",
+        description_builder=lambda rolls: f"回合结束时，若敌方绝命印记≥{rolls['max_stacks']}层，消耗{rolls['max_stacks']}层印记造成{rolls['damage_pct']}%最大生命伤害；若≥{rolls['max_stacks']*2}层则直接斩杀。每层印记使承伤+2%。",
     ),
     _define_power(
         "xuanjia",
@@ -341,7 +341,7 @@ SPIRIT_POWER_DEFINITIONS = (
             peak=(("threshold", 5, 8), ("kind_pct", 41, 54), ("stack_pct", 12, 17)),
             supreme=(("threshold", 4, 7), ("kind_pct", 49, 66), ("stack_pct", 15, 21)),
         ),
-        description_builder=lambda rolls: f"回合结束时，若全场效果总层数 ≥ {rolls['threshold']}，净化全场所有效果（不分敌我、不分正负），造成「{rolls['kind_pct']}% × 效果种类 + {rolls['stack_pct']}% × 总层数」杀伐的直接伤害。触发后有 1 回合冷却。",
+        description_builder=lambda rolls: f"回合结束时，若全场效果总层数 ≥ {rolls['threshold']}，净化全场所有效果（不分敌我、不分正负），将净化之力存储为「{rolls['kind_pct']}% × 效果种类 + {rolls['stack_pct']}% × 总层数」杀伐的追打，下次攻击命中时释放。触发后有 1 回合冷却。",
     ),
     _define_power(
         "chunsheng",
