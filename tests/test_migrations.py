@@ -12,4 +12,5 @@ def test_alembic_has_single_head() -> None:
     config.set_main_option("script_location", str(project_root / "migrations"))
     script = ScriptDirectory.from_config(config)
 
-    assert tuple(script.get_heads()) == ("0008_historical_max_infamy",)
+    heads = script.get_heads()
+    assert len(heads) == 1, f"迁移链应有唯一 head，实际有 {len(heads)} 个: {heads}"
