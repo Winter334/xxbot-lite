@@ -183,7 +183,7 @@ def test_shiyan_explosion_respects_damage_reduction(services) -> None:
         return services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 30))
 
     battle_no = run_one(())
-    battle_red = run_one((ArtifactAffixEntry(slot=1, affix_id="zhenmai", rolls={"reduce_pct": 80}),))
+    battle_red = run_one((ArtifactAffixEntry(slot=1, affix_id="cangbi", rolls={"reduce_pct": 80}),))
 
     explode_no = next((log for log in battle_no.logs if log.text and "蚀焰引爆" in log.text), None)
     explode_red = next((log for log in battle_red.logs if log.text and "蚀焰引爆" in log.text), None)
@@ -233,9 +233,11 @@ def test_lingyu_provides_reduction_in_first_six_rounds_only(services) -> None:
 
 
 def test_huajing_converts_reduction_affix_into_recovery(services) -> None:
-    reduce_affix = ArtifactAffixEntry(slot=1, affix_id="zhenmai", rolls={"reduce_pct": 50})
-    services.combat.max_rounds = 1
-    attacker = services.combat.create_combatant(name="破锋", atk=150, defense=10, agility=40)
+    # 藏壁：每回合首次受击后获得守势（替代已移除的镇脉）
+    # 压低攻方攻击确保守方第一回合存活，让藏壁能在第二回合生效
+    reduce_affix = ArtifactAffixEntry(slot=1, affix_id="cangbi", rolls={"reduce_pct": 50})
+    services.combat.max_rounds = 2
+    attacker = services.combat.create_combatant(name="破锋", atk=60, defense=10, agility=40)
     defender_without_spirit = services.combat.create_combatant(
         name="守川",
         atk=20,

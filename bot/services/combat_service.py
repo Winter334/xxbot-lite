@@ -135,6 +135,7 @@ class _CombatState:
     huyuan_heal_stacks: dict[int, int] = field(default_factory=dict)  # huyuan 单词条治疗叠加层数计数（key 为 affix 在 affixes 元组中的 index）
     is_first_mover: bool = False  # 追风：是否先手（首回合先行动者）
     dishi_last_round: int = 0  # 涤世上次触发回合（用于 1 回合冷却）
+    jueming_mark_stacks: int = 0  # 绝命印记层数（被标记者更容易被绝命斩杀，不可净化）
 
     def get_max_hp(self) -> int:
         """获取当前最大生命（优先使用 effective_max_hp，未初始化时回落 snapshot）。"""
@@ -144,7 +145,7 @@ class _CombatState:
 class CombatService:
     max_rounds = 20
 
-    _RANDOM_DEBUFF_NAMES = ("断锋", "破步", "创伤", "灼烧")
+    _RANDOM_DEBUFF_NAMES = ("蔓咒", "破步", "创伤", "灼烧")
     _RANDOM_BUFF_NAMES = ("增伤", "减伤", "身法", "杀伐")
 
     def __init__(self, rng: random.Random | None = None) -> None:
@@ -328,8 +329,34 @@ class CombatService:
         damage, pre_hit_logs = self._trigger_spirit_pre_hit(round_no, target, damage, roller)
         logs.extend(pre_hit_logs)
         had_damage_reduction = self._has_damage_reduction_status(target)
+        # 裂铠追踪：记录护盾存在状态（用于受击叠印记）和护盾量（用于碎盾反伤）
+        liekai_active_before = self._status_count(target, "裂铠") > 0
+        liekai_shield_before = self._status_shield_sum(target, "裂铠")
         if self._total_shield(target) > 0:
             damage = self._consume_shield(target, damage)
+        # 裂铠受击叠印记：护盾存在时受击，给攻击者附加 1 层绝命印记
+        if liekai_active_before and actor.hp > 0:
+            actor.jueming_mark_stacks += 1
+        # 裂铠护盾破碎反弹：护盾被击碎时造成反伤 + 3 层绝命印记
+        if liekai_shield_before > 0 and self._status_count(target, "裂铠") <= 0 and actor.hp > 0:
+            # 查找裂铠词条获取反伤倍率
+            backlash_pct = 50  # fallback
+            for entry in target.snapshot.affixes:
+                if entry.affix_id == "liekai":
+                    backlash_pct = _roll(entry.rolls, "backlash_pct", 50)
+                    break
+            backlash_damage = max(1, liekai_shield_before * backlash_pct // 100)
+            backlash_actual = self._apply_damage(actor, backlash_damage)
+            actor.jueming_mark_stacks += 3
+            if backlash_actual > 0:
+                logs.append(
+                    self._effect_log(
+                        round_no,
+                        actor,
+                        f"{target.snapshot.name} 的裂铠炸裂，碎片反噬 {actor.snapshot.name}，造成 {backlash_actual} 点伤害并附加 3 层绝命印记。",
+                        actor_name=target.snapshot.name,
+                    )
+                )
         actual_damage = self._apply_damage(target, damage)
         target.hits_taken += 1
         # 雷殛标记：受击时每层雷殛额外承受一份轻量真伤（吃韧性），来源神通取自标记 source
@@ -394,13 +421,14 @@ class CombatService:
         logs.extend(self._trigger_spirit_revive(round_no, target))
         logs.extend(self._trigger_spirit_revive(round_no, actor))
 
-        # 春生·追击：命中后按 bonus_damage 走 _CHUNSHENG_BONUS_PROFILE 施加固定追打伤害（不吃增伤、吃承伤+减伤+护盾）
-        chunsheng_followups = [s for s in actor.statuses if s.name == "春生·追击" and s.is_active() and s.bonus_damage > 0]
-        if chunsheng_followups and target.hp > 0:
-            for s in chunsheng_followups:
+        # 春生·追击 + 涤世·净化：命中后按 bonus_damage 走 _CHUNSHENG_BONUS_PROFILE 施加固定追打伤害（不吃增伤、吃承伤+减伤+护盾）
+        bonus_followups = [s for s in actor.statuses if s.name in ("春生·追击", "涤世·净化") and s.is_active() and s.bonus_damage > 0]
+        if bonus_followups and target.hp > 0:
+            for s in bonus_followups:
                 bonus_actual = self._apply_typed_damage(target, s.bonus_damage, _CHUNSHENG_BONUS_PROFILE, actor=actor)
                 if bonus_actual > 0:
-                    logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 春生回返一击，追加 {bonus_actual} 点伤害。", actor_name=actor.snapshot.name))
+                    label = "春生回返一击" if s.name == "春生·追击" else "涤世净化之力倾泻"
+                    logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} {label}，追加 {bonus_actual} 点伤害。", actor_name=actor.snapshot.name))
                 s.remaining_hits = 0
             actor.statuses = self._active_statuses(actor)
 
@@ -426,9 +454,6 @@ class CombatService:
                 case "lueying":
                     self._add_status(state, _StatusEffect("掠影", agility_pct=_roll(entry.rolls, "agi_pct", 0)))
                     logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 展开掠影，整场身法提高 {entry.rolls['agi_pct']}%。"))
-                case "zhenmai":
-                    self._add_status(state, _StatusEffect("守势", damage_reduction_pct=_roll(entry.rolls, "reduce_pct", 0), remaining_hits=3))
-                    logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 凝起镇脉，获得 3 层守势。"))
                 case "guben":
                     shield_amount = max(1, state.get_max_hp() * _roll(entry.rolls, "shield_pct", 0) // 100)
                     self._add_status(state, _StatusEffect("固本", shield=shield_amount))
@@ -532,12 +557,15 @@ class CombatService:
                     stacks = _roll(entry.rolls, "stacks", 1)
                     if not self._has_debuff(state):
                         continue
+                    zhoufu_before = self._status_count(state, "咒缚")
                     removed_count = 0
                     for _ in range(stacks):
                         if self._remove_one_debuff(state) is not None:
                             removed_count += 1
+                    zhoufu_after = self._status_count(state, "咒缚")
+                    zhoufu_cleansed = max(0, zhoufu_before - zhoufu_after)
                     if removed_count > 0:
-                        logs.extend(self._trigger_cleanse_followups(round_no, state, removed_count, opponent))
+                        logs.extend(self._trigger_cleanse_followups(round_no, state, removed_count, opponent, zhoufu_extra=zhoufu_cleansed))
                         logs.append(
                             self._effect_log(
                                 round_no,
@@ -549,12 +577,15 @@ class CombatService:
                     stacks = _roll(entry.rolls, "stacks", 1)
                     if not self._has_debuff(state):
                         continue
+                    zhoufu_before = self._status_count(state, "咒缚")
                     removed_count = 0
                     for _ in range(stacks):
                         if self._remove_one_debuff(state) is not None:
                             removed_count += 1
+                    zhoufu_after = self._status_count(state, "咒缚")
+                    zhoufu_cleansed = max(0, zhoufu_before - zhoufu_after)
                     if removed_count > 0:
-                        logs.extend(self._trigger_cleanse_followups(round_no, state, removed_count, opponent))
+                        logs.extend(self._trigger_cleanse_followups(round_no, state, removed_count, opponent, zhoufu_extra=zhoufu_cleansed))
                         heal_pct = _roll(entry.rolls, "heal_pct", 0)
                         healed = self._heal(state, heal_pct)
                         logs.append(
@@ -592,6 +623,22 @@ class CombatService:
                             round_no,
                             state,
                             f"{state.snapshot.name} 的灵溢涌动，为{target_label}附加 {stacks} 层{buff_name}。",
+                        )
+                    )
+                case "zhoufu":
+                    # 咒缚：每回合给敌方附加降减伤 debuff + 绝命印记
+                    reduce_down_pct = _roll(entry.rolls, "reduce_down_pct", 3)
+                    max_stacks_zhoufu = _roll(entry.rolls, "max_stacks", 7)
+                    if self._status_count(opponent, "咒缚") < max_stacks_zhoufu:
+                        self._add_status(opponent, _StatusEffect("咒缚", damage_taken_pct=reduce_down_pct, is_debuff=True, source=state))
+                    opponent.jueming_mark_stacks += 1
+                    total_zf = self._status_count(opponent, "咒缚")
+                    logs.append(
+                        self._effect_log(
+                            round_no,
+                            opponent,
+                            f"{state.snapshot.name} 的咒缚缠上 {opponent.snapshot.name}（咒缚 {total_zf}/{max_stacks_zhoufu}，绝命印记 +1）。",
+                            actor_name=state.snapshot.name,
                         )
                     )
         # 先机首回合结束后清除标记
@@ -691,19 +738,22 @@ class CombatService:
                                 actor_name=actor.snapshot.name,
                             )
                         )
-                case "fengfeng":
-                    adjusted_proc = (proc_pct or 0) + min(30, self._positive_status_count(target) * 5)
-                    if roller.random() > adjusted_proc / 100 or self._status_count(target, "断锋") >= 4:
+                case "manzhou":
+                    atk_down_pct = _roll(entry.rolls, "atk_down_pct", 4)
+                    max_stacks_mz = _roll(entry.rolls, "max_stacks", 7)
+                    if self._status_count(target, "蔓咒") >= max_stacks_mz:
                         continue
                     self._add_status(
                         target,
-                        _StatusEffect("断锋", atk_pct=-_roll(entry.rolls, "atk_down_pct", 0), is_debuff=True, source=actor),
+                        _StatusEffect("蔓咒", atk_pct=-atk_down_pct, is_debuff=True, source=actor),
                     )
+                    target.jueming_mark_stacks += 1
+                    mz_layers = self._status_count(target, "蔓咒")
                     logs.append(
                         self._effect_log(
                             round_no,
                             target,
-                            f"{actor.snapshot.name} 的封锋压下锋芒，{target.snapshot.name} 获得 1 层断锋。",
+                            f"{actor.snapshot.name} 的蔓咒缠身，{target.snapshot.name} 杀伐被削（蔓咒 {mz_layers}/{max_stacks_mz}，绝命印记 +1）。",
                             actor_name=actor.snapshot.name,
                         )
                     )
@@ -726,6 +776,8 @@ class CombatService:
                         if self._remove_one_positive_status(target) is not None:
                             removed_count += 1
                     if removed_count > 0:
+                        # 绝命印记：效果被清除时，绝命持有者的对手获得印记
+                        logs.extend(self._trigger_cleanse_followups(round_no, target, removed_count, actor))
                         for _ in range(removed_count):
                             self._add_status(actor, _StatusEffect("锁灵", damage_dealt_pct=buff_pct, duration=2))
                         logs.extend(self._trigger_on_effect_lost_to_enemy(round_no, actor, target, removed_count))
@@ -758,7 +810,8 @@ class CombatService:
                     removed = self._remove_one_positive_status(target)
                     if removed is None:
                         continue
-                    # 反噬：敌方正面效果被烬火消耗后触发
+                    # 反噬 + 绝命印记：敌方正面效果被烬火消耗后触发
+                    logs.extend(self._trigger_cleanse_followups(round_no, target, 1, actor))
                     logs.extend(self._trigger_on_effect_lost_to_enemy(round_no, actor, target, 1))
                     gain = _roll(entry.rolls, "burn_stacks_gain", 1)
                     burn_pct = next(
@@ -785,18 +838,18 @@ class CombatService:
                             actor_name=actor.snapshot.name,
                         )
                     )
-                case "duoling":
+                case "shiyin":
                     if roller.random() > _roll(entry.rolls, "proc_pct", 0) / 100:
                         continue
-                    healed = self._heal(actor, _roll(entry.rolls, "heal_pct", 0))
-                    heal_text = f"吸取 {healed} 点生命" if healed > 0 else "汲取生命"
-                    if self._status_count(target, "创伤") < 3:
-                        self._add_status(
-                            target,
-                            _StatusEffect("创伤", heal_received_pct=-_roll(entry.rolls, "heal_down_pct", 4), is_debuff=True, source=actor),
-                        )
-                        heal_text += f"，{target.snapshot.name} 附加创伤"
-                    logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 夺灵{heal_text}。"))
+                    if target.jueming_mark_stacks > 0:
+                        drain_per_mark = _roll(entry.rolls, "drain_per_mark_pct", 2)
+                        drain_pct = target.jueming_mark_stacks * drain_per_mark
+                        healed = self._heal(actor, drain_pct)
+                        heal_text = f"噬取印记之力，吸取 {healed} 点生命" if healed > 0 else "噬取印记之力"
+                        logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} {heal_text}（{target.jueming_mark_stacks} 层印记）。"))
+                    else:
+                        target.jueming_mark_stacks += 1
+                        logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 的噬印刻下第一缕印记，{target.snapshot.name} 获得 1 层绝命印记。"))
         return logs
 
     def _trigger_on_crit(
@@ -1078,19 +1131,19 @@ class CombatService:
                 logs.append(self._effect_log(round_no, target, f"{target.snapshot.name} 的回春发动（生命跌破 {threshold}%），回复 {healed} 点生命并叠加 {stacks} 层生息。"))
         if 50 not in target.low_hp_marks and hp_after_hit * 100 < max_hp * 50:
             target.low_hp_marks.add(50)
-        if 35 not in target.low_hp_marks and hp_after_hit * 100 < max_hp * 35:
-            target.low_hp_marks.add(35)
+        if 30 not in target.low_hp_marks and hp_after_hit * 100 < max_hp * 30:
+            target.low_hp_marks.add(30)
             for entry in target.snapshot.affixes:
-                if entry.affix_id != "buqu" or not self._scene_matches(entry, scene):
+                if entry.affix_id != "liekai" or not self._scene_matches(entry, scene):
                     continue
-                healed = self._heal(target, _roll(entry.rolls, "heal_pct", 0))
-                self._add_status(target, _StatusEffect("守势", damage_reduction_pct=_roll(entry.rolls, "reduce_pct", 0), remaining_hits=2))
-                self._add_status(target, _StatusEffect("不屈", damage_dealt_pct=_roll(entry.rolls, "damage_pct", 0), remaining_hits=1))
+                shield_pct = _roll(entry.rolls, "shield_pct", 30)
+                shield_amount = max(1, max_hp * shield_pct // 100)
+                self._add_status(target, _StatusEffect("裂铠", shield=shield_amount))
                 logs.append(
                     self._effect_log(
                         round_no,
                         target,
-                        f"{target.snapshot.name} 的不屈发动，回复 {healed} 点生命，并获得守势与反击锋芒。",
+                        f"{target.snapshot.name} 的裂铠展开！获得 {shield_amount} 点护盾，受击反噬来犯之敌。",
                     )
                 )
         return logs
@@ -1173,11 +1226,38 @@ class CombatService:
                 logs.extend(burn_logs)
                 if died_from_burn:
                     break
+        # 蔓咒增殖：回合结束时若目标有蔓咒，自动叠加 1 层（最多 7 层）
+        max_manzhou_stacks = 7
+        for state, opponent in ((challenger, defender), (defender, challenger)):
+            if state.hp <= 0:
+                continue
+            manzhou_count = self._status_count(opponent, "蔓咒")
+            if manzhou_count > 0 and manzhou_count < max_manzhou_stacks:
+                # 从 state 的词条中获取蔓咒的降杀伐数值
+                manzhou_atk_down = 4  # fallback
+                for entry in state.snapshot.affixes:
+                    if entry.affix_id == "manzhou":
+                        manzhou_atk_down = _roll(entry.rolls, "atk_down_pct", 4)
+                        break
+                self._add_status(opponent, _StatusEffect("蔓咒", atk_pct=-manzhou_atk_down, is_debuff=True, source=state))
+                logs.append(
+                    self._effect_log(
+                        round_no,
+                        opponent,
+                        f"{opponent.snapshot.name} 的蔓咒扩散至 {manzhou_count + 1}/{max_manzhou_stacks} 层。",
+                        actor_name=state.snapshot.name,
+                    )
+                )
         # 器灵神通 round_end 钩子（涤世等）
         for state, opponent in ((challenger, defender), (defender, challenger)):
             if state.hp <= 0:
                 continue
             logs.extend(self._trigger_spirit_round_end(round_no, state, opponent, roller))
+        # 绝命结算：回合结束时检查印记层数（必须在涤世之后，处理涤世新叠的印记）
+        for state, opponent in ((challenger, defender), (defender, challenger)):
+            if state.hp <= 0:
+                continue
+            logs.extend(self._settle_jueming_marks(round_no, state, opponent))
         return logs
 
     def _trigger_spirit_pre_hit(
@@ -1294,20 +1374,6 @@ class CombatService:
             healed = self._heal_by_damage(actor, actual_damage, power.rolls["heal_pct"])
             if healed > 0:
                 logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 借噬生吞回血气，回复了 {healed} 点生命。"))
-
-        execute_threshold = power.rolls.get("execute_threshold_pct", 0)
-        if power.power_id == "jueming" and source in {_DamageSource.ATTACK, _DamageSource.BURN, _DamageSource.SPIRIT} and target.hp > 0:
-            execute_threshold += min(12, self._debuff_count(target) * 2)
-            if target.hp * 100 <= target.snapshot.max_hp * execute_threshold:
-                target.hp = 0
-                logs.append(
-                    self._effect_log(
-                        round_no,
-                        target,
-                        f"{actor.snapshot.name} 以绝命断其残势，{target.snapshot.name} 当场被斩落。",
-                        actor_name=actor.snapshot.name,
-                    )
-                )
 
         if source != _DamageSource.ATTACK:
             return logs
@@ -1581,7 +1647,9 @@ class CombatService:
                 return 0
 
     def _damage_taken_pct(self, state: _CombatState) -> int:
-        return sum(status.damage_taken_pct for status in self._active_statuses(state))
+        base = sum(status.damage_taken_pct for status in self._active_statuses(state))
+        # 绝命印记：每层使承载者承伤+2%（通用效果，无需绝命神通）
+        return base + state.jueming_mark_stacks * 2
 
     def _damage_reduction_pct(self, state: _CombatState) -> int:
         total = sum(status.damage_reduction_pct for status in self._active_statuses(state))
@@ -1838,6 +1906,10 @@ class CombatService:
     def _total_shield(self, state: _CombatState) -> int:
         return sum(status.shield for status in self._active_statuses(state))
 
+    def _status_shield_sum(self, state: _CombatState, name: str) -> int:
+        """返回指定名称状态的总护盾量（用于追踪特定护盾消耗）。"""
+        return sum(status.shield for status in self._active_statuses(state) if status.name == name)
+
     def _consume_shield(self, state: _CombatState, damage: int) -> int:
         """消耗护盾吸收伤害，返回剩余穿透伤害。"""
         remaining = damage
@@ -2031,14 +2103,24 @@ class CombatService:
                 state.huyuan_heal_stacks[index] = current + 1
                 self._add_status(state, _StatusEffect("生息"))
 
-    def _trigger_cleanse_followups(self, round_no: int, state: _CombatState, cleansed_layers: int, opponent: _CombatState) -> list[ActionLog]:
-        """Called when effects are cleansed from state. Handles 转机 affix on both combatants.
+    def _trigger_cleanse_followups(self, round_no: int, state: _CombatState, cleansed_layers: int, opponent: _CombatState, *, zhoufu_extra: int = 0) -> list[ActionLog]:
+        """Called when effects are cleansed. Handles 转机 affix + 绝命印记 on both combatants.
 
         转机 deals damage to the ENEMY of the affix owner when any cleanse occurs.
+        绝命印记 always stacks on the OPPONENT of the 绝命 holder (never on self).
+        zhoufu_extra: 咒缚被净化时的额外绝命印记层数（每层咒缚 +1）。
         """
         logs: list[ActionLog] = []
         if cleansed_layers <= 0:
             return logs
+        # 绝命印记：任意效果被清除时，绝命持有者的对手获得印记
+        # 咒缚被净化时每层额外 +1（zhoufu_extra 已由调用方计数）
+        effective_layers = cleansed_layers + zhoufu_extra
+        for combatant, other in ((state, opponent), (opponent, state)):
+            power = combatant.snapshot.spirit_power
+            if power and power.power_id == "jueming":
+                other.jueming_mark_stacks += effective_layers
+        # 转机追伤
         for owner in (state, opponent):
             for entry in owner.snapshot.affixes:
                 if entry.affix_id != "zhuanji":
@@ -2117,8 +2199,8 @@ class CombatService:
 
     def _create_debuff_by_name(self, name: str, source: _CombatState) -> _StatusEffect:
         match name:
-            case "断锋":
-                return _StatusEffect("断锋", atk_pct=-10, is_debuff=True, source=source)
+            case "蔓咒":
+                return _StatusEffect("蔓咒", atk_pct=-10, is_debuff=True, source=source)
             case "破步":
                 return _StatusEffect("破步", agility_pct=-10, is_debuff=True, source=source)
             case "创伤":
@@ -2126,7 +2208,7 @@ class CombatService:
             case "灼烧":
                 return _StatusEffect("灼烧", duration=1, burn_pct=25, is_debuff=True, source=source)
             case _:
-                return _StatusEffect("断锋", atk_pct=-10, is_debuff=True, source=source)
+                return _StatusEffect("蔓咒", atk_pct=-10, is_debuff=True, source=source)
 
     def _create_buff_by_name(self, name: str) -> _StatusEffect:
         match name:
@@ -2312,30 +2394,78 @@ class CombatService:
         kind_count = len(unique_names)
         # 反噬：涤世清除前记录敌方正面效果层数，清除后触发反噬回调
         opponent_positive_count_before = self._positive_status_count(opponent)
+        # 咒缚额外计数：涤世清除的咒缚层数每层额外 +1 绝命印记
+        zhoufu_total_before = self._status_count(state, "咒缚") + self._status_count(opponent, "咒缚")
         total_removed = self._remove_all_status_effects(state) + self._remove_all_status_effects(opponent)
         kind_pct = power.rolls.get("kind_pct", 0)
         stack_pct = power.rolls.get("stack_pct", 0)
-        raw_damage = max(1, self._current_atk(state) * (kind_pct * kind_count + stack_pct * total_removed) // 100)
-        # 涤世伤害 profile: 不吃增伤、不吃护盾；吃承伤、吃减伤、吃韧性
-        dishi_profile = _DamageProfile(can_be_buffed=False, can_be_vulned=True, can_be_reduced=True, can_be_shielded=False, respects_resilience=True)
-        actual = self._apply_typed_damage(opponent, raw_damage, dishi_profile, actor=state)
+        # 涤世重做：伤害不再直接爆发，改为存储净化之力，下次攻击命中时追打（类似春生）
+        bonus = max(1, self._current_atk(state) * (kind_pct * kind_count + stack_pct * total_removed) // 100)
+        self._add_status(state, _StatusEffect("涤世·净化", bonus_damage=bonus, remaining_hits=1))
         logs: list[ActionLog] = []
         if kind_count > 0:
             logs.append(
                 self._effect_log(
                     round_no,
                     state,
-                    f"{state.snapshot.name} 的涤世发动！清除场上 {kind_count} 种共 {total_removed} 层效果，造成 {actual} 点伤害。",
+                    f"{state.snapshot.name} 的涤世发动！清除场上 {kind_count} 种共 {total_removed} 层效果，净化之力凝聚待发。",
                     actor_name=state.snapshot.name,
                 )
             )
-        # 涤世净化后触发转机（双方各走一遍）
-        logs.extend(self._trigger_cleanse_followups(round_no, state, total_removed, opponent))
+        # 涤世净化后触发转机（双方各走一遍）+ 绝命印记
+        logs.extend(self._trigger_cleanse_followups(round_no, state, total_removed, opponent, zhoufu_extra=zhoufu_total_before))
         # 反噬：敌方正面效果被涤世清除后触发
         if opponent_positive_count_before > 0 and opponent.hp > 0:
             logs.extend(self._trigger_on_effect_lost_to_enemy(round_no, state, opponent, opponent_positive_count_before))
         # 记录冷却
         state.dishi_last_round = round_no
+        return logs
+
+    def _settle_jueming_marks(self, round_no: int, state: _CombatState, opponent: _CombatState) -> list[ActionLog]:
+        """绝命结算（回合结束时调用）：检查印记层数，触发伤害或斩杀。
+
+        - 印记 ≥ max_stacks × 2 → 直接斩杀，消耗全部印记
+        - 印记 ≥ max_stacks → 造成 damage_pct% 最大生命伤害，消耗 max_stacks 层印记
+        """
+        logs: list[ActionLog] = []
+        power = state.snapshot.spirit_power
+        if power is None or power.power_id != "jueming":
+            return logs
+        if opponent.hp <= 0:
+            return logs
+        marks = opponent.jueming_mark_stacks
+        if marks <= 0:
+            return logs
+        max_stacks = power.rolls.get("max_stacks", 10)
+        damage_pct = power.rolls.get("damage_pct", 0)
+        jueming_owner = state.snapshot.name
+
+        if marks >= max_stacks * 2:
+            # 斩杀：叠满两倍直接斩灭
+            opponent.hp = 0
+            opponent.jueming_mark_stacks = 0
+            logs.append(
+                self._effect_log(
+                    round_no,
+                    opponent,
+                    f"{jueming_owner} 的绝命发动，{opponent.snapshot.name} 身负 {marks} 层绝命印记，咒印缠身当刻毙命。",
+                    actor_name=jueming_owner,
+                )
+            )
+        elif marks >= max_stacks:
+            # 满层伤害：消耗 max_stacks 层，造成最大生命百分比伤害
+            raw_damage = max(1, opponent.get_max_hp() * damage_pct // 100)
+            actual = self._apply_damage(opponent, raw_damage)
+            opponent.jueming_mark_stacks -= max_stacks
+            if actual > 0:
+                logs.append(
+                    self._effect_log(
+                        round_no,
+                        opponent,
+                        f"{jueming_owner} 的绝命爆发，{opponent.snapshot.name} 承受 {actual} 点咒杀之伤（剩余 {opponent.jueming_mark_stacks} 层印记）。",
+                        actor_name=jueming_owner,
+                    )
+                )
         return logs
 
     def _effect_log(

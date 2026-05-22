@@ -344,6 +344,14 @@ class ArtifactService:
             entry.affix_id,
         )
 
+    # 旧词条 ID 迁移映射：2026-05-22 镇脉/封锋/不屈/夺灵 重做为 咒缚/蔓咒/裂铠/噬印
+    _AFFIX_ID_MIGRATION: dict[str, str] = {
+        "zhenmai": "zhoufu",
+        "fengfeng": "manzhou",
+        "buqu": "liekai",
+        "duoling": "shiyin",
+    }
+
     def _load_entries(self, raw_json: str | None) -> list[ArtifactAffixEntry]:
         if not raw_json:
             return []
@@ -361,12 +369,16 @@ class ArtifactService:
             slot = item.get("slot")
             affix_id = item.get("affix_id")
             rolls = item.get("rolls")
-            if not isinstance(slot, int) or not isinstance(affix_id, str) or affix_id not in ARTIFACT_AFFIX_IDS:
+            if not isinstance(slot, int) or not isinstance(affix_id, str):
+                continue
+            # 旧词条 ID 自动迁移至新 ID
+            migrated_id = self._AFFIX_ID_MIGRATION.get(affix_id, affix_id)
+            if migrated_id not in ARTIFACT_AFFIX_IDS:
                 continue
             if not isinstance(rolls, dict):
                 continue
             parsed_rolls = {str(key): int(value) for key, value in rolls.items() if isinstance(value, int)}
-            entries[slot] = ArtifactAffixEntry(slot=slot, affix_id=affix_id, rolls=parsed_rolls)
+            entries[slot] = ArtifactAffixEntry(slot=slot, affix_id=migrated_id, rolls=parsed_rolls)
         return [entries[slot] for slot in sorted(entries)]
 
     def _store_entries(self, artifact: Artifact, field_name: str, entries) -> None:
