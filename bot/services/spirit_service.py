@@ -118,11 +118,11 @@ class SpiritTierUpgradeResult:
 # 玩家已存储的旧器灵 roll 值如果超过新上限，加载时自动截断
 _SHIYAN_PER_BURN_MAX = {"low": 28, "mid": 40, "high": 50, "peak": 50, "supreme": 50}
 _DISHI_MAX = {
-    "low": {"kind_pct": 27, "stack_pct": 9},
-    "mid": {"kind_pct": 36, "stack_pct": 11},
-    "high": {"kind_pct": 44, "stack_pct": 14},
-    "peak": {"kind_pct": 54, "stack_pct": 17},
-    "supreme": {"kind_pct": 66, "stack_pct": 21},
+    "low": {"stack_pct": 9},
+    "mid": {"stack_pct": 11},
+    "high": {"stack_pct": 14},
+    "peak": {"stack_pct": 17},
+    "supreme": {"stack_pct": 21},
 }
 
 
@@ -142,9 +142,11 @@ def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int]) -> dict
     elif power_id == "dishi":
         caps = _DISHI_MAX.get(tier)
         if caps is not None:
-            for key in ("kind_pct", "stack_pct"):
+            for key in ("stack_pct",):
                 if clamped.get(key, 0) > caps[key]:
                     clamped[key] = caps[key]
+            # 涤世 2026-05-27 削弱：废弃 kind_pct 字段，移除残留 roll 值
+            clamped.pop("kind_pct", None)
     elif power_id == "jueming":
         # max_stacks 是「越小越好」的字段，强制覆盖为当前品阶固定值
         fixed = _JUEMING_MAX_STACKS.get(tier)

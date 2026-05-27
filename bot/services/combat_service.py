@@ -87,6 +87,7 @@ class _StatusEffect:
     guarantee_crit: bool = False
     is_relight: bool = False
     bonus_damage: int = 0  # 春生固定追打载体：下次攻击附加固定伤害
+    backlash_pct: int = 0  # 裂铠碎盾反伤百分比（仅"裂铠"状态使用，便于多件法宝独立结算）
 
     def is_active(self) -> bool:
         duration_ok = self.duration is None or self.duration > 0
@@ -329,23 +330,26 @@ class CombatService:
         damage, pre_hit_logs = self._trigger_spirit_pre_hit(round_no, target, damage, roller)
         logs.extend(pre_hit_logs)
         had_damage_reduction = self._has_damage_reduction_status(target)
-        # 裂铠追踪：记录护盾存在状态（用于受击叠印记）和护盾量（用于碎盾反伤）
-        liekai_active_before = self._status_count(target, "裂铠") > 0
-        liekai_shield_before = self._status_shield_sum(target, "裂铠")
+        # 裂铠追踪：对每件独立的裂铠状态拍快照（shield 量 + 自身反伤百分比）
+        # 多件法宝带裂铠时，每件独立结算碎盾反伤
+        liekai_snapshots = [
+            (status, status.shield, status.backlash_pct)
+            for status in target.statuses
+            if status.name == "裂铠" and status.is_active()
+        ]
+        liekai_active_count = len(liekai_snapshots)
         if self._total_shield(target) > 0:
             damage = self._consume_shield(target, damage)
-        # 裂铠受击叠印记：护盾存在时受击，给攻击者附加 1 层绝命印记
-        if liekai_active_before and actor.hp > 0:
-            actor.jueming_mark_stacks += 1
-        # 裂铠护盾破碎反弹：护盾被击碎时造成反伤 + 3 层绝命印记
-        if liekai_shield_before > 0 and self._status_count(target, "裂铠") <= 0 and actor.hp > 0:
-            # 查找裂铠词条获取反伤倍率
-            backlash_pct = 50  # fallback
-            for entry in target.snapshot.affixes:
-                if entry.affix_id == "liekai":
-                    backlash_pct = _roll(entry.rolls, "backlash_pct", 50)
-                    break
-            backlash_damage = max(1, liekai_shield_before * backlash_pct // 100)
+        # 裂铠受击叠印记：每件存在的裂铠护盾各自附加 1 层绝命印记
+        if liekai_active_count > 0 and actor.hp > 0:
+            actor.jueming_mark_stacks += liekai_active_count
+        # 裂铠护盾破碎反弹：逐个判定本次受击中是否被打穿，各自结算反伤 + 3 层绝命印记
+        for status, shield_before, status_backlash_pct in liekai_snapshots:
+            if actor.hp <= 0:
+                break
+            if shield_before <= 0 or status.shield > 0:
+                continue  # 这件裂铠没碎或受击前已无护盾
+            backlash_damage = max(1, shield_before * (status_backlash_pct or 50) // 100)
             backlash_actual = self._apply_damage(actor, backlash_damage)
             actor.jueming_mark_stacks += 3
             if backlash_actual > 0:
@@ -1138,7 +1142,8 @@ class CombatService:
                     continue
                 shield_pct = _roll(entry.rolls, "shield_pct", 30)
                 shield_amount = max(1, max_hp * shield_pct // 100)
-                self._add_status(target, _StatusEffect("裂铠", shield=shield_amount))
+                backlash_pct = _roll(entry.rolls, "backlash_pct", 50)
+                self._add_status(target, _StatusEffect("裂铠", shield=shield_amount, backlash_pct=backlash_pct))
                 logs.append(
                     self._effect_log(
                         round_no,
@@ -1314,7 +1319,9 @@ class CombatService:
             stacks = self._burn_stacks(target)
             if stacks >= 6:
                 per_burn_pct = power.rolls.get("per_burn_pct", 25)
-                total_pct = stacks * per_burn_pct
+                # 蚀焰削弱（2026-05-27）：单次引爆按 12 层封顶（绝品极限值），防止多灼魂堆叠爆表
+                effective_stacks = min(stacks, 12)
+                total_pct = effective_stacks * per_burn_pct
                 # 蚀焰伤害基底改为 actor 当前杀伐 × total_pct%（避免 0 伤普攻引爆为 0）
                 base_damage = max(1, self._current_atk(actor) * total_pct // 100)
                 # 收集被消耗的灼烧（用于判断是否触发余烬重燃）
@@ -1324,11 +1331,17 @@ class CombatService:
                 # 蚀焰伤害通过统一管线 _SHIYAN_PROFILE：吃承伤/减伤，不暴击、不吃增伤、不吃护盾
                 explode_actual = self._apply_typed_damage(target, base_damage, _SHIYAN_PROFILE, actor=actor)
                 # 无论实际伤害是否为 0，都明确播报"引爆 + 消耗灼烧"事件
+                # 当实际层数超过封顶时，附加 "(按 12 层计算)" 让玩家清楚 cap 的存在
+                burn_text = (
+                    f"{stacks} 层灼烧（按 12 层计算）"
+                    if stacks > 12
+                    else f"{stacks} 层灼烧"
+                )
                 logs.append(
                     self._effect_log(
                         round_no,
                         target,
-                        f"{actor.snapshot.name} 的蚀焰引爆 {stacks} 层灼烧！焰意轰然炸裂，造成 {explode_actual} 点伤害。",
+                        f"{actor.snapshot.name} 的蚀焰引爆 {burn_text}！焰意轰然炸裂，造成 {explode_actual} 点伤害。",
                         actor_name=actor.snapshot.name,
                     )
                 )
@@ -2400,10 +2413,9 @@ class CombatService:
         # 咒缚额外计数：涤世清除的咒缚层数每层额外 +1 绝命印记
         zhoufu_total_before = self._status_count(state, "咒缚") + self._status_count(opponent, "咒缚")
         total_removed = self._remove_all_status_effects(state) + self._remove_all_status_effects(opponent)
-        kind_pct = power.rolls.get("kind_pct", 0)
         stack_pct = power.rolls.get("stack_pct", 0)
-        # 涤世重做：伤害不再直接爆发，改为存储净化之力，下次攻击命中时追打（类似春生）
-        bonus = max(1, self._current_atk(state) * (kind_pct * kind_count + stack_pct * total_removed) // 100)
+        # 涤世削弱（2026-05-27）：去掉 kind_pct × kind_count 部分，仅按 stack_pct × total_removed 计算
+        bonus = max(1, self._current_atk(state) * stack_pct * total_removed // 100)
         self._add_status(state, _StatusEffect("涤世·净化", bonus_damage=bonus, remaining_hits=1))
         logs: list[ActionLog] = []
         if kind_count > 0:
