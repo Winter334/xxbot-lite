@@ -335,13 +335,13 @@ SPIRIT_POWER_DEFINITIONS = (
         "dishi",
         "涤世",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("threshold", 10, 14), ("kind_pct", 19, 27), ("stack_pct", 5, 9)),
-            mid=(("threshold", 8, 12), ("kind_pct", 25, 36), ("stack_pct", 7, 11)),
-            high=(("threshold", 6, 10), ("kind_pct", 32, 44), ("stack_pct", 9, 14)),
-            peak=(("threshold", 5, 8), ("kind_pct", 41, 54), ("stack_pct", 12, 17)),
-            supreme=(("threshold", 4, 7), ("kind_pct", 49, 66), ("stack_pct", 15, 21)),
+            low=(("threshold", 10, 14), ("stack_pct", 5, 9)),
+            mid=(("threshold", 8, 12), ("stack_pct", 7, 11)),
+            high=(("threshold", 6, 10), ("stack_pct", 9, 14)),
+            peak=(("threshold", 5, 8), ("stack_pct", 12, 17)),
+            supreme=(("threshold", 4, 7), ("stack_pct", 15, 21)),
         ),
-        description_builder=lambda rolls: f"回合结束时，若全场效果总层数 ≥ {rolls['threshold']}，净化全场所有效果（不分敌我、不分正负），将净化之力存储为「{rolls['kind_pct']}% × 效果种类 + {rolls['stack_pct']}% × 总层数」杀伐的追打，下次攻击命中时释放。触发后有 1 回合冷却。",
+        description_builder=lambda rolls: f"回合结束时，若全场效果总层数 ≥ {rolls['threshold']}，净化全场所有效果（不分敌我、不分正负），将净化之力存储为 {rolls['stack_pct']}% × 总层数 杀伐的追打，下次攻击命中时释放。触发后有 1 回合冷却。",
     ),
     _define_power(
         "chunsheng",
@@ -447,7 +447,7 @@ SPIRIT_POWER_DEFINITIONS = (
             supreme=(("per_burn_pct", 40, 50), ("wound_stacks", 5, 5)),
         ),
         description_builder=lambda rolls: (
-            f"命中且目标灼烧 ≥6 层时触发：消耗目标全部灼烧层数，每层造成 {rolls['per_burn_pct']}% 杀伐神通伤害（无上限，可被护盾抵挡），"
+            f"命中且目标灼烧 ≥6 层时触发：消耗目标全部灼烧层数，每层造成 {rolls['per_burn_pct']}% 杀伐神通伤害（单次最多按 12 层计算，可被护盾抵挡），"
             f"引爆后给目标附加 {rolls['wound_stacks']} 层创伤。"
         ),
     ),
