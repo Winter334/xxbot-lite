@@ -414,8 +414,9 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "转机",
         "on_cleanse",
         ("damage_pct", 15, 35),
+        ("max_layers", 2, 6),
         description_builder=lambda rolls: (
-            f"任意净化效果触发时，每净化 1 层追加 {rolls['damage_pct']}% 杀伐伤害（多次净化叠加计算）"
+            f"任意净化效果触发时，每净化 1 层追加 {rolls['damage_pct']}% 杀伐伤害（单次净化最多计算 {rolls['max_layers']} 层）"
         ),
     ),
     # ── 通用中立 ──

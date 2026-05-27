@@ -1436,6 +1436,7 @@ class CombatService:
                 for _ in range(stripped):
                     self._add_status(actor, _StatusEffect("碎阙", damage_dealt_pct=damage_pct // 2 or 1, remaining_hits=1))
                 logs.extend(self._trigger_on_effect_lost_to_enemy(round_no, actor, target, stripped))
+                logs.extend(self._trigger_cleanse_followups(round_no, target, stripped, actor))
             if extra_damage > 0 or stripped > 0:
                 logs.append(
                     self._effect_log(
@@ -2120,16 +2121,18 @@ class CombatService:
             power = combatant.snapshot.spirit_power
             if power and power.power_id == "jueming":
                 other.jueming_mark_stacks += effective_layers
-        # 转机追伤
+        # 转机追伤（单次净化最多计算 max_layers 层）
         for owner in (state, opponent):
             for entry in owner.snapshot.affixes:
                 if entry.affix_id != "zhuanji":
                     continue
                 damage_pct = _roll(entry.rolls, "damage_pct", 0)
+                max_layers = _roll(entry.rolls, "max_layers", 4)
+                effective = min(cleansed_layers, max_layers)
                 enemy = opponent if owner is state else state
                 if enemy.hp <= 0:
                     continue
-                damage = max(1, self._current_atk(owner) * damage_pct * cleansed_layers // 100)
+                damage = max(1, self._current_atk(owner) * damage_pct * effective // 100)
                 actual = self._apply_damage(enemy, damage)
                 if actual > 0:
                     logs.append(

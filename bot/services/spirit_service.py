@@ -126,6 +126,12 @@ _DISHI_MAX = {
 }
 
 
+# 绝命 max_stacks 按品阶固定值（越高品阶越小）
+_JUEMING_MAX_STACKS: dict[str, int] = {
+    "low": 12, "mid": 10, "high": 8, "peak": 7, "supreme": 6,
+}
+
+
 def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int]) -> dict[str, int]:
     """将旧版本超标的 roll 值截断到当前 tier 上限。"""
     clamped = dict(rolls)
@@ -139,6 +145,11 @@ def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int]) -> dict
             for key in ("kind_pct", "stack_pct"):
                 if clamped.get(key, 0) > caps[key]:
                     clamped[key] = caps[key]
+    elif power_id == "jueming":
+        # max_stacks 是「越小越好」的字段，强制覆盖为当前品阶固定值
+        fixed = _JUEMING_MAX_STACKS.get(tier)
+        if fixed is not None:
+            clamped["max_stacks"] = fixed
     return clamped
 
 
@@ -434,6 +445,8 @@ class SpiritService:
         for key, low, _high in new_ranges:
             if adjusted_rolls.get(key, 0) < low:
                 adjusted_rolls[key] = low
+        # 绝命 max_stacks 是「越小越好」的字段，强制覆盖为新品阶固定值
+        adjusted_rolls = _clamp_legacy_rolls(spirit_before.power.power_id, next_tier_key, adjusted_rolls)
         new_power = SpiritPowerEntry(power_id=spirit_before.power.power_id, rolls=adjusted_rolls)
 
         spirit_after = SpiritInstance(tier=next_tier_key, stats=tuple(new_stats), power=new_power)
