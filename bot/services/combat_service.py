@@ -330,37 +330,7 @@ class CombatService:
         damage, pre_hit_logs = self._trigger_spirit_pre_hit(round_no, target, damage, roller)
         logs.extend(pre_hit_logs)
         had_damage_reduction = self._has_damage_reduction_status(target)
-        # 裂铠追踪：对每件独立的裂铠状态拍快照（shield 量 + 自身反伤百分比）
-        # 多件法宝带裂铠时，每件独立结算碎盾反伤
-        liekai_snapshots = [
-            (status, status.shield, status.backlash_pct)
-            for status in target.statuses
-            if status.name == "裂铠" and status.is_active()
-        ]
-        liekai_active_count = len(liekai_snapshots)
-        if self._total_shield(target) > 0:
-            damage = self._consume_shield(target, damage)
-        # 裂铠受击叠印记：每件存在的裂铠护盾各自附加 1 层绝命印记
-        if liekai_active_count > 0 and actor.hp > 0:
-            actor.jueming_mark_stacks += liekai_active_count
-        # 裂铠护盾破碎反弹：逐个判定本次受击中是否被打穿，各自结算反伤 + 3 层绝命印记
-        for status, shield_before, status_backlash_pct in liekai_snapshots:
-            if actor.hp <= 0:
-                break
-            if shield_before <= 0 or status.shield > 0:
-                continue  # 这件裂铠没碎或受击前已无护盾
-            backlash_damage = max(1, shield_before * (status_backlash_pct or 50) // 100)
-            backlash_actual = self._apply_damage(actor, backlash_damage)
-            actor.jueming_mark_stacks += 3
-            if backlash_actual > 0:
-                logs.append(
-                    self._effect_log(
-                        round_no,
-                        actor,
-                        f"{target.snapshot.name} 的裂铠炸裂，碎片反噬 {actor.snapshot.name}，造成 {backlash_actual} 点伤害并附加 3 层绝命印记。",
-                        actor_name=target.snapshot.name,
-                    )
-                )
+        damage = self._consume_shield_and_settle_liekai(target, actor, damage, round_no, logs)
         actual_damage = self._apply_damage(target, damage)
         target.hits_taken += 1
         # 雷殛标记：受击时每层雷殛额外承受一份轻量真伤（吃韧性），来源神通取自标记 source
@@ -392,7 +362,8 @@ class CombatService:
         low_hp_after_hit = target.hp
         self._consume_hit_reduction_statuses(target)
 
-        logs.append(ActionLog(round_no, actor.snapshot.name, target.snapshot.name, False, critical, actual_damage, target.hp))
+        attack_log = ActionLog(round_no, actor.snapshot.name, target.snapshot.name, False, critical, actual_damage, target.hp)
+        logs.append(attack_log)
         logs.extend(self._trigger_on_hit(round_no, actor, target, actual_damage, roller, scene))
         if critical:
             actor.consecutive_crits += 1
@@ -409,6 +380,7 @@ class CombatService:
                 actual_damage,
                 roller,
                 source=_DamageSource.ATTACK,
+                scene=scene,
             )
         )
         logs.extend(
@@ -429,15 +401,14 @@ class CombatService:
         bonus_followups = [s for s in actor.statuses if s.name in ("春生·追击", "涤世·净化") and s.is_active() and s.bonus_damage > 0]
         if bonus_followups and target.hp > 0:
             for s in bonus_followups:
-                bonus_actual = self._apply_typed_damage(target, s.bonus_damage, _CHUNSHENG_BONUS_PROFILE, actor=actor)
+                bonus_actual = self._apply_typed_damage(target, s.bonus_damage, _CHUNSHENG_BONUS_PROFILE, actor=actor, round_no=round_no, logs=logs)
                 if bonus_actual > 0:
                     label = "春生回返一击" if s.name == "春生·追击" else "涤世净化之力倾泻"
                     logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} {label}，追加 {bonus_actual} 点伤害。", actor_name=actor.snapshot.name))
                 s.remaining_hits = 0
             actor.statuses = self._active_statuses(actor)
 
-        if logs:
-            logs[0].target_hp_after = target.hp
+        attack_log.target_hp_after = target.hp
         # 风行：攻击后消耗全部层数并回复生命（伤害加成已在 _before_attack_bonus_pct 中计算）
         logs.extend(self._consume_fengxing_stacks(round_no, actor, scene))
         self._consume_attack_bonuses(actor)
@@ -1199,6 +1170,9 @@ class CombatService:
                             actual_damage,
                             roller,
                             source=_DamageSource.BURN,
+                            # 灼烧 DOT 不会走 ATTACK 分支，蚀焰引爆 + 低血量重检都被前置 source 守卫拦截；
+                            # 这里传空 scene 作为务实兜底，避免向 _trigger_round_end 反向回灌 scene 上下文。
+                            scene=set(),
                         )
                     )
                     burn_logs.extend(
@@ -1302,6 +1276,7 @@ class CombatService:
         roller: random.Random,
         *,
         source: str,
+        scene: set[str],
     ) -> list[ActionLog]:
         power = actor.snapshot.spirit_power
         if power is None:
@@ -1309,39 +1284,44 @@ class CombatService:
 
         logs: list[ActionLog] = []
 
-        # 蚀焰：独立条件触发（命中目标且灼烧≥4 即可引爆），不依赖本次普攻是否造成伤害。
+        # 蚀焰：独立条件触发（命中目标且灼烧≥6 即可引爆），不依赖本次普攻是否造成伤害。
         # 只接受 ATTACK 来源，避免 burn DOT / 引爆自身造成的伤害再次触发蚀焰。
+        # 引爆后冷却 1 回合（round_no 必须 > 上次触发回合 + 1）。
         if (
             power.power_id == "shiyan"
             and source == _DamageSource.ATTACK
             and target.hp > 0
+            and round_no > actor.spirit_proc_rounds.get("shiyan_explode_round", -10) + 1
         ):
             stacks = self._burn_stacks(target)
             if stacks >= 6:
                 per_burn_pct = power.rolls.get("per_burn_pct", 25)
-                # 蚀焰削弱（2026-05-27）：单次引爆按 12 层封顶（绝品极限值），防止多灼魂堆叠爆表
-                effective_stacks = min(stacks, 12)
+                # 蚀焰削弱（2026-05-28）：单次封顶 10 层；多余灼烧保留不清空，仅扣除 10 层
+                effective_stacks = min(stacks, 10)
                 total_pct = effective_stacks * per_burn_pct
                 # 蚀焰伤害基底改为 actor 当前杀伐 × total_pct%（避免 0 伤普攻引爆为 0）
                 base_damage = max(1, self._current_atk(actor) * total_pct // 100)
-                # 收集被消耗的灼烧（用于判断是否触发余烬重燃）
+                # 收集被消耗的灼烧 status 用于余烬判定（在扣减前快照）
                 consumed_burns = [s for s in target.statuses if s.name == "灼烧"]
-                # 触发即消耗目标全部灼烧层数
-                target.statuses = [s for s in target.statuses if s.name != "灼烧"]
-                # 蚀焰伤害通过统一管线 _SHIYAN_PROFILE：吃承伤/减伤，不暴击、不吃增伤、不吃护盾
-                explode_actual = self._apply_typed_damage(target, base_damage, _SHIYAN_PROFILE, actor=actor)
-                # 无论实际伤害是否为 0，都明确播报"引爆 + 消耗灼烧"事件
-                # 当实际层数超过封顶时，附加 "(按 12 层计算)" 让玩家清楚 cap 的存在
-                burn_text = (
-                    f"{stacks} 层灼烧（按 12 层计算）"
-                    if stacks > 12
-                    else f"{stacks} 层灼烧"
-                )
+                # 仅扣减 effective_stacks 层灼烧（保留剩余 stacks）
+                for status in list(target.statuses):
+                    if status.name == "灼烧" and status.is_active() and status.burn_pct > 0:
+                        remaining_stacks = max(0, (status.duration or 0) - effective_stacks)
+                        if remaining_stacks <= 0:
+                            target.statuses.remove(status)
+                        else:
+                            status.duration = remaining_stacks
+                        break  # 引擎将灼烧合并为单一 status，只需处理首个
+                # 记录引爆回合，下回合冷却中无法再次触发
+                actor.spirit_proc_rounds["shiyan_explode_round"] = round_no
+                # 蚀焰伤害通过统一管线 _SHIYAN_PROFILE：吃承伤/减伤/护盾（走裂铠反噬通道），不暴击、不吃增伤
+                explode_actual = self._apply_typed_damage(target, base_damage, _SHIYAN_PROFILE, actor=actor, round_no=round_no, logs=logs)
+                # 沉浸感战报：去除"按 N 层计算"元数据，让玩家凭意境感受
                 logs.append(
                     self._effect_log(
                         round_no,
                         target,
-                        f"{actor.snapshot.name} 的蚀焰引爆 {burn_text}！焰意轰然炸裂，造成 {explode_actual} 点伤害。",
+                        f"{actor.snapshot.name} 的蚀焰倾泻而出，焚野翻涌，{target.snapshot.name} 承受 {explode_actual} 点焚伤。",
                         actor_name=actor.snapshot.name,
                     )
                 )
@@ -1379,6 +1359,9 @@ class CombatService:
                                 actor, target, round_no=round_no, roller=roller
                             )
                         )
+                # 蚀焰引爆若把目标 HP 砍破 30%/50% 阈值，同样要触发裂铠/回春展开
+                if explode_actual > 0 and target.hp > 0:
+                    logs.extend(self._trigger_on_low_hp(round_no, target, target.hp, scene))
 
         if actual_damage <= 0:
             return logs
@@ -1685,6 +1668,10 @@ class CombatService:
             for entry in actor.snapshot.affixes:
                 if entry.affix_id == "liekong" and self._scene_matches(entry, scene):
                     total += _roll(entry.rolls, "pierce_pct", 0) * leihen_layers
+        # 透命：通用穿透，无前置条件，多件叠加
+        for entry in actor.snapshot.affixes:
+            if entry.affix_id == "tongming" and self._scene_matches(entry, scene):
+                total += _roll(entry.rolls, "pierce_pct", 0)
         return total
 
     def _heal_received_pct(self, state: _CombatState) -> int:
@@ -1939,6 +1926,57 @@ class CombatService:
                 state.statuses.remove(status)
         return remaining
 
+    def _consume_shield_and_settle_liekai(
+        self,
+        target: _CombatState,
+        actor: _CombatState | None,
+        damage: int,
+        round_no: int,
+        logs: list[ActionLog] | None,
+    ) -> int:
+        """护盾消耗 + 裂铠碎盾反噬统一结算（普攻管线 / 蚀焰引爆 / 春生·追击 / 涤世·净化 共用）。
+
+        - 先对 target 的全部"裂铠"状态拍快照（shield_before + backlash_pct）
+        - 调用 _consume_shield 扣盾
+        - 若 actor 不为 None 且仍存活：
+            * 每件存在的裂铠各给 actor 加 1 层绝命印记（受击印记）
+            * 每件本次受击中被打穿（shield_before > 0 且 status.shield == 0）的裂铠：
+              反噬 backlash_pct% × shield_before 伤害 + actor.jueming_mark_stacks += 3
+              + 推一条反噬 ActionLog（前提是 logs 不为 None 且实际伤害 > 0）
+        返回穿透伤害（未被护盾吸收的部分）。
+        """
+        liekai_snapshots = [
+            (status, status.shield, status.backlash_pct)
+            for status in target.statuses
+            if status.name == "裂铠" and status.is_active()
+        ]
+        if self._total_shield(target) > 0:
+            remaining = self._consume_shield(target, damage)
+        else:
+            remaining = damage
+        if actor is None or actor.hp <= 0:
+            return remaining
+        if liekai_snapshots:
+            actor.jueming_mark_stacks += len(liekai_snapshots)
+        for status, shield_before, backlash_pct in liekai_snapshots:
+            if actor.hp <= 0:
+                break
+            if shield_before <= 0 or status.shield > 0:
+                continue
+            backlash_damage = max(1, shield_before * (backlash_pct or 50) // 100)
+            backlash_actual = self._apply_damage(actor, backlash_damage)
+            actor.jueming_mark_stacks += 2
+            if backlash_actual > 0 and logs is not None:
+                logs.append(
+                    self._effect_log(
+                        round_no,
+                        actor,
+                        f"{target.snapshot.name} 的裂铠炸裂，碎片反噬 {actor.snapshot.name}，造成 {backlash_actual} 点伤害并附加 2 层绝命印记。",
+                        actor_name=target.snapshot.name,
+                    )
+                )
+        return remaining
+
     def _status_count(self, state: _CombatState, name: str) -> int:
         total = 0
         for status in self._active_statuses(state):
@@ -2006,19 +2044,44 @@ class CombatService:
         state.hp = max(0, state.hp - damage)
         return before - state.hp
 
+    def _apply_chenchen(self, state: _CombatState, damage: int) -> int:
+        """承尘：单次受到的伤害若超过自身最大生命阈值，溢出部分按 reduction_pct 衰减。
+
+        多件取最优：阈值取所有承尘词条中的 **最低** threshold_pct，衰减取 **最高** reduction_pct。
+        命中阈值后衰减仅作用于"超出阈值的部分"，不影响阈值以内的基础伤害。
+        """
+        if damage <= 0 or state.hp <= 0:
+            return damage
+        affixes = [
+            entry for entry in state.snapshot.affixes
+            if entry.affix_id == "chenchen"
+        ]
+        if not affixes:
+            return damage
+        best_threshold = min(_roll(entry.rolls, "threshold_pct", 30) for entry in affixes)
+        best_reduction = max(_roll(entry.rolls, "reduction_pct", 30) for entry in affixes)
+        threshold_damage = max(1, state.get_max_hp() * best_threshold // 100)
+        if damage <= threshold_damage:
+            return damage
+        overflow = damage - threshold_damage
+        kept = max(1, overflow * max(0, 100 - best_reduction) // 100)
+        return threshold_damage + kept
+
     def _apply_typed_damage(
         self,
         state: _CombatState,
         raw_damage: int,
         profile: _DamageProfile,
         actor: "_CombatState | None" = None,
+        round_no: int = 0,
+        logs: list[ActionLog] | None = None,
     ) -> int:
         """按 profile 对 state 施加伤害。可选地按 actor 走增伤、按 state 走承伤/减伤/护盾。
 
         - can_be_buffed: 吃 actor 的 damage_dealt_pct + damage_dealt_basis_points
         - can_be_vulned: 吃 state 的 damage_taken_pct + damage_taken_basis_points
         - can_be_reduced: 吃 state 的 damage_reduction_pct + damage_reduction_basis_points（双重 max(0.1, ...) 兜底合并为单次）
-        - can_be_shielded: 走 _consume_shield 抵挡
+        - can_be_shielded: 走 _consume_shield_and_settle_liekai 抵挡（含裂铠反噬）
 
         Note: actor.hp <= 0 时（DOT 来源已死亡），buff 通道自动失效，退化为裸基础伤害。
         """
@@ -2045,9 +2108,12 @@ class CombatService:
             reduce_basis = state.snapshot.damage_reduction_basis_points
             combined = 1 - (reduce_pct / 100) - (reduce_basis / 10_000)
             damage = max(1, int(damage * max(0.1, combined)))
-        # 护盾抵挡
+        # 承尘：大额单击溢出减幅（仅对走减伤通道的伤害类型生效，避免叠加于真伤/雷劫）
+        if profile.can_be_reduced:
+            damage = self._apply_chenchen(state, damage)
+        # 护盾抵挡（统一走裂铠反噬通道）
         if profile.can_be_shielded:
-            damage = self._consume_shield(state, damage)
+            damage = self._consume_shield_and_settle_liekai(state, actor, damage, round_no, logs)
             if damage <= 0:
                 return 0
         return self._apply_damage(state, damage, respects_resilience=profile.respects_resilience)
