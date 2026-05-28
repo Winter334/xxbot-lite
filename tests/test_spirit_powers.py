@@ -137,7 +137,7 @@ def test_shiyan_consumes_burn_stacks_when_threshold_reached(services) -> None:
     battle = services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 30))
 
     # 命中后挂 5 层即触发蚀焰
-    assert any(log.text and "蚀焰引爆" in log.text for log in battle.logs)
+    assert any(log.text and "蚀焰倾泻而出" in log.text for log in battle.logs)
     # 引爆后给目标附加创伤
     assert any(log.text and "创伤" in log.text for log in battle.logs)
 
@@ -160,7 +160,7 @@ def test_shiyan_explodes_even_when_attack_deals_zero_damage(services) -> None:
     battle = services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 30))
 
     # 即使普攻 0 伤，蚀焰仍应触发并写入战报
-    assert any(log.text and "蚀焰引爆" in log.text for log in battle.logs)
+    assert any(log.text and "蚀焰倾泻而出" in log.text for log in battle.logs)
 
 
 def test_shiyan_explosion_respects_damage_reduction(services) -> None:
@@ -185,12 +185,12 @@ def test_shiyan_explosion_respects_damage_reduction(services) -> None:
     battle_no = run_one(())
     battle_red = run_one((ArtifactAffixEntry(slot=1, affix_id="cangbi", rolls={"reduce_pct": 80}),))
 
-    explode_no = next((log for log in battle_no.logs if log.text and "蚀焰引爆" in log.text), None)
-    explode_red = next((log for log in battle_red.logs if log.text and "蚀焰引爆" in log.text), None)
+    explode_no = next((log for log in battle_no.logs if log.text and "蚀焰倾泻而出" in log.text), None)
+    explode_red = next((log for log in battle_red.logs if log.text and "蚀焰倾泻而出" in log.text), None)
     assert explode_no is not None and explode_red is not None
 
     def extract_dmg(log):
-        m = re.search(r"造成\s*([0-9]+)\s*点伤害", log.text)
+        m = re.search(r"承受\s*([0-9]+)\s*点焚伤", log.text)
         return int(m.group(1)) if m else None
 
     dmg_no = extract_dmg(explode_no)

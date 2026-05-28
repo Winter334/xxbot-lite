@@ -440,15 +440,15 @@ SPIRIT_POWER_DEFINITIONS = (
         "shiyan",
         "蚀焰",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_burn_pct", 15, 28), ("wound_stacks", 1, 1)),
-            mid=(("per_burn_pct", 22, 40), ("wound_stacks", 2, 2)),
-            high=(("per_burn_pct", 28, 50), ("wound_stacks", 3, 3)),
-            peak=(("per_burn_pct", 35, 50), ("wound_stacks", 4, 4)),
-            supreme=(("per_burn_pct", 40, 50), ("wound_stacks", 5, 5)),
+            low=(("per_burn_pct", 12, 22), ("wound_stacks", 1, 1)),
+            mid=(("per_burn_pct", 18, 30), ("wound_stacks", 2, 2)),
+            high=(("per_burn_pct", 22, 38), ("wound_stacks", 3, 3)),
+            peak=(("per_burn_pct", 28, 42), ("wound_stacks", 4, 4)),
+            supreme=(("per_burn_pct", 32, 44), ("wound_stacks", 5, 5)),
         ),
         description_builder=lambda rolls: (
-            f"命中且目标灼烧 ≥6 层时触发：消耗目标全部灼烧层数，每层造成 {rolls['per_burn_pct']}% 杀伐神通伤害（单次最多按 12 层计算，可被护盾抵挡），"
-            f"引爆后给目标附加 {rolls['wound_stacks']} 层创伤。"
+            f"命中且目标灼烧 ≥6 层时触发：消耗目标至多 10 层灼烧，每层造成 {rolls['per_burn_pct']}% 杀伐神通伤害（可被护盾抵挡），"
+            f"引爆后给目标附加 {rolls['wound_stacks']} 层创伤；触发后冷却 1 回合。"
         ),
     ),
     _define_power(

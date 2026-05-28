@@ -208,12 +208,12 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "liekai",
         "裂铠",
         "on_low_hp",
-        ("shield_pct", 30, 60),
-        ("backlash_pct", 50, 90),
+        ("shield_pct", 22, 42),
+        ("backlash_pct", 35, 60),
         description_builder=lambda rolls: (
             f"生命低于 30% 时获得「裂铠」护盾（{rolls['shield_pct']}% 最大生命）；"
             f"护盾存在时受击给攻击者附加 1 层绝命印记；"
-            f"护盾破碎时对击碎者造成吸收量 {rolls['backlash_pct']}% 伤害 + 3 层绝命印记。"
+            f"护盾破碎时对击碎者造成吸收量 {rolls['backlash_pct']}% 伤害 + 2 层绝命印记。"
         ),
     ),
     _define(
@@ -518,6 +518,27 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("max_stacks", 5, 10),
         description_builder=lambda rolls: (
             f"自身每获得 1 个正面效果叠 1 层贪噬；每层提高 {rolls['per_stack_pct']}% 造成伤害，最多 {rolls['max_stacks']} 层。（贪噬自身的层数不计入触发）"
+        ),
+    ),
+    # ── 反爆发 ──
+    _define(
+        "chenchen",
+        "承尘",
+        "on_be_hit",
+        ("threshold_pct", 22, 32),
+        ("reduction_pct", 30, 55),
+        description_builder=lambda rolls: (
+            f"单次受到的伤害若超过自身最大生命 {rolls['threshold_pct']}%，"
+            f"溢出部分削减 {rolls['reduction_pct']}%（多件取最低阈值与最高削减）。"
+        ),
+    ),
+    _define(
+        "tongming",
+        "透命",
+        "before_attack",
+        ("pierce_pct", 6, 15),
+        description_builder=lambda rolls: (
+            f"每次攻击额外无视目标 {rolls['pierce_pct']}% 减伤（多件叠加，与登霄/裂空共享通道）。"
         ),
     ),
 )
