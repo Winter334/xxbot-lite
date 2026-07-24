@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
 import discord
@@ -57,6 +59,11 @@ class XianCommands(commands.Cog):
             import logging
             logging.getLogger(__name__).exception("NPC 每日刷新失败")
 
+    async def _delete_followup_later(self, message, delay: float) -> None:
+        await asyncio.sleep(delay)
+        with suppress(discord.HTTPException, discord.NotFound):
+            await message.delete()
+
     async def _send_response(
         self,
         interaction: discord.Interaction,
@@ -69,11 +76,15 @@ class XianCommands(commands.Cog):
         kwargs = {"embed": embed, "ephemeral": ephemeral}
         if view is not None:
             kwargs["view"] = view
-        if delete_after is not None:
-            kwargs["delete_after"] = delete_after
         if interaction.response.is_done():
-            await interaction.followup.send(**kwargs)
+            if delete_after is not None:
+                message = await interaction.followup.send(**kwargs, wait=True)
+                asyncio.create_task(self._delete_followup_later(message, delete_after))
+            else:
+                await interaction.followup.send(**kwargs)
         else:
+            if delete_after is not None:
+                kwargs["delete_after"] = delete_after
             await interaction.response.send_message(**kwargs)
 
     async def _send_with_broadcasts(
