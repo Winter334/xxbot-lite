@@ -116,7 +116,64 @@ async def test_refine_pending_persists_and_only_applies_after_save(session_facto
 
 
 @pytest.mark.asyncio
-async def test_discard_pending_affix_only_removes_selected_slot(session_factory, services) -> None:
+async def test_refine_all_affixes_rolls_every_unlocked_slot_without_saving(session_factory, services) -> None:
+    services.artifact.rng = ArtifactRoller(["huichun", "ningshen", "zhuohun", "lueying"], [34, 8, 50, 30, 3, 4, 50, 30, 10])
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 5012, "一键洗炼")).character
+        artifact = character.artifact
+        artifact.reinforce_level = 20
+        artifact.soul_shards = 10
+        services.artifact.ensure_affix_slots(artifact)
+        current_before = tuple(entry.affix_id for entry in services.artifact.get_affix_slots(artifact))
+
+        result = services.artifact.refine_all_affixes(artifact)
+        await session.commit()
+
+        assert result.success is True
+        assert result.slots == (1, 2)
+        assert result.soul_cost == 4
+        assert artifact.soul_shards == 6
+        assert tuple(entry.affix_id for entry in result.pending_entries) == ("zhuohun", "lueying")
+        assert tuple(entry.affix_id for entry in services.artifact.get_pending_affixes(artifact)) == ("zhuohun", "lueying")
+        assert tuple(entry.affix_id for entry in services.artifact.get_affix_slots(artifact)) == current_before
+
+
+@pytest.mark.asyncio
+async def test_refine_all_affixes_fails_atomically_when_soul_is_insufficient(session_factory, services) -> None:
+    services.artifact.rng = ArtifactRoller(["huichun", "ningshen", "zhuohun", "lueying"], [34, 8, 50, 30, 3, 4, 50, 30, 10])
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 5013, "器魂不足")).character
+        artifact = character.artifact
+        artifact.reinforce_level = 20
+        artifact.soul_shards = 3
+        services.artifact.ensure_affix_slots(artifact)
+        current_before = tuple(entry.affix_id for entry in services.artifact.get_affix_slots(artifact))
+
+        result = services.artifact.refine_all_affixes(artifact)
+
+        assert result.success is False
+        assert result.soul_cost == 4
+        assert artifact.soul_shards == 3
+        assert services.artifact.get_pending_affixes(artifact) == []
+        assert tuple(entry.affix_id for entry in services.artifact.get_affix_slots(artifact)) == current_before
+
+
+@pytest.mark.asyncio
+async def test_refine_all_affixes_replaces_existing_pending_slots(session_factory, services) -> None:
+    services.artifact.rng = ArtifactRoller(["huichun", "ningshen", "zhuohun", "lueying", "jinhuo"], [34, 8, 50, 30, 3, 4, 50, 30, 10])
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 5014, "重洗全部")).character
+        artifact = character.artifact
+        artifact.reinforce_level = 20
+        artifact.soul_shards = 20
+        services.artifact.ensure_affix_slots(artifact)
+        services.artifact.refine_affix(artifact, 1)
+        assert tuple(entry.affix_id for entry in services.artifact.get_pending_affixes(artifact)) == ("zhuohun",)
+
+        result = services.artifact.refine_all_affixes(artifact)
+
+        assert result.success is True
+        assert tuple(entry.affix_id for entry in services.artifact.get_pending_affixes(artifact)) == ("lueying", "jinhuo")
     services.artifact.rng = ArtifactRoller(["huichun", "ningshen", "zhuohun", "lueying"], [34, 8, 50, 30, 3, 4, 50, 30, 10])
     async with session_factory() as session:
         character = (await services.character.get_or_create_character(session, 5008, "弃词")).character

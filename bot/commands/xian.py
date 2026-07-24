@@ -57,6 +57,25 @@ class XianCommands(commands.Cog):
             import logging
             logging.getLogger(__name__).exception("NPC 每日刷新失败")
 
+    async def _send_response(
+        self,
+        interaction: discord.Interaction,
+        *,
+        embed: discord.Embed,
+        view: discord.ui.View | None = None,
+        ephemeral: bool = False,
+        delete_after: float | None = None,
+    ) -> None:
+        kwargs = {"embed": embed, "ephemeral": ephemeral}
+        if view is not None:
+            kwargs["view"] = view
+        if delete_after is not None:
+            kwargs["delete_after"] = delete_after
+        if interaction.response.is_done():
+            await interaction.followup.send(**kwargs)
+        else:
+            await interaction.response.send_message(**kwargs)
+
     async def _send_with_broadcasts(
         self,
         interaction: discord.Interaction,
@@ -66,18 +85,19 @@ class XianCommands(commands.Cog):
         delete_after: float | None = None,
     ) -> None:
         embed, view, broadcasts = payload
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=ephemeral, delete_after=delete_after)
+        await self._send_response(interaction, embed=embed, view=view, ephemeral=ephemeral, delete_after=delete_after)
         for content in broadcasts:
             await self.bot.broadcast_service.broadcast(self.bot, content)
 
     async def _send_action_with_broadcasts(self, interaction: discord.Interaction, payload) -> None:
         embed, view, broadcasts, success = payload
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=not success)
+        await self._send_response(interaction, embed=embed, view=view, ephemeral=not success)
         for content in broadcasts:
             await self.bot.broadcast_service.broadcast(self.bot, content)
 
     @app_commands.command(name="修仙", description="打开你的修仙主面板。")
     async def panel(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
         await self._ensure_npc_pool()
         await self._send_with_broadcasts(
             interaction,
@@ -97,7 +117,7 @@ class XianCommands(commands.Cog):
     @app_commands.command(name="证道", description="踏入证道战场，以裸身面板闯关构筑（渡劫圆满及以上可用）。")
     async def proving_ground(self, interaction: discord.Interaction) -> None:
         embed, view = await build_pg_entry_message(self.bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await self._send_response(interaction, embed=embed, view=view, ephemeral=True)
 
     @app_commands.command(name="突破", description="尝试突破当前境界。")
     async def breakthrough(self, interaction: discord.Interaction) -> None:
@@ -123,6 +143,7 @@ class XianCommands(commands.Cog):
         interaction: discord.Interaction,
         category: app_commands.Choice[str] | None = None,
     ) -> None:
+        await interaction.response.defer(ephemeral=True)
         await self._ensure_npc_pool()
         await self._send_with_broadcasts(
             interaction,
@@ -149,7 +170,7 @@ class XianCommands(commands.Cog):
         embed, view, broadcasts, success, public_embed = await build_open_arena_message(
             self.bot, interaction.user.id, interaction.user.display_name, soul,
         )
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await self._send_response(interaction, embed=embed, view=view, ephemeral=True)
         for content in broadcasts:
             await self.bot.broadcast_service.broadcast(self.bot, content)
         if public_embed is not None:
@@ -160,7 +181,7 @@ class XianCommands(commands.Cog):
         embed, view, broadcasts, success, battle_data = await build_arena_challenge_message(
             self.bot, interaction.user.id, interaction.user.display_name,
         )
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await self._send_response(interaction, embed=embed, view=view, ephemeral=True)
         for content in broadcasts:
             await self.bot.broadcast_service.broadcast(self.bot, content)
         if battle_data is not None and interaction.channel is not None:
@@ -176,7 +197,7 @@ class XianCommands(commands.Cog):
         embed, view, broadcasts, success, public_embed = await build_arena_claim_message(
             self.bot, interaction.user.id, interaction.user.display_name,
         )
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await self._send_response(interaction, embed=embed, view=view, ephemeral=True)
         for content in broadcasts:
             await self.bot.broadcast_service.broadcast(self.bot, content)
         if public_embed is not None:
@@ -185,6 +206,7 @@ class XianCommands(commands.Cog):
     @app_commands.command(name="面板", description="查看其他修士的公开面板。")
     @app_commands.describe(user="要查看的道友")
     async def inspect_panel(self, interaction: discord.Interaction, user: discord.Member) -> None:
+        await interaction.response.defer()
         await self._ensure_npc_pool()
         await self._send_with_broadcasts(
             interaction,

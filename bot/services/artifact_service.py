@@ -73,6 +73,17 @@ class RefineAffixResult:
 
 
 @dataclass(slots=True)
+class RefineAllAffixesResult:
+    success: bool
+    message: str
+    slots: tuple[int, ...]
+    soul_cost: int
+    soul_before: int
+    soul_after: int
+    pending_entries: tuple[ArtifactAffixEntry, ...] = ()
+
+
+@dataclass(slots=True)
 class SavePendingAffixesResult:
     success: bool
     message: str
@@ -199,6 +210,32 @@ class ArtifactService:
             soul_before,
             artifact.soul_shards,
             pending_entry,
+        )
+
+    def refine_all_affixes(self, artifact: Artifact, rng: random.Random | None = None) -> RefineAllAffixesResult:
+        self.ensure_affix_slots(artifact)
+        unlocked_slots = self.unlocked_slots(artifact)
+        if unlocked_slots <= 0:
+            return RefineAllAffixesResult(False, "当前尚无已解锁词条槽位。", (), 0, artifact.soul_shards, artifact.soul_shards)
+
+        soul_before = artifact.soul_shards
+        slots = tuple(range(1, unlocked_slots + 1))
+        soul_cost = self.refine_cost() * len(slots)
+        if soul_before < soul_cost:
+            return RefineAllAffixesResult(False, f"器魂不足，洗炼全部需要 {soul_cost} 器魂。", slots, soul_cost, soul_before, soul_before)
+
+        artifact.soul_shards -= soul_cost
+        roller = rng or self.rng
+        pending_entries = tuple(self._roll_affix(slot, roller) for slot in slots)
+        self._store_entries(artifact, "affix_pending_json", pending_entries)
+        return RefineAllAffixesResult(
+            True,
+            f"已为 {len(slots)} 个已解锁槽位洗出新的待选词条。",
+            slots,
+            soul_cost,
+            soul_before,
+            artifact.soul_shards,
+            pending_entries,
         )
 
     def save_pending_affixes(self, artifact: Artifact) -> SavePendingAffixesResult:

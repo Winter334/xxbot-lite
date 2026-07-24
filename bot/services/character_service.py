@@ -183,7 +183,7 @@ class CharacterService:
             self._ensure_character_compatibility(character)
         return character
 
-    async def get_character_by_rank(self, session: AsyncSession, rank: int) -> Character | None:
+    async def get_character_by_rank(self, session: AsyncSession, rank: int, *, include_npc: bool = False) -> Character | None:
         statement = (
             select(Character)
             .where(Character.current_ladder_rank == rank)
@@ -194,6 +194,8 @@ class CharacterService:
                 selectinload(Character.ladder_record),
             )
         )
+        if not include_npc:
+            statement = statement.where(Character.is_npc.is_(False))
         character = await session.scalar(statement)
         if character is not None:
             self._ensure_character_compatibility(character)
@@ -239,8 +241,14 @@ class CharacterService:
             return CreationResult(existing, False, False, None)
 
         now = now_shanghai()
-        existing_count = await session.scalar(select(func.count(Character.id)))
-        initial_rank = int(existing_count or 0) + 1
+        initial_rank = int(
+            (
+                await session.scalar(
+                    select(func.max(Character.current_ladder_rank)).where(Character.is_npc.is_(False))
+                )
+            )
+            or 0
+        ) + 1
         fate = self.fate_service.roll_fate()
 
         player = Player(discord_user_id=str(discord_user_id), display_name=display_name)

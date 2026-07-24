@@ -558,6 +558,8 @@ def _format_pvp_log_line(action) -> str:
 
 # Discord embed field value 硬上限 1024 字符；这里留出余量避免临界丢字。
 _BATTLE_FIELD_SOFT_LIMIT = 980
+# Discord 单个 embed 总字符硬上限 6000；战报分页时每页给战报字段留出独立预算。
+_BATTLE_REPORT_PAGE_SOFT_LIMIT = 3600
 
 
 def _split_round_block(header: str, lines: list[str]) -> list[str]:
@@ -620,8 +622,29 @@ def _battle_round_blocks(battle) -> list[str]:
     return blocks
 
 
-def _append_pvp_report_fields(embed: discord.Embed, battle) -> None:
-    blocks = _battle_round_blocks(battle)
+def build_battle_report_pages(battle) -> list[list[str]]:
+    pages: list[list[str]] = []
+    current: list[str] = []
+    current_length = 0
+    for block in _battle_round_blocks(battle):
+        block_length = min(len(block), 1024)
+        extra = block_length + (2 if current else 0)
+        if current and current_length + extra > _BATTLE_REPORT_PAGE_SOFT_LIMIT:
+            pages.append(current)
+            current = [block]
+            current_length = block_length
+        else:
+            current.append(block)
+            current_length += extra
+    if current:
+        pages.append(current)
+    return pages or [["此战过于短促，未留战痕。"]]
+
+
+def _append_pvp_report_fields(embed: discord.Embed, battle, *, report_page: int = 0) -> None:
+    pages = build_battle_report_pages(battle)
+    page_index = max(0, min(report_page, len(pages) - 1))
+    blocks = pages[page_index]
     current: list[str] = []
     current_length = 0
     field_index = 1
@@ -630,7 +653,8 @@ def _append_pvp_report_fields(embed: discord.Embed, battle) -> None:
         nonlocal current, current_length, field_index
         if not current:
             return
-        name = "完整战报" if field_index == 1 else f"完整战报 {field_index}"
+        suffix = f" {field_index}" if field_index > 1 else ""
+        name = f"完整战报 {page_index + 1}/{len(pages)}{suffix}"
         embed.add_field(name=name, value="\n\n".join(current), inline=False)
         field_index += 1
         current = []
@@ -708,6 +732,7 @@ def build_pvp_battle_embed(
     battle,
     summary_lines: list[str],
     footer_text: str | None = None,
+    report_page: int = 0,
 ) -> discord.Embed:
     color = discord.Color.green() if battle and battle.challenger_won else discord.Color.orange()
     embed = discord.Embed(title=title, description=description, color=color)
@@ -725,16 +750,18 @@ def build_pvp_battle_embed(
         value=_build_pvp_participant_text(defender, current_hp=battle.defender_hp_after, max_hp=battle.defender_max_hp),
         inline=True,
     )
+    report_pages = build_battle_report_pages(battle)
     overview_lines = [
         f"先手：`{_first_striker_name(battle)}`",
         f"回合：`{battle.rounds}`",
         f"胜者：**{battle.winner_name}**",
         f"{challenger.player_name} 终局血量：`{format_big_number(battle.challenger_hp_after)}`",
         f"{defender.player_name} 终局血量：`{format_big_number(battle.defender_hp_after)}`",
+        f"战报页：`{max(0, min(report_page, len(report_pages) - 1)) + 1}/{len(report_pages)}`",
     ]
     overview_lines.extend(summary_lines)
     embed.add_field(name="战斗总览", value="\n".join(overview_lines), inline=False)
-    _append_pvp_report_fields(embed, battle)
+    _append_pvp_report_fields(embed, battle, report_page=report_page)
     if footer_text:
         embed.set_footer(text=footer_text)
     return embed
@@ -912,7 +939,7 @@ def build_ladder_round_embed(
     return embed
 
 
-def build_ladder_battle_embed(challenger: CharacterSnapshot, defender: CharacterSnapshot, result: LadderChallengeResult) -> discord.Embed:
+def build_ladder_battle_embed(challenger: CharacterSnapshot, defender: CharacterSnapshot, result: LadderChallengeResult, *, report_page: int = 0) -> discord.Embed:
     return build_pvp_battle_embed(
         challenger,
         defender,
@@ -925,6 +952,7 @@ def build_ladder_battle_embed(challenger: CharacterSnapshot, defender: Character
             f"剩余挑战：`{result.remaining_attempts}` 次",
         ],
         footer_text=f"今日剩余论道次数：{result.remaining_attempts}",
+        report_page=report_page,
     )
 
 
