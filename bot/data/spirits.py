@@ -4,7 +4,8 @@ from dataclasses import dataclass
 import random
 from typing import Callable, Mapping
 
-RollMap = Mapping[str, int]
+RollValue = int | float
+RollMap = Mapping[str, RollValue]
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,18 +54,23 @@ class SpiritTierDefinition:
 class SpiritPowerDefinition:
     power_id: str
     name: str
-    roll_ranges_by_tier: dict[str, tuple[tuple[str, int, int], ...]]
+    roll_ranges_by_tier: dict[str, tuple[tuple[str, RollValue, RollValue], ...]]
     description_builder: Callable[[RollMap], str]
 
     def roll(self, tier_key: str, rng: random.Random) -> SpiritPowerEntry:
         ranges = self.roll_ranges_by_tier[tier_key]
-        rolls = {key: rng.randint(low, high) for key, low, high in ranges}
+        rolls: dict[str, RollValue] = {}
+        for key, low, high in ranges:
+            if isinstance(low, float) or isinstance(high, float):
+                rolls[key] = round(rng.uniform(float(low), float(high)), 1)
+            else:
+                rolls[key] = rng.randint(low, high)
         return SpiritPowerEntry(self.power_id, rolls)
 
     def describe(self, rolls: RollMap) -> str:
         return self.description_builder(self.normalize_rolls(rolls))
 
-    def normalize_rolls(self, rolls: RollMap) -> dict[str, int]:
+    def normalize_rolls(self, rolls: RollMap) -> dict[str, RollValue]:
         normalized = dict(rolls)
         for ranges in self.roll_ranges_by_tier.values():
             for key, low, _high in ranges:
@@ -100,12 +106,12 @@ SPIRIT_TIER_ORDER = ("low", "mid", "high", "peak", "supreme")
 
 def _tier_rolls(
     *,
-    low: tuple[tuple[str, int, int], ...],
-    mid: tuple[tuple[str, int, int], ...],
-    high: tuple[tuple[str, int, int], ...],
-    peak: tuple[tuple[str, int, int], ...],
-    supreme: tuple[tuple[str, int, int], ...],
-) -> dict[str, tuple[tuple[str, int, int], ...]]:
+    low: tuple[tuple[str, RollValue, RollValue], ...],
+    mid: tuple[tuple[str, RollValue, RollValue], ...],
+    high: tuple[tuple[str, RollValue, RollValue], ...],
+    peak: tuple[tuple[str, RollValue, RollValue], ...],
+    supreme: tuple[tuple[str, RollValue, RollValue], ...],
+) -> dict[str, tuple[tuple[str, RollValue, RollValue], ...]]:
     return {
         "low": low,
         "mid": mid,
@@ -119,7 +125,7 @@ def _define_power(
     power_id: str,
     name: str,
     *,
-    roll_ranges_by_tier: dict[str, tuple[tuple[str, int, int], ...]],
+    roll_ranges_by_tier: dict[str, tuple[tuple[str, RollValue, RollValue], ...]],
     description_builder: Callable[[RollMap], str],
 ) -> SpiritPowerDefinition:
     return SpiritPowerDefinition(power_id, name, roll_ranges_by_tier, description_builder)
@@ -142,13 +148,16 @@ SPIRIT_POWER_DEFINITIONS = (
         "jueming",
         "绝命",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("max_stacks", 12, 12), ("damage_pct", 30, 40)),
-            mid=(("max_stacks", 10, 10), ("damage_pct", 35, 50)),
-            high=(("max_stacks", 8, 8), ("damage_pct", 45, 60)),
-            peak=(("max_stacks", 7, 7), ("damage_pct", 50, 68)),
-            supreme=(("max_stacks", 6, 6), ("damage_pct", 55, 75)),
+            low=(("omen_cost", 8, 8), ("execute_pct", 18, 18), ("heal_down_pct", 35, 35)),
+            mid=(("omen_cost", 7, 7), ("execute_pct", 22, 22), ("heal_down_pct", 40, 40)),
+            high=(("omen_cost", 6, 6), ("execute_pct", 26, 26), ("heal_down_pct", 45, 45)),
+            peak=(("omen_cost", 5, 5), ("execute_pct", 30, 30), ("heal_down_pct", 50, 50)),
+            supreme=(("omen_cost", 4, 4), ("execute_pct", 35, 35), ("heal_down_pct", 55, 55)),
         ),
-        description_builder=lambda rolls: f"回合结束时，若敌方绝命印记≥{rolls['max_stacks']}层，消耗{rolls['max_stacks']}层印记造成{rolls['damage_pct']}%最大生命伤害；若≥{rolls['max_stacks']*2}层则直接斩杀。每层印记使承伤+2%。",
+        description_builder=lambda rolls: (
+            f"回合结束时，若目标咒印≥{rolls['omen_cost']}层，消耗{rolls['omen_cost']}层咒印凝成 1 层死兆；"
+            f"每层死兆使目标受疗降低 {rolls['heal_down_pct']}%，并提高 {rolls['execute_pct']}% 斩杀线；死兆 3 层时直接斩杀。"
+        ),
     ),
     _define_power(
         "xuanjia",
@@ -207,13 +216,17 @@ SPIRIT_POWER_DEFINITIONS = (
         "jinmai",
         "禁脉",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("proc_pct", 12, 15),),
-            mid=(("proc_pct", 15, 19),),
-            high=(("proc_pct", 18, 24),),
-            peak=(("proc_pct", 23, 29),),
-            supreme=(("proc_pct", 28, 36),),
+            low=(("proc_pct", 25, 35), ("per_disrupt_pct", 6, 6), ("seal_stacks", 1, 1), ("break_pobu_stacks", 1, 1), ("break_wound_stacks", 0, 0), ("break_strip_stacks", 0, 0)),
+            mid=(("proc_pct", 35, 45), ("per_disrupt_pct", 7, 7), ("seal_stacks", 1, 1), ("break_pobu_stacks", 1, 1), ("break_wound_stacks", 1, 1), ("break_strip_stacks", 0, 0)),
+            high=(("proc_pct", 45, 55), ("per_disrupt_pct", 8, 8), ("seal_stacks", 1, 2), ("break_pobu_stacks", 2, 2), ("break_wound_stacks", 1, 1), ("break_strip_stacks", 0, 0)),
+            peak=(("proc_pct", 55, 70), ("per_disrupt_pct", 9, 9), ("seal_stacks", 2, 2), ("break_pobu_stacks", 2, 2), ("break_wound_stacks", 2, 2), ("break_strip_stacks", 1, 1)),
+            supreme=(("proc_pct", 70, 85), ("per_disrupt_pct", 10, 10), ("seal_stacks", 2, 3), ("break_pobu_stacks", 3, 3), ("break_wound_stacks", 2, 2), ("break_strip_stacks", 1, 2)),
         ),
-        description_builder=lambda rolls: f"命中后有 {rolls['proc_pct']}% 概率封脉，使目标下次行动失效；目标破步或创伤时概率提高。",
+        description_builder=lambda rolls: (
+            f"命中时扰乱经络：先铺破步/创伤，再以 {rolls['proc_pct']}% 基础概率封禁行动；"
+            f"目标每层破步/创伤使概率 +{rolls['per_disrupt_pct']}%。成功附加 {rolls['seal_stacks']} 层封禁行动；"
+            f"封禁触发时断脉，追加破步 {rolls['break_pobu_stacks']} 层、创伤 {rolls['break_wound_stacks']} 层。"
+        ),
     ),
     _define_power(
         "xuekuang",
@@ -386,13 +399,17 @@ SPIRIT_POWER_DEFINITIONS = (
         "zhuifeng",
         "追风",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("damage_pct", 80, 110), ("crit_bonus", 25, 25)),
-            mid=(("damage_pct", 110, 145), ("crit_bonus", 35, 35)),
-            high=(("damage_pct", 145, 185), ("crit_bonus", 50, 50)),
-            peak=(("damage_pct", 185, 230), ("crit_bonus", 65, 65)),
-            supreme=(("damage_pct", 230, 280), ("crit_bonus", 100, 100)),
+            low=(("r1_damage_pct", 110, 150), ("r23_damage_pct", 65, 85), ("r1_crit_bonus", 25, 25), ("r23_crit_bonus", 12, 12), ("r1_agility_pct", 15, 15), ("r23_agility_pct", 10, 10), ("shield_damage_pct", 40, 40), ("r1_pierce_pct", 15, 15), ("r23_pierce_pct", 8, 8), ("hit_heal_down_pct", 20, 20), ("crit_heal_down_pct", 30, 30), ("chase_damage_pct", 6, 6)),
+            mid=(("r1_damage_pct", 150, 200), ("r23_damage_pct", 85, 115), ("r1_crit_bonus", 35, 35), ("r23_crit_bonus", 17, 17), ("r1_agility_pct", 20, 20), ("r23_agility_pct", 12, 12), ("shield_damage_pct", 60, 60), ("r1_pierce_pct", 20, 20), ("r23_pierce_pct", 10, 10), ("hit_heal_down_pct", 28, 28), ("crit_heal_down_pct", 40, 40), ("chase_damage_pct", 8, 8)),
+            high=(("r1_damage_pct", 200, 270), ("r23_damage_pct", 115, 155), ("r1_crit_bonus", 50, 50), ("r23_crit_bonus", 25, 25), ("r1_agility_pct", 28, 28), ("r23_agility_pct", 18, 18), ("shield_damage_pct", 80, 80), ("r1_pierce_pct", 28, 28), ("r23_pierce_pct", 14, 14), ("hit_heal_down_pct", 36, 36), ("crit_heal_down_pct", 50, 50), ("chase_damage_pct", 10, 10)),
+            peak=(("r1_damage_pct", 270, 360), ("r23_damage_pct", 155, 210), ("r1_crit_bonus", 65, 65), ("r23_crit_bonus", 32, 32), ("r1_agility_pct", 36, 36), ("r23_agility_pct", 24, 24), ("shield_damage_pct", 110, 110), ("r1_pierce_pct", 36, 36), ("r23_pierce_pct", 18, 18), ("hit_heal_down_pct", 45, 45), ("crit_heal_down_pct", 60, 60), ("chase_damage_pct", 13, 13)),
+            supreme=(("r1_damage_pct", 360, 480), ("r23_damage_pct", 210, 280), ("r1_crit_bonus", 100, 100), ("r23_crit_bonus", 50, 50), ("r1_agility_pct", 50, 50), ("r23_agility_pct", 32, 32), ("shield_damage_pct", 150, 150), ("r1_pierce_pct", 50, 50), ("r23_pierce_pct", 25, 25), ("hit_heal_down_pct", 55, 55), ("crit_heal_down_pct", 75, 75), ("chase_damage_pct", 16, 16)),
         ),
-        description_builder=lambda rolls: f"先手时首回合造成伤害提高 {rolls['damage_pct']}%，暴击率额外 +{rolls['crit_bonus']}%（绝品为必定暴击）。第 2 回合起效果减半，第 4 回合起消失。",
+        description_builder=lambda rolls: (
+            f"先手开局进入 3 回合疾猎：首击必中，首回合伤害 +{rolls['r1_damage_pct']}%、暴击率 +{rolls['r1_crit_bonus']}%、身法 +{rolls['r1_agility_pct']}%；"
+            f"第 2-3 回合保留伤害 +{rolls['r23_damage_pct']}%、暴击率 +{rolls['r23_crit_bonus']}%。"
+            f"疾猎期间破盾、穿透并施加断息；暴击获得追猎，对低血目标每层增伤 {rolls['chase_damage_pct']}%。"
+        ),
     ),
     # ── 新增神通 ──────────────────────────────────────────────
     _define_power(
@@ -401,39 +418,74 @@ SPIRIT_POWER_DEFINITIONS = (
         roll_ranges_by_tier=_tier_rolls(
             low=(
                 ("crit_damage_base_pct", 18, 24),
-                ("thunder_pct", 38, 52),
-                ("mark_damage_pct", 6, 9),
-                ("judgment_pct", 7, 9),
+                ("charge_crit_pct", 8, 8),
+                ("mark_crit_pct", 6, 6),
+                ("mark_crit_damage_pct", 8, 8),
+                ("thunder_pct", 80, 120),
+                ("mark_damage_pct", 10, 14),
+                ("judgment_pct", 18, 24),
+                ("wound_stacks", 1, 1),
+                ("strip_stacks", 1, 1),
+                ("crit_mark_stacks", 1, 1),
+                ("retain_mark_after_judgment", 0, 0),
             ),
             mid=(
                 ("crit_damage_base_pct", 24, 32),
-                ("thunder_pct", 52, 70),
-                ("mark_damage_pct", 8, 12),
-                ("judgment_pct", 9, 11),
+                ("charge_crit_pct", 10, 10),
+                ("mark_crit_pct", 8, 8),
+                ("mark_crit_damage_pct", 10, 10),
+                ("thunder_pct", 120, 170),
+                ("mark_damage_pct", 14, 18),
+                ("judgment_pct", 24, 30),
+                ("wound_stacks", 1, 1),
+                ("strip_stacks", 1, 1),
+                ("crit_mark_stacks", 1, 1),
+                ("retain_mark_after_judgment", 0, 0),
             ),
             high=(
                 ("crit_damage_base_pct", 32, 42),
-                ("thunder_pct", 70, 92),
-                ("mark_damage_pct", 11, 15),
-                ("judgment_pct", 11, 13),
+                ("charge_crit_pct", 12, 12),
+                ("mark_crit_pct", 10, 10),
+                ("mark_crit_damage_pct", 12, 12),
+                ("thunder_pct", 170, 240),
+                ("mark_damage_pct", 18, 24),
+                ("judgment_pct", 30, 38),
+                ("wound_stacks", 2, 2),
+                ("strip_stacks", 1, 2),
+                ("crit_mark_stacks", 1, 1),
+                ("retain_mark_after_judgment", 0, 0),
             ),
             peak=(
                 ("crit_damage_base_pct", 42, 54),
-                ("thunder_pct", 92, 118),
-                ("mark_damage_pct", 14, 18),
-                ("judgment_pct", 13, 15),
+                ("charge_crit_pct", 15, 15),
+                ("mark_crit_pct", 12, 12),
+                ("mark_crit_damage_pct", 15, 15),
+                ("thunder_pct", 240, 330),
+                ("mark_damage_pct", 24, 32),
+                ("judgment_pct", 38, 48),
+                ("wound_stacks", 3, 3),
+                ("strip_stacks", 2, 2),
+                ("crit_mark_stacks", 2, 2),
+                ("retain_mark_after_judgment", 1, 1),
             ),
             supreme=(
                 ("crit_damage_base_pct", 54, 68),
-                ("thunder_pct", 118, 148),
-                ("mark_damage_pct", 17, 22),
-                ("judgment_pct", 15, 18),
+                ("charge_crit_pct", 20, 20),
+                ("mark_crit_pct", 15, 15),
+                ("mark_crit_damage_pct", 20, 20),
+                ("thunder_pct", 330, 450),
+                ("mark_damage_pct", 32, 42),
+                ("judgment_pct", 50, 65),
+                ("wound_stacks", 4, 4),
+                ("strip_stacks", 2, 3),
+                ("crit_mark_stacks", 2, 2),
+                ("retain_mark_after_judgment", 1, 1),
             ),
         ),
         description_builder=lambda rolls: (
-            f"常驻 +{rolls['crit_damage_base_pct']}% 暴击伤害。暴击时追加 {rolls['thunder_pct']}% 雷罚伤害并给目标烙下 1 层雷殛（上限 3 层）；"
-            f"雷殛存在时每次受击额外承受 {rolls['mark_damage_pct']}% 普攻伤害的雷殛真伤（吃韧性）。"
-            f"雷殛叠满 3 层立即引爆，造成最大生命 {rolls['judgment_pct']}% 的雷劫真伤（豁免韧性）并清除全部雷殛。"
+            f"常驻 +{rolls['crit_damage_base_pct']}% 暴击伤害。未暴击命中时蓄 1 层引雷（每层 +{rolls['charge_crit_pct']}% 暴击率）；"
+            f"目标每层雷殛使暴击率 +{rolls['mark_crit_pct']}%、暴伤 +{rolls['mark_crit_damage_pct']}%。"
+            f"暴击追加 {rolls['thunder_pct']}% 杀伐雷伤并烙 {rolls['crit_mark_stacks']} 层雷殛；3 层雷殛引动天劫，造成最大生命 {rolls['judgment_pct']}% 真伤，附加创伤并打散正面。"
         ),
     ),
     _define_power(
@@ -464,6 +516,22 @@ SPIRIT_POWER_DEFINITIONS = (
         description_builder=lambda rolls: (
             f"闪避后叠加 1 层风遁（上限 8）；每层提高伤害 {rolls['per_wind_pct']}% 并提升身法 {rolls['agi_boost_pct']}%；"
             f"受击命中时仅消散 1 层；满 5 层时下次攻击必定暴击且伤害额外 +50%。"
+        ),
+    ),
+    _define_power(
+        "wanzhou",
+        "万咒",
+        roll_ranges_by_tier=_tier_rolls(
+            low=(("curse_on_hit", 1, 1), ("extra_curse_pct", 0, 0), ("burst_threshold", 3, 3), ("debuff_rolls_per_curse", 2, 2), ("seal_weight", 10, 10)),
+            mid=(("curse_on_hit", 1, 1), ("extra_curse_pct", 50, 50), ("burst_threshold", 3, 3), ("debuff_rolls_per_curse", 3, 3), ("seal_weight", 10, 10)),
+            high=(("curse_on_hit", 2, 2), ("extra_curse_pct", 0, 0), ("burst_threshold", 4, 4), ("debuff_rolls_per_curse", 4, 4), ("seal_weight", 10, 10)),
+            peak=(("curse_on_hit", 2, 2), ("extra_curse_pct", 50, 50), ("burst_threshold", 4, 4), ("debuff_rolls_per_curse", 5, 5), ("seal_weight", 12, 12)),
+            supreme=(("curse_on_hit", 3, 3), ("extra_curse_pct", 0, 0), ("burst_threshold", 5, 5), ("debuff_rolls_per_curse", 6, 6), ("seal_weight", 12, 12)),
+        ),
+        description_builder=lambda rolls: (
+            f"命中附加 {rolls['curse_on_hit']} 层咒印，{rolls['extra_curse_pct']}% 概率额外 +1 层；"
+            f"目标咒印 ≥ {rolls['burst_threshold']} 层时消耗全部咒印，每层咒印进行 {rolls['debuff_rolls_per_curse']} 次万咒判定，"
+            f"随机附加灼烧、蔓咒、破步、创伤、咒缚或封禁行动。"
         ),
     ),
 )

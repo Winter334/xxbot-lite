@@ -688,7 +688,7 @@ class ProvingGroundService:
         ranges = defn.roll_ranges_by_tier.get(tier, ())
         # 满 roll 检测
         maxed = all(
-            build.spirit_power.rolls.get(key, 0) >= high
+            build.spirit_power.rolls.get(key, 0) <= high if build.spirit_power.power_id == "jueming" and key == "omen_cost" else build.spirit_power.rolls.get(key, 0) >= high
             for key, _low, high in ranges
         )
         if maxed:
@@ -696,10 +696,14 @@ class ProvingGroundService:
         # 循环 reroll 直到至少一个 key 有提升
         while True:
             new_entry = defn.roll(tier, self.rng)
-            merged = {
-                key: max(build.spirit_power.rolls.get(key, 0), new_entry.rolls.get(key, 0))
-                for key in set(build.spirit_power.rolls) | set(new_entry.rolls)
-            }
+            merged = {}
+            for key in set(build.spirit_power.rolls) | set(new_entry.rolls):
+                old_value = build.spirit_power.rolls.get(key, 0)
+                new_value = new_entry.rolls.get(key, 0)
+                if build.spirit_power.power_id == "jueming" and key == "omen_cost":
+                    merged[key] = min(old_value or new_value, new_value or old_value)
+                else:
+                    merged[key] = max(old_value, new_value)
             if merged != dict(build.spirit_power.rolls):
                 break
         build.spirit_power = SpiritPowerEntry(
@@ -729,7 +733,9 @@ class ProvingGroundService:
             new_ranges = defn.roll_ranges_by_tier.get(new_tier, ())
             adjusted = dict(build.spirit_power.rolls)
             for key, low, _high in new_ranges:
-                if adjusted.get(key, 0) < low:
+                if build.spirit_power.power_id == "jueming" and key == "omen_cost":
+                    adjusted[key] = low
+                elif adjusted.get(key, 0) < low:
                     adjusted[key] = low
             build.spirit_power = SpiritPowerEntry(
                 power_id=build.spirit_power.power_id, rolls=adjusted,

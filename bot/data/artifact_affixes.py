@@ -92,8 +92,8 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("reduce_down_pct", 3, 10),
         ("max_stacks", 7, 7),
         description_builder=lambda rolls: (
-            f"每回合给敌方附加 1 层「咒缚」（每层降减伤 {rolls['reduce_down_pct']}%，最多 {rolls['max_stacks']} 层）+ 1 层绝命印记；"
-            f"咒缚被净化时每层额外叠加 1 层绝命印记。"
+            f"每回合给敌方附加 1 层「咒缚」（每层降减伤 {rolls['reduce_down_pct']}%，最多 {rolls['max_stacks']} 层）+ 1 层咒印；"
+            f"咒缚满层后仍继续附加咒印；咒缚被净化时每层额外叠加 1 层咒印。"
         ),
     ),
     _define(
@@ -148,8 +148,8 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("atk_down_pct", 4, 12),
         ("max_stacks", 7, 7),
         description_builder=lambda rolls: (
-            f"命中附加 1 层「蔓咒」（每层降杀伐 {rolls['atk_down_pct']}%，最多 {rolls['max_stacks']} 层）+ 1 层绝命印记；"
-            f"目标有蔓咒时回合结束自动叠加 1 层。"
+            f"命中附加 1 层「蔓咒」（每层降杀伐 {rolls['atk_down_pct']}%，最多 {rolls['max_stacks']} 层）+ 1 层咒印；"
+            f"目标有蔓咒时回合结束自动叠加 1 层蔓咒与 1 层咒印。"
         ),
     ),
     _define(
@@ -212,8 +212,8 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("backlash_pct", 35, 60),
         description_builder=lambda rolls: (
             f"生命低于 30% 时获得「裂铠」护盾（{rolls['shield_pct']}% 最大生命）；"
-            f"护盾存在时受击给攻击者附加 1 层绝命印记；"
-            f"护盾破碎时对击碎者造成吸收量 {rolls['backlash_pct']}% 伤害 + 2 层绝命印记。"
+            f"护盾存在时受击给攻击者附加 1 层咒印；"
+            f"护盾破碎时对击碎者造成吸收量 {rolls['backlash_pct']}% 伤害 + 2 层咒印。"
         ),
     ),
     _define(
@@ -361,9 +361,11 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "pokong",
         "破空",
         "on_crit",
-        ("damage_ratio_pct", 55, 80),
+        ("damage_ratio_pct", 90, 150),
+        ("guard_bonus_pct", 80, 140),
         description_builder=lambda rolls: (
-            f"暴击后必定发动一次追击，造成 {rolls['damage_ratio_pct']}% 杀伐伤害（不享受增伤加成）。"
+            f"暴击后必定追击，造成 {rolls['damage_ratio_pct']}% 杀伐伤害；"
+            f"若目标带护盾、守势、减伤或正面效果，追击额外提高 {rolls['guard_bonus_pct']}% 并打散 1 层正面。"
         ),
     ),
     # ── 暴击流 ──
@@ -373,8 +375,11 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "on_crit",
         ("crit_pct", 4, 7),
         ("crit_damage_pct", 8, 13),
+        ("burst_damage_pct", 180, 300),
+        ("wound_stacks", 2, 2),
         description_builder=lambda rolls: (
-            f"暴击后获得 1 层天威，最多 6 层；每层提高 {rolls['crit_pct']}% 暴击率与 {rolls['crit_damage_pct']}% 暴击伤害"
+            f"命中后获得 1 层天威，暴击额外获得 1 层；每层提高 {rolls['crit_pct']}% 暴击率与 {rolls['crit_damage_pct']}% 暴击伤害，最多 6 层。"
+            f"满 6 层后暴击触发天威压顶，追加 {rolls['burst_damage_pct']}% 杀伐伤害并附加 {rolls['wound_stacks']} 层创伤。"
         ),
     ),
     _define(
@@ -382,19 +387,21 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "雷引",
         "on_crit",
         ("next_damage_pct", 18, 28),
-        ("burst_pct", 4, 7),
+        ("burst_pct", 8, 14),
         description_builder=lambda rolls: (
-            f"暴击后蓄势：下一次出手伤害提高 {rolls['next_damage_pct']}%；每累计 3 次暴击触发一次小型雷劫，"
-            f"造成 {rolls['burst_pct']}% 最大生命的真伤（豁免韧性）"
+            f"暴击后蓄雷引，下一次出手伤害提高 {rolls['next_damage_pct']}%；连续暴击额外蓄势。"
+            f"雷引达到 3 层时触发小型雷劫，造成 {rolls['burst_pct']}% 最大生命真伤并附加 1 层雷殛。"
         ),
     ),
     _define(
         "liekong",
         "裂空",
         "before_attack",
-        ("pierce_pct", 15, 25),
+        ("pierce_pct", 20, 35),
+        ("extra_damage_pct", 80, 140),
         description_builder=lambda rolls: (
-            f"对身上有雷殛标记的目标，每层雷殛额外无视 {rolls['pierce_pct']}% 减伤"
+            f"攻击带雷殛目标时，每层雷殛额外无视 {rolls['pierce_pct']}% 减伤；"
+            f"若本次攻击暴击，追加 {rolls['extra_damage_pct']}% 杀伐伤害。"
         ),
     ),
     # ── 净化流 ──
@@ -436,8 +443,8 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("proc_pct", 40, 70),
         ("drain_per_mark_pct", 2, 4),
         description_builder=lambda rolls: (
-            f"命中后有 {rolls['proc_pct']}% 概率吸取目标「绝命印记层数×{rolls['drain_per_mark_pct']}%」最大生命；"
-            f"若目标无绝命印记则附加 1 层。"
+            f"命中后有 {rolls['proc_pct']}% 概率吸取目标「咒印层数×{rolls['drain_per_mark_pct']}%」最大生命；"
+            f"若目标无咒印则附加 1 层。"
         ),
     ),
     _define(

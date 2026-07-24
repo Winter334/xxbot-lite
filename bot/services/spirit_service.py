@@ -126,13 +126,21 @@ _DISHI_MAX = {
 }
 
 
-# 绝命 max_stacks 按品阶固定值（越高品阶越小）
-_JUEMING_MAX_STACKS: dict[str, int] = {
-    "low": 12, "mid": 10, "high": 8, "peak": 7, "supreme": 6,
+# 绝命 omen_cost 按品阶固定值（越高品阶越小）
+_JUEMING_OMEN_COST: dict[str, int] = {
+    "low": 8, "mid": 7, "high": 6, "peak": 5, "supreme": 4,
 }
 
 
-def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int]) -> dict[str, int]:
+def _tier_low_rolls(power_id: str, tier: str) -> dict[str, int | float]:
+    try:
+        definition = get_spirit_power_definition(power_id)
+    except KeyError:
+        return {}
+    return {key: low for key, low, _high in definition.roll_ranges_by_tier.get(tier, ())}
+
+
+def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int | float]) -> dict[str, int | float]:
     """将旧版本超标的 roll 值截断到当前 tier 上限。"""
     clamped = dict(rolls)
     if power_id == "shiyan":
@@ -148,10 +156,11 @@ def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int]) -> dict
             # 涤世 2026-05-27 削弱：废弃 kind_pct 字段，移除残留 roll 值
             clamped.pop("kind_pct", None)
     elif power_id == "jueming":
-        # max_stacks 是「越小越好」的字段，强制覆盖为当前品阶固定值
-        fixed = _JUEMING_MAX_STACKS.get(tier)
+        fixed = _JUEMING_OMEN_COST.get(tier)
         if fixed is not None:
-            clamped["max_stacks"] = fixed
+            clamped["omen_cost"] = fixed
+            clamped.pop("max_stacks", None)
+            clamped.pop("damage_pct", None)
     return clamped
 
 
@@ -563,7 +572,9 @@ class SpiritService:
             return None
         if not isinstance(rolls, dict):
             return None
-        parsed_rolls = {str(key): int(value) for key, value in rolls.items() if isinstance(value, int)}
+        parsed_rolls = {str(key): value for key, value in rolls.items() if isinstance(value, (int, float))}
+        for key, low in _tier_low_rolls(power_id, tier).items():
+            parsed_rolls.setdefault(key, low)
         # 老存档兼容：蚀焰早期版本没有 wound_stacks 字段，按 tier 补齐
         # low=1 / mid=2 / high=3 / peak=4 / supreme=5
         if power_id == "shiyan" and "wound_stacks" not in parsed_rolls:
