@@ -19,6 +19,7 @@ from bot.ui.panel import (
     build_arena_claim_notice_embed,
     build_arena_embed,
     build_arena_open_notice_embed,
+    build_battle_report_pages,
     build_breakthrough_embed,
     build_faction_action_embed,
     build_faction_embed,
@@ -65,6 +66,22 @@ async def _refresh_resources(bot: XianBot, character) -> int:
 async def _send_broadcasts(bot: XianBot, broadcasts: list[str]) -> None:
     for content in broadcasts:
         await bot.broadcast_service.broadcast(bot, content)
+
+
+async def _send_interaction_message(
+    interaction: discord.Interaction,
+    *,
+    embed: discord.Embed,
+    view: discord.ui.View | None = None,
+    ephemeral: bool = False,
+) -> None:
+    kwargs = {"embed": embed, "ephemeral": ephemeral}
+    if view is not None:
+        kwargs["view"] = view
+    if interaction.response.is_done():
+        await interaction.followup.send(**kwargs)
+    else:
+        await interaction.response.send_message(**kwargs)
 
 
 BATTLE_ANIMATION_WINDOW = 4
@@ -438,7 +455,7 @@ async def run_private_tower_sequence(
             await interaction.response.defer()
             await interaction.edit_original_response(embed=embed, view=view)
         else:
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
         return
 
@@ -762,6 +779,37 @@ async def build_refine_affix_message(bot: XianBot, owner_user_id: int, display_n
         message=result.message,
         color=discord.Color.green() if result.success else discord.Color.orange(),
         action_title="本次洗炼",
+        action_lines=action_lines,
+    )
+    return embed, ArtifactRefineView(owner_user_id, panel_state), broadcasts
+
+
+async def build_refine_all_affixes_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.artifact_service.refine_all_affixes(character.artifact)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.artifact_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines: list[str] = [
+        f"槽位：{'、'.join(f'槽{slot}' for slot in result.slots) if result.slots else '无'}",
+        f"器魂：`{result.soul_before} -> {result.soul_after}`",
+        f"总消耗：`{result.soul_cost}`",
+    ]
+    if result.success:
+        action_lines.extend(
+            f"槽{entry.slot}：**{bot.artifact_service.affix_name(entry)}**"
+            for entry in result.pending_entries
+        )
+    embed = build_refine_panel_embed(
+        snapshot,
+        panel_state,
+        title=f"{snapshot.player_name} · 法宝洗炼",
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="本次洗炼全部",
         action_lines=action_lines,
     )
     return embed, ArtifactRefineView(owner_user_id, panel_state), broadcasts
@@ -1353,8 +1401,10 @@ async def run_private_ladder_sequence(
     display_name: str,
     target_rank: int,
 ) -> None:
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True, thinking=True)
     embed, view, broadcasts, public_summary = await build_challenge_message(bot, owner_user_id, display_name, target_rank)
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
     await _send_broadcasts(bot, broadcasts)
     if public_summary is not None:
         await bot.broadcast_service.broadcast_embed(bot, public_summary)
@@ -1444,63 +1494,63 @@ class PanelView(OwnerLockedView):
     async def retreat_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_retreat_message(bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="法宝", style=discord.ButtonStyle.secondary, row=0)
     async def reinforce_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_artifact_message(bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="\u6e38\u5386", style=discord.ButtonStyle.secondary, row=1)
     async def travel_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_travel_message(bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="论道", style=discord.ButtonStyle.secondary, row=1)
     async def ranking_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_leaderboard_message(bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="阵营", style=discord.ButtonStyle.secondary, row=1)
     async def faction_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_faction_message(bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="改命", style=discord.ButtonStyle.primary, row=1)
     async def rewrite_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_fate_rewrite_confirm_message(bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="轮回", style=discord.ButtonStyle.danger, row=1)
     async def reincarnate_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_reincarnation_confirm_message(bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="宗门", style=discord.ButtonStyle.secondary, row=2)
     async def sect_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_sect_message(bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="擂台", style=discord.ButtonStyle.secondary, row=2)
     async def arena_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await build_arena_message(bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
     @discord.ui.button(label="证道", style=discord.ButtonStyle.primary, emoji="🏛️", row=2)
@@ -1508,7 +1558,7 @@ class PanelView(OwnerLockedView):
         from bot.views.proving_ground import build_pg_entry_message
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view = await build_pg_entry_message(bot, interaction.user.id, interaction.user.display_name)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="立尊号", style=discord.ButtonStyle.secondary, emoji="👑", row=2)
     async def custom_title_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
@@ -1678,7 +1728,7 @@ class ReinforceRenameModal(discord.ui.Modal, title="为本命法宝赐名"):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await rename_artifact_message(bot, interaction.user.id, interaction.user.display_name, str(self.artifact_name))
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
 
@@ -1692,7 +1742,7 @@ class SpiritRenameModal(discord.ui.Modal, title="为器灵赐名"):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await rename_spirit_message(bot, interaction.user.id, interaction.user.display_name, str(self.spirit_name))
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
 
@@ -1706,7 +1756,7 @@ class SectCreateModal(discord.ui.Modal, title="立下宗门"):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view, broadcasts = await create_sect_message(bot, interaction.user.id, interaction.user.display_name, str(self.sect_name))
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
         await _send_broadcasts(bot, broadcasts)
 
 
@@ -2068,7 +2118,7 @@ class ArtifactOverviewView(OwnerLockedView):
         async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
             embed, view, broadcasts = await build_reinforce_panel_message(bot, interaction.user.id, interaction.user.display_name)
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
             await _send_broadcasts(bot, broadcasts)
 
         button.callback = callback
@@ -2080,7 +2130,7 @@ class ArtifactOverviewView(OwnerLockedView):
         async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
             embed, view, broadcasts = await build_refine_panel_message(bot, interaction.user.id, interaction.user.display_name)
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
             await _send_broadcasts(bot, broadcasts)
 
         button.callback = callback
@@ -2101,7 +2151,7 @@ class ArtifactOverviewView(OwnerLockedView):
         async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
             embed, view, broadcasts = await build_spirit_panel_message(bot, interaction.user.id, interaction.user.display_name)
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
             await _send_broadcasts(bot, broadcasts)
 
         button.callback = callback
@@ -2130,6 +2180,7 @@ class ArtifactRefineView(OwnerLockedView):
     def __init__(self, owner_user_id: int, panel_state) -> None:
         super().__init__(owner_user_id)
         self._add_save_button(disabled=not panel_state.has_pending)
+        self._add_refine_all_button(disabled=panel_state.unlocked_slots <= 0)
         pending_slots = {slot.slot for slot in panel_state.pending_slots if slot.affix_id}
         for slot_view in panel_state.current_slots:
             self._add_refine_button(
@@ -2149,6 +2200,18 @@ class ArtifactRefineView(OwnerLockedView):
         async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
             embed, view, broadcasts = await build_save_affixes_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_refine_all_button(self, *, disabled: bool) -> None:
+        button = discord.ui.Button(label="洗炼全部", row=0, style=discord.ButtonStyle.primary, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_refine_all_affixes_message(bot, interaction.user.id, interaction.user.display_name)
             await interaction.response.edit_message(embed=embed, view=view)
             await _send_broadcasts(bot, broadcasts)
 
@@ -2400,7 +2463,7 @@ class ArenaBoardView(discord.ui.View):
 
         async def callback(interaction: discord.Interaction) -> None:
             embed, view, broadcasts = await build_arena_message(self.bot, interaction.user.id, interaction.user.display_name)
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
             await _send_broadcasts(self.bot, broadcasts)
 
         button.callback = callback
@@ -2413,7 +2476,7 @@ class ArenaBoardView(discord.ui.View):
             embed, view, broadcasts, success, battle_data = await build_arena_challenge_message(
                 self.bot, interaction.user.id, interaction.user.display_name,
             )
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
             await _send_broadcasts(self.bot, broadcasts)
             if battle_data is not None and interaction.channel is not None:
                 await send_public_battle_animation(
@@ -2433,7 +2496,7 @@ class ArenaBoardView(discord.ui.View):
             embed, view, broadcasts, success, public_embed = await build_arena_claim_message(
                 self.bot, interaction.user.id, interaction.user.display_name,
             )
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
             await _send_broadcasts(self.bot, broadcasts)
             if public_embed is not None:
                 await self.bot.broadcast_service.broadcast_embed(self.bot, public_embed)
@@ -2669,7 +2732,7 @@ class FactionView(OwnerLockedView):
         async def callback(interaction: discord.Interaction, category_name: str = category) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
             embed, view, broadcasts = await build_leaderboard_message(bot, interaction.user.id, interaction.user.display_name, category=category_name)
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
             await _send_broadcasts(bot, broadcasts)
 
         button.callback = callback
@@ -2713,11 +2776,14 @@ class LeaderboardView(OwnerLockedView):
         result=None,
         challenger_snapshot=None,
         defender_snapshot=None,
+        report_page: int = 0,
     ) -> None:
         super().__init__(owner_user_id)
+        self.challenge_targets = challenge_targets
         self.result = result
         self.challenger_snapshot = challenger_snapshot
         self.defender_snapshot = defender_snapshot
+        self.report_page = report_page
         self._add_category_button("ladder", "论道", category == "ladder", row=0)
         self._add_category_button("power", "战力", category == "power", row=0)
         self._add_category_button("realm_power", "同境", category == "realm_power", row=0)
@@ -2731,8 +2797,10 @@ class LeaderboardView(OwnerLockedView):
         self._add_category_button("sect", "宗门", category == "sect", row=2)
         if category == "ladder" and challenge_targets:
             self._add_previous_challenge_button(challenge_targets[-1], row=3)
-            if len(challenge_targets) > 1:
-                self.add_item(LadderChallengeSelect(owner_user_id, targets=challenge_targets, row=4))
+        if category == "ladder" and result is not None and getattr(result, "battle", None) is not None:
+            self._add_report_pagination_controls(row=3)
+        if category == "ladder" and len(challenge_targets) > 1:
+            self.add_item(LadderChallengeSelect(owner_user_id, targets=challenge_targets, row=4))
 
     def _add_category_button(self, category: str, label: str, active: bool, *, row: int) -> None:
         style = discord.ButtonStyle.primary if active else discord.ButtonStyle.secondary
@@ -2744,6 +2812,47 @@ class LeaderboardView(OwnerLockedView):
                 interaction,
                 lambda: build_leaderboard_message(bot, interaction.user.id, interaction.user.display_name, category=category_name),
             )
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_report_pagination_controls(self, *, row: int) -> None:
+        if self.result is None or getattr(self.result, "battle", None) is None:
+            return
+        page_count = len(build_battle_report_pages(self.result.battle))
+        if page_count <= 1:
+            return
+        self._add_report_page_button("战报上一页", self.report_page - 1, disabled=self.report_page <= 0, row=row)
+        self.add_item(
+            discord.ui.Button(
+                label=f"战报 {self.report_page + 1}/{page_count}",
+                row=row,
+                style=discord.ButtonStyle.secondary,
+                disabled=True,
+            )
+        )
+        self._add_report_page_button("战报下一页", self.report_page + 1, disabled=self.report_page >= page_count - 1, row=row)
+
+    def _add_report_page_button(self, label: str, page: int, *, disabled: bool, row: int) -> None:
+        button = discord.ui.Button(label=label, row=row, style=discord.ButtonStyle.secondary, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction, target_page: int = page) -> None:
+            embed = build_ladder_battle_embed(
+                self.challenger_snapshot,
+                self.defender_snapshot,
+                self.result,
+                report_page=target_page,
+            )
+            view = LeaderboardView(
+                self.owner_user_id,
+                "ladder",
+                self.challenge_targets,
+                result=self.result,
+                challenger_snapshot=self.challenger_snapshot,
+                defender_snapshot=self.defender_snapshot,
+                report_page=target_page,
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
 
         button.callback = callback
         self.add_item(button)

@@ -54,7 +54,7 @@ class LadderService:
         if character.current_ladder_rank <= 1:
             return []
         lower_bound = max(1, character.current_ladder_rank - self.challenge_range)
-        # NPC 不参与论道挑战
+        # NPC 不参与论道挑战；按 rank 去重，避免脏数据生成重复 Select option value。
         statement = (
             select(Character.current_ladder_rank)
             .where(
@@ -62,6 +62,7 @@ class LadderService:
                 Character.current_ladder_rank < character.current_ladder_rank,
                 Character.is_npc.is_(False),
             )
+            .distinct()
             .order_by(Character.current_ladder_rank.asc())
         )
         ranks = list((await session.scalars(statement)).all())

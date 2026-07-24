@@ -392,6 +392,44 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                             {"slots": new_slots, "pending": new_pending, "id": artifact_id},
                         )
 
+        # 论道榜兼容修复：NPC 引入后旧库可能出现真人 rank 空洞/重复，压缩为连续唯一名次。
+        characters_exists_result = await connection.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name='characters'")
+        )
+        if characters_exists_result.first():
+            rows = (
+                await connection.execute(
+                    text(
+                        "SELECT id FROM characters "
+                        "WHERE COALESCE(is_npc, 0) = 0 "
+                        "ORDER BY current_ladder_rank ASC, id ASC"
+                    )
+                )
+            ).all()
+            ladder_records_exists_result = await connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='ladder_records'")
+            )
+            has_ladder_records = ladder_records_exists_result.first() is not None
+            for rank, row in enumerate(rows, start=1):
+                character_id = row[0]
+                await connection.execute(
+                    text(
+                        "UPDATE characters "
+                        "SET current_ladder_rank = :rank, "
+                        "best_ladder_rank = CASE "
+                        "WHEN best_ladder_rank IS NULL OR best_ladder_rank < 1 THEN :rank "
+                        "WHEN best_ladder_rank > :rank THEN :rank "
+                        "ELSE best_ladder_rank END "
+                        "WHERE id = :id"
+                    ),
+                    {"rank": rank, "id": character_id},
+                )
+                if has_ladder_records:
+                    await connection.execute(
+                        text("UPDATE ladder_records SET rank = :rank WHERE character_id = :id"),
+                        {"rank": rank, "id": character_id},
+                    )
+
 
 async def init_models(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
