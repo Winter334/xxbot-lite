@@ -201,6 +201,7 @@ class XianCommands(commands.Cog):
                 battle_data["challenger_snapshot"], battle_data["defender_snapshot"],
                 battle_data["battle"],
                 mode="arena", summary_lines=battle_data["summary_lines"],
+                allowed_user_ids=battle_data["allowed_user_ids"],
             )
 
     @app_commands.command(name="收擂", description="当前擂主带走全部擂池并离场。")

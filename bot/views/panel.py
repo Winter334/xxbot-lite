@@ -14,7 +14,6 @@ from bot.ui.artifact import (
 )
 from bot.ui.panel import (
     _battle_excerpt,
-    build_arena_battle_embed,
     build_arena_claim_embed,
     build_arena_claim_notice_embed,
     build_arena_embed,
@@ -28,9 +27,9 @@ from bot.ui.panel import (
     build_ladder_battle_embed,
     build_ladder_round_embed,
     build_panel_embed,
+    build_public_battle_report_embed,
     build_pvp_public_battle_frame,
     build_pvp_summary_embed,
-    build_spar_battle_embed,
     build_spar_request_embed,
     build_reincarnation_confirm_embed,
     build_reincarnation_embed,
@@ -86,6 +85,83 @@ async def _send_interaction_message(
 
 BATTLE_ANIMATION_WINDOW = 4
 BATTLE_ANIMATION_INTERVAL = 1.5
+PUBLIC_BATTLE_REPORT_TIMEOUT = 2 * 60 * 60
+
+
+class PublicBattleReportView(discord.ui.View):
+    def __init__(
+        self,
+        challenger_snapshot,
+        defender_snapshot,
+        battle,
+        *,
+        mode: str,
+        summary_lines: list[str],
+        allowed_user_ids: tuple[int, int],
+        report_page: int = 0,
+        timeout: float = PUBLIC_BATTLE_REPORT_TIMEOUT,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.challenger_snapshot = challenger_snapshot
+        self.defender_snapshot = defender_snapshot
+        self.battle = battle
+        self.mode = mode
+        self.summary_lines = summary_lines
+        self.allowed_user_ids = allowed_user_ids
+        self.report_page = report_page
+        self.page_count = len(build_battle_report_pages(battle))
+        self._add_page_controls()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id in self.allowed_user_ids:
+            return True
+        await interaction.response.send_message("只有对战双方可翻页。", ephemeral=True)
+        return False
+
+    def build_embed(self) -> discord.Embed:
+        return build_public_battle_report_embed(
+            self.challenger_snapshot,
+            self.defender_snapshot,
+            self.battle,
+            mode=self.mode,
+            summary_lines=self.summary_lines,
+            report_page=self.report_page,
+        )
+
+    def _new_page_view(self, page: int) -> "PublicBattleReportView":
+        return PublicBattleReportView(
+            self.challenger_snapshot,
+            self.defender_snapshot,
+            self.battle,
+            mode=self.mode,
+            summary_lines=self.summary_lines,
+            allowed_user_ids=self.allowed_user_ids,
+            report_page=page,
+            timeout=self.timeout or PUBLIC_BATTLE_REPORT_TIMEOUT,
+        )
+
+    def _add_page_controls(self) -> None:
+        self._add_page_button("上一页", self.report_page - 1, disabled=self.report_page <= 0)
+        self.add_item(
+            discord.ui.Button(
+                label=f"战报 {self.report_page + 1}/{self.page_count}",
+                style=discord.ButtonStyle.secondary,
+                disabled=True,
+                row=0,
+            )
+        )
+        self._add_page_button("下一页", self.report_page + 1, disabled=self.report_page >= self.page_count - 1)
+
+    def _add_page_button(self, label: str, page: int, *, disabled: bool) -> None:
+        button = discord.ui.Button(label=label, row=0, style=discord.ButtonStyle.primary, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction, target_page: int = page) -> None:
+            target_page = max(0, min(target_page, self.page_count - 1))
+            view = self._new_page_view(target_page)
+            await interaction.response.edit_message(embed=view.build_embed(), view=view)
+
+        button.callback = callback
+        self.add_item(button)
 
 
 async def send_public_battle_animation(
@@ -97,13 +173,9 @@ async def send_public_battle_animation(
     *,
     mode: str,
     summary_lines: list[str] | None = None,
+    allowed_user_ids: tuple[int, int] | None = None,
 ) -> None:
-    """Send an animated battle report to a public channel.
-
-    Uses a sliding window of ``BATTLE_ANIMATION_WINDOW`` rounds, editing the
-    same message every ``BATTLE_ANIMATION_INTERVAL`` seconds.  The final edit
-    keeps the last window of rounds plus a summary block.
-    """
+    """Send an animated battle report, then leave a full paged public report."""
     total_rounds = battle.rounds
 
     # First frame
@@ -126,18 +198,29 @@ async def send_public_battle_animation(
         )
         await message.edit(embed=embed)
 
-    # Final frame with summary
     if total_rounds > 0:
         await asyncio.sleep(BATTLE_ANIMATION_INTERVAL)
-    window_start = max(1, total_rounds - BATTLE_ANIMATION_WINDOW + 1)
-    final_embed = build_pvp_public_battle_frame(
-        challenger_snapshot, defender_snapshot, battle,
+    if allowed_user_ids is None:
+        window_start = max(1, total_rounds - BATTLE_ANIMATION_WINDOW + 1)
+        final_embed = build_pvp_public_battle_frame(
+            challenger_snapshot, defender_snapshot, battle,
+            mode=mode,
+            visible_rounds=range(window_start, total_rounds + 1),
+            summary_lines=summary_lines,
+            final=True,
+        )
+        await message.edit(embed=final_embed)
+        return
+
+    report_view = PublicBattleReportView(
+        challenger_snapshot,
+        defender_snapshot,
+        battle,
         mode=mode,
-        visible_rounds=range(window_start, total_rounds + 1),
-        summary_lines=summary_lines,
-        final=True,
+        summary_lines=summary_lines or [],
+        allowed_user_ids=allowed_user_ids,
     )
-    await message.edit(embed=final_embed)
+    await message.edit(embed=report_view.build_embed(), view=report_view)
 
 
 async def _sync_snapshot(bot: XianBot, session, character) -> tuple:
@@ -308,6 +391,10 @@ async def build_arena_challenge_message(
                         "challenger_snapshot": challenger_snapshot,
                         "defender_snapshot": defender_snapshot,
                         "battle": result.battle,
+                        "allowed_user_ids": (
+                            int(challenger.player.discord_user_id),
+                            int(defender_before.player.discord_user_id),
+                        ),
                         "summary_lines": [
                             f"模式：`擂台`",
                             f"押注：`{result.stake_soul}`",
@@ -414,6 +501,7 @@ async def build_spar_battle_message(
         "challenger_snapshot": challenger_snapshot,
         "defender_snapshot": defender_snapshot,
         "battle": result.battle,
+        "allowed_user_ids": (challenger_user_id, defender_user_id),
         "summary_lines": [
             "模式：`切磋`",
             "名次：`不变`",
@@ -1403,10 +1491,13 @@ async def run_private_ladder_sequence(
 ) -> None:
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True, thinking=True)
-    embed, view, broadcasts, public_summary = await build_challenge_message(bot, owner_user_id, display_name, target_rank)
+    embed, view, broadcasts, public_summary, public_report = await build_challenge_message(bot, owner_user_id, display_name, target_rank)
     await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
     await _send_broadcasts(bot, broadcasts)
-    if public_summary is not None:
+    if public_report is not None:
+        report_embed, report_view = public_report
+        await bot.broadcast_service.broadcast_embed(bot, report_embed, view=report_view)
+    elif public_summary is not None:
         await bot.broadcast_service.broadcast_embed(bot, public_summary)
 
 
@@ -1425,20 +1516,33 @@ async def build_challenge_message(bot: XianBot, owner_user_id: int, display_name
         await session.commit()
     # Public summary for ladder challenge
     public_summary = None
+    public_report = None
     if result.battle is not None:
+        summary_lines = [
+            f"{challenger_snapshot.player_name}：`#{result.challenger_rank_before}` → `#{result.challenger_rank_after}`",
+            f"{defender_snapshot.player_name}：`#{result.defender_rank_before}` → `#{result.defender_rank_after}`",
+        ]
         public_summary = build_pvp_summary_embed(
             challenger_snapshot, defender_snapshot, result.battle,
             mode="ladder",
-            summary_lines=[
-                f"{challenger_snapshot.player_name}：`#{result.challenger_rank_before}` → `#{result.challenger_rank_after}`",
-                f"{defender_snapshot.player_name}：`#{result.defender_rank_before}` → `#{result.defender_rank_after}`",
-            ],
+            summary_lines=summary_lines,
         )
+        allowed_user_ids = (owner_user_id, int(defender.player.discord_user_id)) if defender is not None else (owner_user_id, owner_user_id)
+        report_view = PublicBattleReportView(
+            challenger_snapshot,
+            defender_snapshot,
+            result.battle,
+            mode="ladder",
+            summary_lines=summary_lines,
+            allowed_user_ids=allowed_user_ids,
+        )
+        public_report = (report_view.build_embed(), report_view)
     return (
         build_ladder_battle_embed(challenger_snapshot, defender_snapshot, result),
         LeaderboardView(owner_user_id, "ladder", targets, result=result, challenger_snapshot=challenger_snapshot, defender_snapshot=defender_snapshot),
         broadcasts,
         public_summary,
+        public_report,
     )
 
 
@@ -2484,6 +2588,7 @@ class ArenaBoardView(discord.ui.View):
                     battle_data["challenger_snapshot"], battle_data["defender_snapshot"],
                     battle_data["battle"],
                     mode="arena", summary_lines=battle_data["summary_lines"],
+                    allowed_user_ids=battle_data["allowed_user_ids"],
                 )
 
         button.callback = callback
@@ -2579,6 +2684,7 @@ class SparInviteView(discord.ui.View):
                     battle_data["challenger_snapshot"], battle_data["defender_snapshot"],
                     battle_data["battle"],
                     mode="spar", summary_lines=battle_data["summary_lines"],
+                    allowed_user_ids=battle_data["allowed_user_ids"],
                 )
 
         button.callback = callback
