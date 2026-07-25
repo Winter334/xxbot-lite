@@ -767,6 +767,33 @@ def build_pvp_battle_embed(
     return embed
 
 
+def build_public_battle_report_embed(
+    challenger: CharacterSnapshot,
+    defender: CharacterSnapshot,
+    battle,
+    *,
+    mode: str,
+    summary_lines: list[str] | None = None,
+    report_page: int = 0,
+) -> discord.Embed:
+    mode_titles = {
+        "ladder": "论道 · 完整战报",
+        "arena": "擂台 · 完整战报",
+        "spar": "切磋 · 完整战报",
+    }
+    title = mode_titles.get(mode, "对决 · 完整战报")
+    return build_pvp_battle_embed(
+        challenger,
+        defender,
+        title=title,
+        description=f"**{challenger.player_name}** ⚔ **{defender.player_name}**",
+        battle=battle,
+        summary_lines=summary_lines or [],
+        footer_text="仅对战双方可翻页；所有人均可查看当前页。",
+        report_page=report_page,
+    )
+
+
 def build_arena_embed(
     arena_status: ArenaStatus,
     champion: CharacterSnapshot | None,
