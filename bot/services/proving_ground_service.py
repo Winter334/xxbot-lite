@@ -77,6 +77,7 @@ from bot.data.spirits import (
 from bot.models.character import Character
 from bot.models.proving_ground_run import ProvingGroundRun
 from bot.services.combat_service import BattleResult, CombatService, CombatantSnapshot
+from bot.services.spirit_service import _clamp_legacy_rolls
 from bot.utils.time_utils import ensure_shanghai, now_shanghai
 
 
@@ -162,7 +163,14 @@ class PGBuild:
             for a in data.get("affixes", [])
         ]
         sp_data = data.get("spirit_power")
-        spirit_power = SpiritPowerEntry(sp_data["power_id"], sp_data["rolls"]) if sp_data else None
+        spirit_tier = data.get("spirit_tier", "")
+        spirit_power = None
+        if sp_data:
+            power_id = sp_data["power_id"]
+            spirit_power = SpiritPowerEntry(
+                power_id,
+                _clamp_legacy_rolls(power_id, spirit_tier, sp_data["rolls"]),
+            )
         return cls(
             atk=data.get("atk", 0),
             defense=data.get("defense", 0),
@@ -174,7 +182,7 @@ class PGBuild:
             hp_pct_bonus=data.get("hp_pct_bonus", 0),
             affixes=affixes,
             spirit_power=spirit_power,
-            spirit_tier=data.get("spirit_tier", ""),
+            spirit_tier=spirit_tier,
         )
 
 
@@ -738,7 +746,8 @@ class ProvingGroundService:
                 elif adjusted.get(key, 0) < low:
                     adjusted[key] = low
             build.spirit_power = SpiritPowerEntry(
-                power_id=build.spirit_power.power_id, rolls=adjusted,
+                power_id=build.spirit_power.power_id,
+                rolls=_clamp_legacy_rolls(build.spirit_power.power_id, new_tier, adjusted),
             )
         return f"器灵品级提升至「{new_tier_name}」。", True
 
@@ -1376,6 +1385,15 @@ class ProvingGroundService:
         idx = tier_order.index(current) if current in tier_order else 3
         if idx < len(tier_order) - 1:
             build.spirit_tier = tier_order[idx + 1]
+            if build.spirit_power is not None:
+                build.spirit_power = SpiritPowerEntry(
+                    build.spirit_power.power_id,
+                    _clamp_legacy_rolls(
+                        build.spirit_power.power_id,
+                        build.spirit_tier,
+                        dict(build.spirit_power.rolls),
+                    ),
+                )
         run.pending_affix_ops += 2
         return PGEventResult(True, f"器灵降品，获得 2 次词条操作机会。")
 

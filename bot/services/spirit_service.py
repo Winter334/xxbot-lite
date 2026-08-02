@@ -161,6 +161,14 @@ def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int | float])
             clamped["omen_cost"] = fixed
             clamped.pop("max_stacks", None)
             clamped.pop("damage_pct", None)
+    elif power_id in {"xuanjia", "jinmai", "zhuifeng", "leifa", "wanzhou"}:
+        definition = get_spirit_power_definition(power_id)
+        ranges = definition.roll_ranges_by_tier.get(tier)
+        if ranges is not None:
+            clamped = {
+                key: max(low, min(clamped.get(key, low), high))
+                for key, low, high in ranges
+            }
     return clamped
 
 

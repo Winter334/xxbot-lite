@@ -5,7 +5,8 @@ import json
 
 import pytest
 
-from bot.data.artifact_affixes import ArtifactAffixEntry
+from bot.data.artifact_affixes import ArtifactAffixEntry, get_artifact_affix_definition
+from bot.services.combat_service import _CombatState, _StatusEffect
 from bot.ui.artifact import build_artifact_overview_embed, build_refine_panel_embed
 
 
@@ -367,7 +368,7 @@ def test_zhuohun_burn_uses_attacker_atk_per_stack(services) -> None:
 
     burn_logs = [log for log in battle.logs if log.text and "层灼烧侵蚀" in log.text]
     assert burn_logs, "应触发至少一次灼烧 DOT"
-    # 第一回合命中后挂 3 层，单层 DOT = 100 * 10% = 10（不再按层数乘）
+    # 第一回合命中后挂 3 层；层数用于持续与联动，每回合仅造成一次 100 × 10% = 10 伤害
     assert "10 点" in burn_logs[0].text
 
 
@@ -487,3 +488,194 @@ def test_jifeng_stacks_persist_and_lose_on_be_hit(services) -> None:
     loss_logs = [log for log in battle.logs if log.text and "疾锋减弱" in log.text]
     # 受击时消散：6 回合各一次
     assert len(loss_logs) == 6
+
+
+def _combat_state(services, name: str, *, atk: int = 100, defense: int = 100, agility: int = 100, affixes=()) -> _CombatState:
+    snapshot = services.combat.create_combatant(name, atk, defense, agility, affixes=affixes)
+    state = _CombatState(snapshot, snapshot.max_hp)
+    state.effective_max_hp = snapshot.max_hp
+    return state
+
+
+def test_kuangfeng_and_leiyin_start_on_next_round_and_survive_triggering_attack(services) -> None:
+    actor = _combat_state(
+        services,
+        "蓄势修士",
+        affixes=(
+            ArtifactAffixEntry(1, "kuangfeng", {"damage_pct": 80}),
+            ArtifactAffixEntry(2, "leiyin", {"next_damage_pct": 20, "burst_pct": 0}),
+        ),
+    )
+    target = _combat_state(services, "木人")
+    actor.current_round = 1
+
+    services.combat._trigger_on_crit(1, actor, target, 100, SequenceRandom([]), set())
+
+    assert services.combat._damage_dealt_pct(actor) == 0
+    assert {status.name for status in actor.statuses} >= {"狂锋", "雷引"}
+    actor.current_round = 2
+    assert services.combat._damage_dealt_pct(actor) == 100
+    services.combat._consume_attack_bonuses(actor, list(actor.statuses))
+    assert not any(status.name in {"狂锋", "雷引"} for status in actor.statuses)
+
+
+def test_chenchen_reduces_normal_attack_damage(services) -> None:
+    attacker = services.combat.create_combatant("重击修士", 500, 100, 1000)
+    defender = services.combat.create_combatant(
+        "承尘修士",
+        1,
+        100,
+        1,
+        affixes=(ArtifactAffixEntry(1, "chenchen", {"threshold_pct": 20, "reduction_pct": 50}),),
+    )
+    services.combat.max_rounds = 1
+
+    battle = services.combat.run_battle(attacker, defender, rng=SequenceRandom([0.99] * 10))
+    attack = next(log for log in battle.logs if log.text is None and log.actor_name == "重击修士")
+
+    assert attack.damage == 350
+
+
+def test_liechuang_increases_attack_only_when_wound_existed_before_attack(services) -> None:
+    actor = _combat_state(
+        services,
+        "裂创修士",
+        affixes=(ArtifactAffixEntry(1, "liechuang", {"damage_pct": 55, "heal_down_pct": 10}),),
+    )
+    target = _combat_state(services, "木人")
+
+    assert services.combat._before_attack_bonus_pct(actor, target, set(), had_wound_before_attack=False) == 0
+    target.statuses.append(_StatusEffect("创伤", is_debuff=True))
+    assert services.combat._before_attack_bonus_pct(actor, target, set(), had_wound_before_attack=True) == 55
+
+
+def test_guben_is_not_removed_by_full_cleanse(services) -> None:
+    state = _combat_state(
+        services,
+        "固本修士",
+        affixes=(ArtifactAffixEntry(1, "guben", {"shield_pct": 25}),),
+    )
+    services.combat._trigger_battle_start(1, state, set())
+    state.statuses.append(_StatusEffect("普通增益", damage_dealt_pct=10))
+
+    removed = services.combat._remove_all_status_effects(state)
+
+    assert removed == 1
+    assert any(status.name == "固本" and status.shield == 250 for status in state.statuses)
+
+
+def test_yangyuan_uses_guiyuan_max_hp_heal_modifiers_and_heal_followups(services) -> None:
+    state = _combat_state(
+        services,
+        "养元修士",
+        affixes=(
+            ArtifactAffixEntry(1, "guiyuan", {"max_hp_pct": 40}),
+            ArtifactAffixEntry(2, "yangyuan", {"heal_pct": 10}),
+            ArtifactAffixEntry(3, "huyuan", {"start_stacks": 1, "per_battle_cap": 3}),
+        ),
+    )
+    opponent = _combat_state(services, "木人")
+    services.combat._trigger_battle_start(1, state, set())
+    state.hp = 1000
+    state.statuses.append(_StatusEffect("创伤", heal_received_pct=-50, is_debuff=True))
+
+    services.combat._trigger_round_start(1, state, opponent, SequenceRandom([]), set())
+
+    assert state.get_max_hp() == 1400
+    assert state.hp == 1070
+    assert services.combat._status_count(state, "生息") == 2
+
+
+def test_pokong_strip_triggers_fanshi(services) -> None:
+    actor = _combat_state(
+        services,
+        "破空修士",
+        affixes=(
+            ArtifactAffixEntry(1, "pokong", {"damage_ratio_pct": 0, "guard_bonus_pct": 1}),
+            ArtifactAffixEntry(2, "fanshi", {"damage_pct": 20}),
+        ),
+    )
+    target = _combat_state(services, "木人")
+    target.statuses.append(_StatusEffect("增伤", damage_dealt_pct=10))
+    actor.current_round = target.current_round = 1
+
+    logs = services.combat._trigger_on_crit(1, actor, target, 1, SequenceRandom([]), set())
+
+    assert any(log.text and "反噬发动" in log.text for log in logs)
+    assert target.hp == 979
+
+
+def test_single_large_hit_crosses_all_low_hp_thresholds_and_continues_overflow(services) -> None:
+    target = _combat_state(
+        services,
+        "回春裂铠修士",
+        affixes=(
+            ArtifactAffixEntry(1, "huichun", {"heal_pct": 20, "shengxi_stacks": 1}),
+            ArtifactAffixEntry(2, "liekai", {"shield_pct": 10, "backlash_pct": 0}),
+        ),
+    )
+    logs = []
+
+    actual = services.combat._apply_damage(target, 1100, round_no=1, logs=logs, scene=set(), can_be_shielded=True)
+
+    assert actual == 1000
+    assert target.hp == 400
+    assert target.huichun_triggered_thresholds == {50, 25}
+    assert 30 in target.low_hp_marks
+    assert not any(status.name == "裂铠" for status in target.statuses)
+    assert [log.text for log in logs if log.text and "回春发动" in log.text] == [
+        "回春裂铠修士 的回春发动（生命降至 50%），回复 200 点生命并叠加 1 层生息。",
+        "回春裂铠修士 的回春发动（生命降至 25%），回复 200 点生命并叠加 1 层生息。",
+    ]
+
+
+def test_battle_result_reports_guiyuan_effective_max_hp(services) -> None:
+    challenger = services.combat.create_combatant(
+        "归元修士",
+        1,
+        100,
+        100,
+        affixes=(ArtifactAffixEntry(1, "guiyuan", {"max_hp_pct": 40}),),
+    )
+    defender = services.combat.create_combatant("木人", 1, 100, 1)
+    services.combat.max_rounds = 1
+
+    battle = services.combat.run_battle(challenger, defender, rng=SequenceRandom([0.99] * 10))
+
+    assert battle.challenger_max_hp == 1400
+
+
+def test_cleanse_removes_burn_by_layer(services) -> None:
+    state = _combat_state(services, "净华修士")
+    source = _combat_state(services, "灼魂修士")
+    state.statuses.append(_StatusEffect("灼烧", stacks=5, burn_pct=20, is_debuff=True, source=source))
+
+    assert services.combat._remove_one_debuff(state) is not None
+    assert services.combat._remove_one_debuff(state) is not None
+
+    assert services.combat._burn_stacks(state) == 3
+
+
+def test_updated_affix_descriptions_match_current_semantics() -> None:
+    assert "每回合造成一次" in get_artifact_affix_definition("zhuohun").describe({"burn_stacks": 3, "burn_atk_pct": 10})
+    assert "承伤提高" in get_artifact_affix_definition("zhoufu").describe({"reduce_down_pct": 5, "max_stacks": 7})
+    assert "同步治疗等量生命" in get_artifact_affix_definition("guiyuan").describe({"max_hp_pct": 40})
+
+
+def test_resilience_damage_that_lands_exactly_on_threshold_triggers_huichun(services) -> None:
+    snapshot = services.combat.create_combatant(
+        "韧性回春修士",
+        1,
+        100,
+        1,
+        affixes=(ArtifactAffixEntry(1, "huichun", {"heal_pct": 10, "shengxi_stacks": 1}),),
+        base_resilience=50,
+    )
+    state = _CombatState(snapshot, 501)
+    state.effective_max_hp = snapshot.max_hp
+
+    actual = services.combat._apply_damage(state, 2, round_no=1, logs=[], scene=set())
+
+    assert actual == 1
+    assert state.hp == 600
+    assert state.huichun_triggered_thresholds == {50}
