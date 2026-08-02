@@ -7,7 +7,9 @@ import pytest
 
 from bot.data.artifact_affixes import ArtifactAffixEntry
 from bot.data.spirits import SPIRIT_POWER_DEFINITIONS, SpiritPowerEntry, get_spirit_power_definition
+from bot.models.proving_ground_run import ProvingGroundRun
 from bot.services.combat_service import _CombatState, _DamageSource, _StatusEffect
+from bot.services.proving_ground_service import PGBuild, ProvingGroundService
 
 
 class CombatRoller:
@@ -367,6 +369,92 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
         assert snapshot.spirit_name == "旧灵"
         assert snapshot.spirit_power_name == "涅槃"
         assert services.spirit.get_current_spirit(artifact) is not None
+
+
+@pytest.mark.parametrize(
+    ("power_id", "rolls", "expected"),
+    [
+        ("xuanjia", {"proc_pct": 60, "reduce_pct": 100}, {"def_pct": 100, "proc_pct": 60}),
+        ("jinmai", {"proc_pct": 85, "per_disrupt_pct": 10, "seal_stacks": 3}, {"proc_pct": 35, "per_disrupt_pct": 5}),
+        ("zhuifeng", {"r1_crit_bonus": 100, "r1_agility_pct": 50, "r1_damage_pct": 480}, {"r1_crit_bonus": 50, "r1_agility_pct": 25}),
+        ("leifa", {"mark_crit_pct": 15, "mark_crit_damage_pct": 20, "thunder_pct": 450}, {"mark_crit_pct": 15, "mark_crit_damage_pct": 20}),
+        (
+            "wanzhou",
+            {"curse_on_hit": 3, "extra_curse_pct": 0, "burst_threshold": 5, "debuff_rolls_per_curse": 6, "seal_weight": 12},
+            {"curse_on_hit": 3, "extra_curse_pct": 0, "burst_threshold": 5, "debuff_rolls_per_curse": 6},
+        ),
+    ],
+)
+def test_reworked_legacy_spirit_rolls_are_normalized(services, power_id, rolls, expected) -> None:
+    spirit = services.spirit._load_spirit(
+        json.dumps(
+            {
+                "tier": "supreme",
+                "stats": [
+                    {"stat": "atk", "kind": "flat", "value": 1},
+                    {"stat": "def", "kind": "flat", "value": 1},
+                    {"stat": "agi", "kind": "flat", "value": 1},
+                ],
+                "power": {"power_id": power_id, "rolls": rolls},
+            }
+        )
+    )
+
+    assert spirit is not None
+    assert spirit.power.rolls == expected
+
+
+def test_legacy_proving_ground_spirits_use_current_rolls() -> None:
+    xuanjia = PGBuild.from_dict(
+        {
+            "spirit_tier": "supreme",
+            "spirit_power": {"power_id": "xuanjia", "rolls": {"proc_pct": 60, "reduce_pct": 100}},
+        }
+    )
+    jinmai = PGBuild.from_dict(
+        {
+            "spirit_tier": "supreme",
+            "spirit_power": {
+                "power_id": "jinmai",
+                "rolls": {"proc_pct": 85, "per_disrupt_pct": 10, "seal_stacks": 3},
+            },
+        }
+    )
+
+    assert xuanjia.spirit_power is not None
+    assert xuanjia.spirit_power.rolls == {"def_pct": 100, "proc_pct": 60}
+    assert jinmai.spirit_power is not None
+    assert jinmai.spirit_power.rolls == {"proc_pct": 35, "per_disrupt_pct": 5}
+
+
+def test_proving_ground_spirit_tier_changes_normalize_immediately(services) -> None:
+    proving_ground = ProvingGroundService(services.combat, random.Random(1))
+    wanzhou = PGBuild(
+        spirit_tier="mid",
+        spirit_power=SpiritPowerEntry(
+            "wanzhou",
+            {"curse_on_hit": 1, "extra_curse_pct": 50, "burst_threshold": 3, "debuff_rolls_per_curse": 3},
+        ),
+    )
+    message, upgraded = proving_ground.upgrade_spirit_tier(wanzhou)
+    assert upgraded is True and "上品" in message
+    assert wanzhou.spirit_power is not None
+    assert wanzhou.spirit_power.rolls == {
+        "curse_on_hit": 2,
+        "extra_curse_pct": 0,
+        "burst_threshold": 4,
+        "debuff_rolls_per_curse": 4,
+    }
+
+    xuanjia = PGBuild(
+        spirit_tier="supreme",
+        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 100, "proc_pct": 80}),
+    )
+    run = ProvingGroundRun(character_id=1, pending_affix_ops=0)
+    proving_ground._apply_lingshi("accept", xuanjia, run, None)
+    assert xuanjia.spirit_tier == "peak"
+    assert xuanjia.spirit_power is not None
+    assert xuanjia.spirit_power.rolls == {"def_pct": 80, "proc_pct": 60}
 
 
 def test_spirit_power_description_accepts_legacy_rolls() -> None:
@@ -739,84 +827,256 @@ def test_wanzhou_bursts_curse_seals_into_debuffs(services) -> None:
     assert any(log.text and "万咒" in log.text for log in logs)
 
 
-def test_jinmai_action_seal_triggers_break_effect(services) -> None:
-    combat = services.combat
-    actor_snapshot = combat.create_combatant(
-        name="禁脉主", atk=100, defense=10, agility=50,
-        spirit_power=SpiritPowerEntry(
-            "jinmai",
-            {"proc_pct": 100, "per_disrupt_pct": 10, "seal_stacks": 2, "break_pobu_stacks": 2, "break_wound_stacks": 1, "break_strip_stacks": 0},
-        ),
+@pytest.mark.parametrize(
+    ("tier", "def_pct", "proc_range"),
+    [
+        ("low", 10, (25, 32)),
+        ("mid", 30, (30, 38)),
+        ("high", 50, (36, 45)),
+        ("peak", 80, (42, 60)),
+        ("supreme", 100, (60, 80)),
+    ],
+)
+def test_xuanjia_tier_values_and_battle_start_hp(services, tier, def_pct, proc_range) -> None:
+    definition = get_spirit_power_definition("xuanjia")
+    ranges = {key: (low, high) for key, low, high in definition.roll_ranges_by_tier[tier]}
+    assert ranges == {"def_pct": (def_pct, def_pct), "proc_pct": proc_range}
+
+    state = _spirit_state(
+        services,
+        "玄甲主",
+        defense=100,
+        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": def_pct, "proc_pct": 0}),
     )
-    target_snapshot = combat.create_combatant(name="靶子", atk=10, defense=100, agility=10)
-    actor = _CombatState(actor_snapshot, actor_snapshot.max_hp)
-    actor.effective_max_hp = actor_snapshot.max_hp
-    target = _CombatState(target_snapshot, target_snapshot.max_hp)
-    target.effective_max_hp = target_snapshot.max_hp
+    services.combat._trigger_battle_start(1, state, set())
+    assert state.get_max_hp() == 1000 + 1000 * def_pct // 100
+    assert state.hp == state.get_max_hp()
+    services.combat._trigger_battle_start(1, state, set())
+    assert state.get_max_hp() == 1000 + 1000 * def_pct // 100
+
+
+def test_xuanjia_blocks_each_damage_packet_before_shield(services) -> None:
+    combat = services.combat
+    target = _spirit_state(
+        services,
+        "玄甲主",
+        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 10, "proc_pct": 50}),
+    )
+    target.roller = CombatRoller([0.0, 0.99, 0.0])
+    combat._add_status(target, _StatusEffect("护盾", shield=100))
+    logs = []
+
+    assert combat._apply_damage(target, 40, can_be_shielded=True, logs=logs) == 0
+    assert combat._total_shield(target) == 100
+    assert combat._apply_damage(target, 40, can_be_shielded=True, logs=logs) == 0
+    assert combat._total_shield(target) == 60
+    assert combat._apply_damage(target, 40, can_be_shielded=True, logs=logs) == 0
+    assert combat._total_shield(target) == 60
+    assert len([log for log in logs if log.text and "完全格挡" in log.text]) == 2
+
+
+def test_xuanjia_full_battle_blocks_attack_and_burn_as_separate_packets(services) -> None:
+    combat = services.combat
+    attacker = combat.create_combatant(
+        "灼魂主",
+        atk=100,
+        defense=100,
+        agility=200,
+        affixes=(ArtifactAffixEntry(1, "zhuohun", {"burn_stacks": 1, "burn_atk_pct": 25}),),
+    )
+    defender = combat.create_combatant(
+        "玄甲主",
+        atk=10,
+        defense=100,
+        agility=100,
+        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 10, "proc_pct": 100}),
+    )
+    original_max_rounds = combat.max_rounds
+    combat.max_rounds = 1
+    try:
+        result = combat.run_battle(attacker, defender, rng=CombatRoller([]))
+    finally:
+        combat.max_rounds = original_max_rounds
+
+    attack_logs = [
+        log
+        for log in result.logs
+        if log.text is None and log.actor_name == "灼魂主" and log.target_name == "玄甲主"
+    ]
+    block_logs = [log for log in result.logs if log.text and "玄甲" in log.text and "完全格挡" in log.text]
+    assert len(attack_logs) == 1 and attack_logs[0].damage == 0
+    assert any(log.text and "附 1 层灼烧" in log.text for log in result.logs)
+    assert len(block_logs) == 2
+    assert result.defender_hp_after == result.defender_max_hp
+
+
+def test_jueming_consumes_curses_before_xuanjia_omen_block(services) -> None:
+    combat = services.combat
+    owner = _spirit_state(
+        services,
+        "绝命主",
+        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 2, "execute_pct": 20, "heal_down_pct": 40}),
+    )
+    target = _spirit_state(
+        services,
+        "玄甲主",
+        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 10, "proc_pct": 50}),
+    )
+    combat._add_curse_seal(target, owner, 2)
+
+    combat._settle_jueming_marks(1, owner, target, CombatRoller([0.0]))
+    assert combat._curse_seal_count(target) == 0
+    assert combat._death_omen_count(target) == 0
+
+    combat._add_curse_seal(target, owner, 2)
+    combat._settle_jueming_marks(2, owner, target, CombatRoller([0.99]))
+    assert combat._curse_seal_count(target) == 0
+    assert combat._death_omen_count(target) == 1
+
+
+def test_jinmai_probability_seal_and_break_spirit_lifecycle(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "禁脉主",
+        spirit_power=SpiritPowerEntry("jinmai", {"proc_pct": 0, "per_disrupt_pct": 5}),
+    )
+    target = _spirit_state(services, "靶子", atk=100)
 
     combat._trigger_spirit_on_hit(1, actor, target, 1, CombatRoller([0.0]), source=_DamageSource.ATTACK, scene=set())
-    assert combat._status_count(target, "封禁行动") == 2
+    assert combat._status_count(target, "封禁行动") == 0
+    assert combat._status_count(target, "破步") == 0
+    assert combat._status_count(target, "创伤") == 0
 
-    logs, can_act = combat._trigger_before_action(1, target, actor)
-
-    assert can_act is False
+    combat._add_status(target, _StatusEffect("破步", stacks=2, is_debuff=True, source=actor))
+    combat._add_status(target, _StatusEffect("创伤", stacks=2, is_debuff=True, source=actor))
+    combat._trigger_spirit_on_hit(1, actor, target, 1, CombatRoller([0.19]), source=_DamageSource.ATTACK, scene=set())
     assert combat._status_count(target, "封禁行动") == 1
-    assert combat._status_count(target, "破步") >= 2
-    assert combat._status_count(target, "创伤") >= 1
-    assert any(log.text and "断脉" in log.text for log in logs)
+    assert combat._status_count(target, "破封灵势") == 1
+    assert combat._current_atk(target) == 110
+    assert combat._remove_one_positive_status(target) is None
+    assert combat._remove_all_status_effects(target) == 5
+    assert combat._status_count(target, "破封灵势") == 1
+    combat._add_action_seal(target, actor, 1)
+
+    _, can_act = combat._trigger_before_action(2, target, actor)
+    assert can_act is False
+    assert combat._status_count(target, "破封灵势") == 1
+    _, can_act = combat._trigger_before_action(3, target, actor)
+    assert can_act is True
+    before = combat._current_atk(target)
+    action_logs = combat._resolve_action(3, target, actor, CombatRoller([0.99, 0.99]), set())
+    assert before == 110
+    assert any(log.text is None and log.actor_name == "靶子" and log.damage == 110 for log in action_logs)
+    assert combat._status_count(target, "破封灵势") == 0
+    assert combat._current_atk(target) == 100
 
 
-def test_leifa_charges_on_noncrit_and_judges_on_marks(services) -> None:
+def test_break_spirit_is_consumed_by_counterattack(services) -> None:
     combat = services.combat
-    actor_snapshot = combat.create_combatant(
-        name="雷罚主", atk=100, defense=10, agility=50,
-        spirit_power=SpiritPowerEntry(
-            "leifa",
-            {
-                "crit_damage_base_pct": 50,
-                "charge_crit_pct": 20,
-                "mark_crit_pct": 15,
-                "mark_crit_damage_pct": 20,
-                "thunder_pct": 100,
-                "mark_damage_pct": 10,
-                "judgment_pct": 10,
-                "wound_stacks": 2,
-                "strip_stacks": 0,
-                "crit_mark_stacks": 3,
-                "retain_mark_after_judgment": 0,
-            },
-        ),
+    counterer = _spirit_state(
+        services,
+        "反击者",
+        affixes=(ArtifactAffixEntry(1, "huanbu", {"dodge_pct": 5, "counter_pct": 100}),),
     )
-    target_snapshot = combat.create_combatant(name="靶子", atk=10, defense=100, agility=10)
-    actor = _CombatState(actor_snapshot, actor_snapshot.max_hp)
-    actor.effective_max_hp = actor_snapshot.max_hp
-    target = _CombatState(target_snapshot, target_snapshot.max_hp)
-    target.effective_max_hp = target_snapshot.max_hp
+    attacker = _spirit_state(services, "来犯者")
+    combat._add_status(counterer, _StatusEffect("幻步", stacks=3, dodge_bonus_pct=5))
+    combat._add_status(counterer, _StatusEffect("破封灵势", stacks=2, atk_pct=10, cleanseable=False))
 
-    combat._trigger_spirit_on_noncrit(1, actor)
-    assert combat._status_count(actor, "引雷") == 1
+    logs = combat._trigger_on_dodge(1, counterer, attacker, set())
 
-    logs = combat._trigger_spirit_on_crit(1, actor, target, 100, CombatRoller([0.99]))
-
-    assert combat._status_count(actor, "引雷") == 0
-    assert combat._status_count(target, "创伤") >= 2
-    assert any(log.text and "天劫" in log.text for log in logs)
+    assert any(log.text and "反击伤害" in log.text for log in logs)
+    assert combat._status_count(counterer, "破封灵势") == 0
 
 
-def test_zhuifeng_first_round_force_hit_and_crit(services) -> None:
+def test_zhuifeng_first_mover_hunt_and_permanent_chase(services) -> None:
     combat = services.combat
-    actor_snapshot = combat.create_combatant(
-        name="追风主", atk=100, defense=10, agility=50,
-        spirit_power=SpiritPowerEntry(
-            "zhuifeng",
-            {"r1_damage_pct": 360, "r23_damage_pct": 210, "r1_crit_bonus": 100, "r23_crit_bonus": 50, "r1_agility_pct": 50, "r23_agility_pct": 32, "shield_damage_pct": 150, "r1_pierce_pct": 50, "r23_pierce_pct": 25, "hit_heal_down_pct": 55, "crit_heal_down_pct": 75, "chase_damage_pct": 16},
-        ),
-    )
-    actor = _CombatState(actor_snapshot, actor_snapshot.max_hp)
-    actor.effective_max_hp = actor_snapshot.max_hp
-    actor.is_first_mover = True
+    power = SpiritPowerEntry("zhuifeng", {"r1_crit_bonus": 30, "r1_agility_pct": 15})
+    actor = _spirit_state(services, "追风主", agility=100, spirit_power=power)
+    target = _spirit_state(services, "靶子", agility=100)
+
     actor.current_round = 1
-
+    assert combat._zhuifeng_force_hit(actor) is False
+    assert combat._zhuifeng_crit_bonus_pct(actor) == 0
+    actor.is_first_mover = True
     assert combat._zhuifeng_force_hit(actor) is True
-    assert combat._zhuifeng_force_crit(actor) is True
-    assert combat._zhuifeng_crit_bonus_pct(actor) == 100
+    assert combat._zhuifeng_crit_bonus_pct(actor) == 30
+    first_logs = combat._resolve_action(1, actor, target, CombatRoller([0.99]), set())
+    second_logs = combat._resolve_action(1, actor, target, CombatRoller([0.0]), set())
+    assert any(log.text is None and not log.dodged for log in first_logs)
+    assert any(log.text is None and log.dodged for log in second_logs)
+    actor.current_round = 3
+    assert combat._zhuifeng_crit_bonus_pct(actor) == 30
+    actor.current_round = 4
+    assert combat._zhuifeng_crit_bonus_pct(actor) == 0
+
+    for _ in range(15):
+        combat._trigger_spirit_on_crit(4, actor, target, 1, CombatRoller([]))
+    assert combat._status_count(actor, "追猎") == 12
+    assert combat._current_agility(actor) == 280
+    assert combat._remove_one_positive_status(actor) is None
+    assert combat._remove_all_status_effects(actor) == 0
+    assert combat._status_count(actor, "追猎") == 12
+
+
+def test_leifa_noncrit_marks_cap_and_source_specific_bonuses(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "雷罚主",
+        spirit_power=SpiritPowerEntry("leifa", {"mark_crit_pct": 10, "mark_crit_damage_pct": 12}),
+    )
+    other = _spirit_state(services, "其他")
+    target = _spirit_state(services, "靶子")
+
+    for _ in range(7):
+        combat._trigger_spirit_on_noncrit(1, actor, target)
+    assert combat._target_leihen_count(target) == 5
+    assert combat._target_crit_bonus_pct(actor, target) == 50
+    assert combat._target_crit_damage_bonus_pct(actor, target) == 60
+    assert combat._target_crit_bonus_pct(other, target) == 0
+    hp = target.hp
+    assert combat._trigger_spirit_on_crit(1, actor, target, 100, CombatRoller([])) == []
+    assert target.hp == hp
+    assert combat._status_count(target, "创伤") == 0
+
+
+def test_wanzhou_extra_curse_uses_strict_probability_boundary(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "万咒主",
+        spirit_power=SpiritPowerEntry(
+            "wanzhou",
+            {"curse_on_hit": 1, "extra_curse_pct": 50, "burst_threshold": 99, "debuff_rolls_per_curse": 2},
+        ),
+    )
+    target = _spirit_state(services, "靶子")
+
+    combat._trigger_spirit_on_hit(
+        1,
+        actor,
+        target,
+        1,
+        CombatRoller([0.5]),
+        source=_DamageSource.ATTACK,
+        scene=set(),
+    )
+
+    assert combat._curse_seal_count(target) == 1
+
+
+def test_wanzhou_uses_leihen_pool_without_action_seal(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "万咒主",
+        spirit_power=SpiritPowerEntry("wanzhou", {"debuff_rolls_per_curse": 20, "seal_weight": 999}),
+    )
+    target = _spirit_state(services, "靶子")
+    combat._add_curse_seal(target, actor, 10)
+
+    logs = combat._trigger_wanzhou_burst(1, actor, target, random.Random(2))
+    assert combat._status_count(target, "封禁行动") == 0
+    assert 0 < combat._target_leihen_count(target) <= 5
+    assert any(log.text and "雷殛" in log.text for log in logs)

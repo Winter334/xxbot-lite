@@ -195,22 +195,18 @@ def test_same_resilience_target_takes_less_damage() -> None:
     assert dmg_dujie < dmg_lianxu < dmg_zero
 
 
-# ─── 真伤豁免：雷劫引爆豁免韧性 ─────────────────────────────
+# ─── 机制性必杀真伤豁免韧性 ─────────────────────────────
 
 
-def test_judgment_damage_bypasses_resilience() -> None:
-    """直接验证 _apply_damage(respects_resilience=False) 与 True 在同样输入下结果不同。
-
-    雷劫引爆 (combat_service.py:893) 显式使用 respects_resilience=False，
-    应足额造成 max_hp * judgment_pct // 100 的伤害，不被韧性扣减。
-    """
+def test_mechanical_execute_damage_bypasses_resilience() -> None:
+    """直接验证底层为机制性必杀保留的 respects_resilience=False 通道。"""
     combat = CombatService()
 
     # 高韧性目标
     state_with_kw_false = _make_state(resilience=36, hp=10000, max_hp=10000)
     state_with_kw_true = _make_state(resilience=36, hp=10000, max_hp=10000)
 
-    # 模拟雷劫引爆典型伤害：max_hp 10% 真伤 = 1000
+    # 模拟机制性必杀伤害
     judgment_damage = 1000
 
     actual_bypass = combat._apply_damage(state_with_kw_false, judgment_damage, respects_resilience=False)
