@@ -72,7 +72,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "on_hit",
         ("atk_pct", 4, 9),
         description_builder=lambda rolls: (
-            f"造成伤害后必定凝成 1 层灵势；每层灵势提高 {rolls['atk_pct']}% 杀伐，最多 10 层"
+            f"命中后必定凝成 1 层灵势；每层灵势提高 {rolls['atk_pct']}% 杀伐，最多 10 层"
         ),
     ),
     _define(
@@ -92,8 +92,8 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("reduce_down_pct", 3, 10),
         ("max_stacks", 7, 7),
         description_builder=lambda rolls: (
-            f"每回合给敌方附加 1 层「咒缚」（每层降减伤 {rolls['reduce_down_pct']}%，最多 {rolls['max_stacks']} 层）+ 1 层咒印；"
-            f"咒缚满层后仍继续附加咒印；咒缚被净化时每层额外叠加 1 层咒印。"
+            f"每回合给敌方附加 1 层「咒缚」（每层承伤提高 {rolls['reduce_down_pct']}%，最多 {rolls['max_stacks']} 层）+ 1 层咒印；"
+            f"咒缚满层后仍继续附加咒印。"
         ),
     ),
     _define(
@@ -126,8 +126,8 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("burn_stacks", 2, 4),
         ("burn_atk_pct", 25, 55),
         description_builder=lambda rolls: (
-            f"命中必定附加 {rolls['burn_stacks']} 层灼烧；灼烧每层每回合造成杀伐 {rolls['burn_atk_pct']}% 伤害，"
-            f"每回合衰减 1 层（多次叠加时单层伤害取较高值）"
+            f"命中必定附加 {rolls['burn_stacks']} 层灼烧；有灼烧时每回合造成一次 {rolls['burn_atk_pct']}% 杀伐伤害并消耗 1 层；"
+            f"层数供联动与消耗（多次叠加时单层伤害取较高值）"
         ),
     ),
     _define(
@@ -176,7 +176,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("per_debuff_pct", 10, 20),
         ("max_bonus_pct", 50, 100),
         description_builder=lambda rolls: (
-            f"目标每有 1 个负面层数，本次伤害提高 {rolls['per_debuff_pct']}%，最高 {rolls['max_bonus_pct']}%"
+            f"目标每有 1 个负面效果，本次伤害提高 {rolls['per_debuff_pct']}%，最高 {rolls['max_bonus_pct']}%；灼烧不论层数视为 1 个"
         ),
     ),
     _define(
@@ -194,7 +194,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("pierce_pct", 3, 7),
         description_builder=lambda rolls: (
             f"每回合结束获得 1 层登霄，最多 8 层；每层提高 {rolls['damage_pct']}% 伤害，"
-            f"6 层后额外获得 {rolls['pierce_pct']}% 减伤穿透"
+            f"自第 6 层起，每层额外获得 {rolls['pierce_pct']}% 减伤穿透"
         ),
     ),
     _define(
@@ -202,7 +202,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "镇关",
         "before_attack",
         ("damage_pct", 45, 110),
-        description_builder=lambda rolls: f"攻击带守势、高减伤或生命比例高于自身的目标时，本次伤害提高 {rolls['damage_pct']}%",
+        description_builder=lambda rolls: f"攻击带守势、减伤或生命比例高于自身的目标时，本次伤害提高 {rolls['damage_pct']}%",
     ),
     _define(
         "liekai",
@@ -274,7 +274,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "on_be_hit",
         ("reduce_pct", 25, 50),
         description_builder=lambda rolls: (
-            f"每回合首次受击时，获得 1 层守势（本层抵消 {rolls['reduce_pct']}% 受击伤害）。"
+            f"每回合首次受击后获得 1 层守势，抵消下一次受击的 {rolls['reduce_pct']}% 伤害。"
         ),
     ),
     _define(
@@ -443,7 +443,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("proc_pct", 40, 70),
         ("drain_per_mark_pct", 2, 4),
         description_builder=lambda rolls: (
-            f"命中后有 {rolls['proc_pct']}% 概率吸取目标「咒印层数×{rolls['drain_per_mark_pct']}%」最大生命；"
+            f"命中后有 {rolls['proc_pct']}% 概率按目标咒印层数回复自身最大生命（每层 {rolls['drain_per_mark_pct']}%）；"
             f"若目标无咒印则附加 1 层。"
         ),
     ),
@@ -465,7 +465,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("per_battle_cap", 3, 7),
         description_builder=lambda rolls: (
             f"战斗开始时叠加 {rolls['start_stacks']} 层生息；自身受到治疗时额外叠加 1 层生息，"
-            f"本词条单局最多叠加 {rolls['per_battle_cap']} 层（多件分别独立计数）。"
+            f"此后因治疗单局最多额外叠加 {rolls['per_battle_cap']} 层（多件分别独立计数）。"
         ),
     ),
     _define(
@@ -484,7 +484,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("cost_stacks", 1, 4),
         ("heal_per_stack", 2, 15),
         description_builder=lambda rolls: (
-            f"每回合开始时若生息层数大于 {rolls['cost_stacks']}，消耗 {rolls['cost_stacks']} 层生息回复 "
+            f"每回合开始时若生息不少于 {rolls['cost_stacks']} 层，消耗 {rolls['cost_stacks']} 层生息回复 "
             f"{rolls['cost_stacks']} × {rolls['heal_per_stack']}% 最大生命。"
         ),
     ),
@@ -514,7 +514,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "on_effect_lost",
         ("damage_pct", 15, 35),
         description_builder=lambda rolls: (
-            f"敌方每失去 1 个正面效果（过期/被净化/被打散），对其造成 {rolls['damage_pct']}% 杀伐伤害。"
+            f"敌方每失去 1 个正面效果（被净化/被打散），对其造成 {rolls['damage_pct']}% 杀伐伤害。"
         ),
     ),
     _define(

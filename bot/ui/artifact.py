@@ -20,7 +20,7 @@ def build_artifact_overview_embed(
         color=color or discord.Color.dark_gold(),
     )
     _add_overview_fields(embed, snapshot, panel_state)
-    embed.set_footer(text="从下方进入强化、洗炼、器灵或改名子面板。")
+    embed.set_footer(text="同一触发时机的词条，依法宝槽位由前至后结算；槽位顺序可能影响联动结果。")
     return embed
 
 
@@ -92,7 +92,7 @@ def build_refine_panel_embed(
     embed.add_field(name="待选词条", value=_render_affix_column(panel_state.pending_slots), inline=True)
     if action_title and action_lines:
         embed.add_field(name=action_title, value="\n".join(action_lines), inline=False)
-    embed.set_footer(text="单槽洗炼消耗 2 器魂；洗炼全部按已解锁槽位一次结算。待选可点“弃槽X”放弃，点“保存待选”后才会写入。")
+    embed.set_footer(text="单槽洗炼消耗 2 器魂；待选可点“弃槽X”放弃，保存后才会写入。同一触发时机的词条，依法宝槽位由前至后结算；槽位顺序可能影响联动结果。")
     return embed
 
 
