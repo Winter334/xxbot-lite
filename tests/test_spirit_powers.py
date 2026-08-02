@@ -7,7 +7,7 @@ import pytest
 
 from bot.data.artifact_affixes import ArtifactAffixEntry
 from bot.data.spirits import SPIRIT_POWER_DEFINITIONS, SpiritPowerEntry, get_spirit_power_definition
-from bot.services.combat_service import _CombatState, _DamageSource
+from bot.services.combat_service import _CombatState, _DamageSource, _StatusEffect
 
 
 class CombatRoller:
@@ -17,6 +17,307 @@ class CombatRoller:
 
     def random(self) -> float:
         return next(self._random_values, self._fallback)
+
+
+def _spirit_state(services, name: str, *, atk: int = 100, defense: int = 100, agility: int = 100, affixes=(), spirit_power=None) -> _CombatState:
+    snapshot = services.combat.create_combatant(
+        name,
+        atk,
+        defense,
+        agility,
+        affixes=affixes,
+        spirit_power=spirit_power,
+    )
+    state = _CombatState(snapshot, snapshot.max_hp)
+    state.effective_max_hp = snapshot.max_hp
+    return state
+
+
+def test_statuses_merge_only_when_all_stack_properties_match(services) -> None:
+    combat = services.combat
+    owner = _spirit_state(services, "承载者")
+    source = _spirit_state(services, "同源")
+    other_source = _spirit_state(services, "异源")
+
+    combat._add_status(owner, _StatusEffect("生息"))
+    combat._add_status(owner, _StatusEffect("生息"))
+    combat._add_status(owner, _StatusEffect("创伤", damage_taken_pct=5, is_debuff=True, source=source))
+    combat._add_status(owner, _StatusEffect("创伤", damage_taken_pct=5, is_debuff=True, source=source))
+    combat._add_status(owner, _StatusEffect("创伤", damage_taken_pct=8, is_debuff=True, source=source))
+    combat._add_status(owner, _StatusEffect("创伤", damage_taken_pct=5, is_debuff=True, source=other_source))
+    combat._add_status(owner, _StatusEffect("限时", duration=2))
+    combat._add_status(owner, _StatusEffect("限时", duration=2))
+    combat._add_status(owner, _StatusEffect("一次", remaining_hits=1, damage_dealt_pct=10))
+    combat._add_status(owner, _StatusEffect("一次", remaining_hits=1, damage_dealt_pct=10))
+    combat._add_status(owner, _StatusEffect("护盾", shield=100))
+    combat._add_status(owner, _StatusEffect("护盾", shield=100))
+
+    assert [s.stacks for s in owner.statuses if s.name == "生息"] == [2]
+    assert [s.stacks for s in owner.statuses if s.name == "创伤"] == [2, 1, 1]
+    assert len([s for s in owner.statuses if s.name == "限时"]) == 2
+    assert len([s for s in owner.statuses if s.name == "一次"]) == 2
+    assert len([s for s in owner.statuses if s.name == "护盾"]) == 2
+    assert combat._status_count(owner, "限时") == 2
+    assert combat._status_count(owner, "一次") == 2
+
+
+def test_burn_uses_stacks_consumes_one_per_round_and_cleanses_one(services) -> None:
+    combat = services.combat
+    source = _spirit_state(services, "焚者", atk=100)
+    stronger_source = _spirit_state(services, "烈焰者", atk=100)
+    weaker_source = _spirit_state(services, "余火者", atk=100)
+    target = _spirit_state(services, "木人")
+    logs = []
+    combat._apply_burn_to_target(target, source, stacks=3, per_stack_pct=20, round_no=1, logs=logs)
+    combat._apply_burn_to_target(target, source, stacks=2, per_stack_pct=20, round_no=1, logs=logs)
+    combat._apply_burn_to_target(target, stronger_source, stacks=1, per_stack_pct=30, round_no=1, logs=logs)
+    combat._apply_burn_to_target(target, weaker_source, stacks=1, per_stack_pct=10, round_no=1, logs=logs)
+
+    burns = [s for s in target.statuses if s.name == "灼烧"]
+    assert len(burns) == 1
+    assert burns[0].stacks == 7 and burns[0].duration is None
+    assert burns[0].burn_pct == 30 and burns[0].source is stronger_source
+    round_logs = combat._trigger_round_end(1, source, target, CombatRoller([]))
+    assert len([log for log in round_logs if log.text and "层灼烧侵蚀" in log.text]) == 1
+    assert combat._burn_stacks(target) == 6
+    assert combat._remove_one_debuff(target) is not None
+    assert combat._burn_stacks(target) == 5
+
+
+@pytest.mark.parametrize(
+    ("affix_ids", "expected"),
+    [
+        (("zhuiming",), 0),
+        (("zhuiming", "zhuiming"), 40),
+        (("zhuiming", "zhuiming", "duanyue"), 55),
+    ],
+)
+def test_chengshi_counts_each_damage_affix_entry(services, affix_ids, expected) -> None:
+    affixes = tuple(ArtifactAffixEntry(index, affix_id, {}) for index, affix_id in enumerate(affix_ids, 1))
+    actor = _spirit_state(
+        services,
+        "乘势主",
+        affixes=affixes,
+        spirit_power=SpiritPowerEntry("chengshi", {"base_pct": 40, "per_type_pct": 15}),
+    )
+    target = _spirit_state(services, "木人")
+
+    assert services.combat._spirit_damage_bonus_pct(actor, target) == expected
+
+
+def test_chunsheng_increases_healing_received(services) -> None:
+    state = _spirit_state(
+        services,
+        "春生主",
+        spirit_power=SpiritPowerEntry("chunsheng", {"heal_received_pct": 50, "convert_pct": 0, "heal_shengxi_bonus": 0}),
+    )
+    state.hp = 500
+
+    assert services.combat._heal(state, 20) == 300
+
+
+def test_luejie_uses_debuff_stacks_for_bonus_and_followup(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "戮厄主",
+        atk=100,
+        spirit_power=SpiritPowerEntry("luejie", {"per_debuff_pct": 10, "max_bonus_pct": 200}),
+    )
+    target = _spirit_state(services, "木人", defense=1000)
+    combat._add_status(target, _StatusEffect("创伤", stacks=5, is_debuff=True, source=actor))
+
+    assert combat._spirit_damage_bonus_pct(actor, target) == 50
+    logs = combat._resolve_action(1, actor, target, CombatRoller([0.99, 0.99]), set())
+    followup = next(log for log in logs if log.text and "戮厄锁定 5 层负面" in log.text)
+    assert "追加 10 点伤害" in followup.text
+
+
+def test_duanyue_counts_debuff_objects_but_luejie_counts_layers(services) -> None:
+    combat = services.combat
+    target = _spirit_state(services, "木人")
+    source = _spirit_state(services, "施术者")
+    combat._add_status(target, _StatusEffect("灼烧", stacks=10, burn_pct=20, is_debuff=True, source=source))
+    combat._add_status(target, _StatusEffect("创伤", stacks=3, is_debuff=True, source=source))
+    duanyue = _spirit_state(
+        services,
+        "断岳主",
+        affixes=(ArtifactAffixEntry(1, "duanyue", {"per_debuff_pct": 10, "max_bonus_pct": 100}),),
+    )
+    luejie = _spirit_state(
+        services,
+        "戮厄主",
+        spirit_power=SpiritPowerEntry("luejie", {"per_debuff_pct": 10, "max_bonus_pct": 200}),
+    )
+
+    assert combat._before_attack_bonus_pct(duanyue, target, set()) == 20
+    assert combat._spirit_damage_bonus_pct(luejie, target) == 130
+
+
+def test_fengren_grants_same_attack_guaranteed_crit_and_fifty_pct_damage(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(services, "风刃主", atk=100)
+    target = _spirit_state(services, "木人")
+    combat._add_status(actor, _StatusEffect("风刃", guarantee_crit=True, damage_dealt_pct=50, remaining_hits=1))
+
+    logs = combat._resolve_action(1, actor, target, CombatRoller([0.99]), set())
+    attack = next(log for log in logs if log.text is None)
+
+    assert attack.critical is True
+    assert attack.damage == 262
+    assert not any(s.name == "风刃" for s in actor.statuses)
+
+
+def test_cleaning_one_zhoufu_stack_does_not_add_curse_seal(services) -> None:
+    combat = services.combat
+    owner = _spirit_state(services, "咒缚主")
+    target = _spirit_state(services, "受咒者")
+    combat._add_status(target, _StatusEffect("咒缚", stacks=2, damage_taken_pct=5, is_debuff=True, source=owner))
+
+    assert combat._remove_one_debuff(target) is not None
+    combat._trigger_cleanse_followups(1, target, 1, owner)
+
+    assert combat._status_count(target, "咒缚") == 1
+    assert combat._curse_seal_count(target) == 0
+
+
+def test_dishi_counts_only_explicit_stacks_and_keeps_uncleanseable(services) -> None:
+    combat = services.combat
+    owner = _spirit_state(
+        services,
+        "涤世主",
+        spirit_power=SpiritPowerEntry("dishi", {"threshold": 1, "stack_pct": 10}),
+    )
+    opponent = _spirit_state(services, "对手")
+    owner.statuses.extend(
+        [
+            _StatusEffect("甲", stacks=10, duration=50),
+            _StatusEffect("不可净化", stacks=10, cleanseable=False),
+        ]
+    )
+    opponent.statuses.extend(
+        [
+            _StatusEffect("乙", stacks=10, remaining_hits=7),
+            _StatusEffect("丙", stacks=10, is_debuff=True),
+            _StatusEffect("丁", stacks=10),
+        ]
+    )
+
+    logs = combat._trigger_spirit_round_end(1, owner, opponent, CombatRoller([]))
+
+    assert any(log.text and "共 40 层效果" in log.text for log in logs)
+    followup = next(s for s in owner.statuses if s.name == "涤世·净化")
+    assert followup.bonus_damage == 400
+    assert any(s.name == "不可净化" and s.stacks == 10 for s in owner.statuses)
+
+
+def test_niepan_revives_after_huanbu_dodge_counter_in_run_battle(services) -> None:
+    niepan = SpiritPowerEntry(
+        "niepan",
+        {"cost_stacks": 1, "revive_hp_pct": 50, "per_revive_atk_pct": 0, "per_revive_speed_pct": 0, "revive_shield_pct": 0},
+    )
+    attacker = services.combat.create_combatant(
+        "涅槃者",
+        10,
+        10,
+        1,
+        affixes=(ArtifactAffixEntry(1, "huyuan", {"start_stacks": 1, "per_battle_cap": 0}),),
+        spirit_power=niepan,
+    )
+    dodger = services.combat.create_combatant(
+        "幻步者",
+        100,
+        100,
+        1000,
+        affixes=(ArtifactAffixEntry(1, "huanbu", {"dodge_pct": 100, "counter_pct": 1000}),),
+    )
+    services.combat.max_rounds = 5
+
+    battle = services.combat.run_battle(attacker, dodger, rng=CombatRoller([0.0] * 40, fallback=0.0))
+
+    assert any(log.text and "幻步虚影" in log.text for log in battle.logs)
+    assert any(log.text and "涅槃再起" in log.text for log in battle.logs)
+
+
+def test_niepan_revives_after_jueming_at_round_end(services, monkeypatch) -> None:
+    combat = services.combat
+    original_battle_start = combat._trigger_battle_start
+
+    def battle_start(round_no, state, scene):
+        logs = original_battle_start(round_no, state, scene)
+        if state.snapshot.name == "涅槃者":
+            combat._add_status(state, _StatusEffect("生息"))
+            combat._add_status(
+                state,
+                _StatusEffect("死兆", is_debuff=True, source=executioner_state[0], cleanseable=False),
+            )
+        return logs
+
+    executioner_state = [None]
+    monkeypatch.setattr(combat, "_trigger_battle_start", battle_start)
+    victim = combat.create_combatant(
+        "涅槃者",
+        1,
+        100,
+        1,
+        spirit_power=SpiritPowerEntry(
+            "niepan",
+            {"cost_stacks": 1, "revive_hp_pct": 50, "per_revive_atk_pct": 0, "per_revive_speed_pct": 0, "revive_shield_pct": 0},
+        ),
+    )
+    executioner = combat.create_combatant(
+        "绝命主",
+        1,
+        100,
+        100,
+        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 99, "execute_pct": 100, "heal_down_pct": 0}),
+    )
+    executioner_state[0] = _spirit_state(
+        services,
+        "绝命标记源",
+        spirit_power=executioner.spirit_power,
+    )
+    combat.max_rounds = 1
+
+    battle = combat.run_battle(victim, executioner, rng=CombatRoller([0.99] * 10))
+
+    assert any(log.text and "绝命发动" in log.text for log in battle.logs)
+    assert any(log.text and "涅槃再起" in log.text for log in battle.logs)
+    assert battle.challenger_hp_after > 0
+
+
+def test_niepan_revives_after_chunsheng_followup_before_battle_result(services, monkeypatch) -> None:
+    combat = services.combat
+    original_battle_start = combat._trigger_battle_start
+
+    def battle_start(round_no, state, scene):
+        logs = original_battle_start(round_no, state, scene)
+        if state.snapshot.name == "追打者":
+            combat._add_status(state, _StatusEffect("春生·追击", bonus_damage=200, remaining_hits=1))
+        elif state.snapshot.name == "涅槃者":
+            combat._add_status(state, _StatusEffect("生息"))
+        return logs
+
+    monkeypatch.setattr(combat, "_trigger_battle_start", battle_start)
+    attacker = combat.create_combatant("追打者", 1, 100, 100)
+    victim = combat.create_combatant(
+        "涅槃者",
+        1,
+        10,
+        1,
+        spirit_power=SpiritPowerEntry(
+            "niepan",
+            {"cost_stacks": 1, "revive_hp_pct": 50, "per_revive_atk_pct": 0, "per_revive_speed_pct": 0, "revive_shield_pct": 0},
+        ),
+    )
+    combat.max_rounds = 1
+
+    battle = combat.run_battle(attacker, victim, rng=CombatRoller([0.99] * 10))
+
+    followup_index = next(i for i, log in enumerate(battle.logs) if log.text and "春生回返一击" in log.text)
+    revive_index = next(i for i, log in enumerate(battle.logs) if log.text and "涅槃再起" in log.text)
+    assert followup_index < revive_index
+    assert battle.defender_hp_after > 0
 
 
 def test_spirit_power_pool_expands_to_twenty_entries() -> None:

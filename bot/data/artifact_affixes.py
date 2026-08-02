@@ -93,7 +93,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("max_stacks", 7, 7),
         description_builder=lambda rolls: (
             f"每回合给敌方附加 1 层「咒缚」（每层承伤提高 {rolls['reduce_down_pct']}%，最多 {rolls['max_stacks']} 层）+ 1 层咒印；"
-            f"咒缚满层后仍继续附加咒印；咒缚被净化时每层额外叠加 1 层咒印。"
+            f"咒缚满层后仍继续附加咒印。"
         ),
     ),
     _define(
