@@ -142,7 +142,7 @@ SPIRIT_POWER_DEFINITIONS = (
             peak=(("heal_pct", 50, 62),),
             supreme=(("heal_pct", 60, 75),),
         ),
-        description_builder=lambda rolls: f"造成实际伤害后，按伤害的 {rolls['heal_pct']}% 回复生命；生息会进一步放大续航。",
+        description_builder=lambda rolls: f"普通攻击与自身造成的灼烧造成实际伤害后，按伤害的 {rolls['heal_pct']}% 回复生命。",
     ),
     _define_power(
         "jueming",
@@ -181,7 +181,7 @@ SPIRIT_POWER_DEFINITIONS = (
             peak=(("reflect_pct", 55, 70),),
             supreme=(("reflect_pct", 70, 90),),
         ),
-        description_builder=lambda rolls: f"受击后，按本次实际承伤的 {rolls['reflect_pct']}% 反弹伤害；守势减伤后反弹更高。",
+        description_builder=lambda rolls: f"受击后，按本次实际承伤的 {rolls['reflect_pct']}% 反弹伤害；有守势或减伤时反伤比例额外 +20 个百分点。",
     ),
     _define_power(
         "guifeng",
@@ -193,7 +193,7 @@ SPIRIT_POWER_DEFINITIONS = (
             peak=(("proc_pct", 38, 48), ("damage_pct", 130, 155)),
             supreme=(("proc_pct", 46, 58), ("damage_pct", 150, 180)),
         ),
-        description_builder=lambda rolls: f"受击后有 {rolls['proc_pct']}% 概率立刻反击 1 次，本次反击造成 {rolls['damage_pct']}% 伤害；血线落后时更易触发。",
+        description_builder=lambda rolls: f"受击后有 {rolls['proc_pct']}% 概率立刻反击 1 次，本次反击造成 {rolls['damage_pct']}% 伤害；血线落后触发率 +15 个百分点；每回合最多一次。",
     ),
     _define_power(
         "niepan",
@@ -238,7 +238,7 @@ SPIRIT_POWER_DEFINITIONS = (
             peak=(("per_lost_10_pct", 15, 18), ("max_bonus_pct", 155, 155), ("frenzy_lifesteal_pct", 16, 22)),
             supreme=(("per_lost_10_pct", 18, 22), ("max_bonus_pct", 180, 180), ("frenzy_lifesteal_pct", 20, 28)),
         ),
-        description_builder=lambda rolls: f"每损失 10% 最大生命，伤害提高 {rolls['per_lost_10_pct']}%，最高 {rolls['max_bonus_pct']}%；低血时获得 {rolls['frenzy_lifesteal_pct']}% 吸血。",
+        description_builder=lambda rolls: f"每损失 10% 最大生命，伤害提高 {rolls['per_lost_10_pct']}%，最高 {rolls['max_bonus_pct']}%；生命不高于 25% 时获得 {rolls['frenzy_lifesteal_pct']}% 吸血。",
     ),
     _define_power(
         "fenmai",
@@ -264,7 +264,10 @@ SPIRIT_POWER_DEFINITIONS = (
             peak=(("per_debuff_pct", 24, 28), ("max_bonus_pct", 250, 250)),
             supreme=(("per_debuff_pct", 28, 34), ("max_bonus_pct", 300, 300)),
         ),
-        description_builder=lambda rolls: f"目标每有 1 个负面层数，本次伤害提高 {rolls['per_debuff_pct']}%，最高 {rolls['max_bonus_pct']}%；负面层数≥5时追加固定伤害。",
+        description_builder=lambda rolls: (
+            f"目标每有 1 层负面效果，普通攻击伤害提高 {rolls['per_debuff_pct']}%，最高 {rolls['max_bonus_pct']}%；"
+            f"攻击结算时目标仍存活且负面效果不少于 5 层，追加当前杀伐 × {rolls['per_debuff_pct']}% 的伤害。"
+        ),
     ),
     _define_power(
         "chengshi",
@@ -276,7 +279,7 @@ SPIRIT_POWER_DEFINITIONS = (
             peak=(("base_pct", 50, 64), ("per_type_pct", 34, 42)),
             supreme=(("base_pct", 64, 80), ("per_type_pct", 42, 52)),
         ),
-        description_builder=lambda rolls: f"连锁引爆：同一回合内触发 2 种以上不同词条增伤时，追加 {rolls['base_pct']}% 伤害；每多 1 种词条类型额外提高 {rolls['per_type_pct']}%。",
+        description_builder=lambda rolls: f"持有 2 个以上增伤类法宝词条时，伤害提高 {rolls['base_pct']}%；第 3 个起每多 1 个额外提高 {rolls['per_type_pct']}%。",
     ),
     _define_power(
         "lingyong",
@@ -354,7 +357,7 @@ SPIRIT_POWER_DEFINITIONS = (
             peak=(("threshold", 5, 8), ("stack_pct", 12, 17)),
             supreme=(("threshold", 4, 7), ("stack_pct", 15, 21)),
         ),
-        description_builder=lambda rolls: f"回合结束时，若全场效果总层数 ≥ {rolls['threshold']}，净化全场所有效果（不分敌我、不分正负），将净化之力存储为 {rolls['stack_pct']}% × 总层数 杀伐的追打，下次攻击命中时释放。触发后有 1 回合冷却。",
+        description_builder=lambda rolls: f"回合结束时，若全场可净化效果总层数 ≥ {rolls['threshold']}，清除全场所有可净化效果，将净化之力存储为 {rolls['stack_pct']}% × 实际清除层数杀伐的追打，下次攻击命中时释放。触发后有 1 回合冷却。",
     ),
     _define_power(
         "chunsheng",
@@ -381,7 +384,10 @@ SPIRIT_POWER_DEFINITIONS = (
             peak=(("damage_pct", 175, 225), ("stacks", 3, 4)),
             supreme=(("damage_pct", 210, 270), ("stacks", 3, 4)),
         ),
-        description_builder=lambda rolls: f"命中带守势或多个正面效果的目标时，必定追加 {rolls['damage_pct']}% 伤害，并打散 {rolls['stacks']} 层正面状态；打散后自身获得等量增伤层数。",
+        description_builder=lambda rolls: (
+            f"命中带守势或多个正面效果的目标时，必定追加 {rolls['damage_pct']}% 伤害，并打散 {rolls['stacks']} 层正面状态；"
+            f"每打散 1 层，自身获得 {rolls['damage_pct'] // 2}% 下一击增伤。"
+        ),
     ),
     _define_power(
         "qiedao",

@@ -648,7 +648,7 @@ def test_battle_result_reports_guiyuan_effective_max_hp(services) -> None:
 def test_cleanse_removes_burn_by_layer(services) -> None:
     state = _combat_state(services, "净华修士")
     source = _combat_state(services, "灼魂修士")
-    state.statuses.append(_StatusEffect("灼烧", duration=5, burn_pct=20, is_debuff=True, source=source))
+    state.statuses.append(_StatusEffect("灼烧", stacks=5, burn_pct=20, is_debuff=True, source=source))
 
     assert services.combat._remove_one_debuff(state) is not None
     assert services.combat._remove_one_debuff(state) is not None
