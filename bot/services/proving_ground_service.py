@@ -863,8 +863,11 @@ class ProvingGroundService:
         )
         return name, enemy
 
-    def generate_boss_preset(self) -> tuple[str, CombatantSnapshot]:
-        """生成天劫化身 BOSS：固定高面板 + 5 满 roll 词条 + 高品阶器灵。"""
+    def generate_boss_preset(self, name: str = PG_BOSS_PRESET_NAME) -> tuple[str, CombatantSnapshot]:
+        """生成天劫化身 BOSS：固定高面板 + 5 满 roll 词条 + 高品阶器灵。
+
+        name 可覆盖：道心投影无合格真人原型时回退复用此固定面板。
+        """
         boss_mult = 1.35
         affixes = []
         for i in range(PG_BOSS_PRESET_AFFIX_COUNT):
@@ -876,7 +879,6 @@ class ProvingGroundService:
         tier_key = self.rng.choice(["peak", "supreme"])
         power_defn = self.rng.choice(SPIRIT_POWER_DEFINITIONS)
         spirit = power_defn.roll(tier_key, self.rng)
-        name = PG_BOSS_PRESET_NAME
         enemy = self.combat_service.create_combatant(
             name=name,
             atk=max(1, int(PG_BASE_STATS["atk"] * boss_mult)),
@@ -913,6 +915,88 @@ class ProvingGroundService:
             base_resilience=snap.base_resilience,
         )
         return name, enemy
+
+    @staticmethod
+    def pick_projection_character(
+        candidates: list[Character],
+        entrant: Character,
+        character_service,
+    ) -> Character | None:
+        """挑选道心投影原型：真人渡劫修士中战力最高者，排除自己与 NPC。
+
+        战场数值锚定渡劫圆满裸面板，伪仙及以上/NPC 面板会击穿全部难度曲线，
+        故只从真人渡劫修士中选取；无合格人选返回 None，由调用方回退固定面板。
+        """
+        pool = [
+            c
+            for c in candidates
+            if not c.is_npc and c.realm_key == "dujie" and c.id != entrant.id
+        ]
+        if not pool:
+            return None
+        return max(pool, key=lambda c: character_service.calculate_total_stats(c).combat_power)
+
+    @staticmethod
+    def serialize_boss_snapshot(snap: CombatantSnapshot) -> str:
+        """序列化 BOSS 快照（含词条/器灵/命格倍率/韧性），供跨回合重建。"""
+        return json.dumps(
+            {
+                "name": snap.name,
+                "atk": snap.atk,
+                "defense": snap.defense,
+                "agility": snap.agility,
+                "max_hp": snap.max_hp,
+                "affixes": [a.to_payload() for a in snap.affixes],
+                "spirit_power": snap.spirit_power.to_payload() if snap.spirit_power else None,
+                "realm_index": snap.realm_index,
+                "damage_dealt_basis_points": snap.damage_dealt_basis_points,
+                "damage_taken_basis_points": snap.damage_taken_basis_points,
+                "damage_reduction_basis_points": snap.damage_reduction_basis_points,
+                "versus_higher_realm_damage_basis_points": snap.versus_higher_realm_damage_basis_points,
+                "base_resilience": snap.base_resilience,
+            }
+        )
+
+    @staticmethod
+    def deserialize_boss_snapshot(raw: str | None) -> CombatantSnapshot | None:
+        """从 JSON 重建 BOSS 快照；空/损坏数据返回 None。
+
+        兼容仅存五项基础字段的旧格式：词条/器灵等缺失时按默认值降级。
+        """
+        if not raw or raw == "{}":
+            return None
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        try:
+            affixes = tuple(
+                ArtifactAffixEntry(slot=a["slot"], affix_id=a["affix_id"], rolls=a["rolls"])
+                for a in data.get("affixes", [])
+            )
+            sp_data = data.get("spirit_power")
+            spirit_power = None
+            if sp_data:
+                spirit_power = SpiritPowerEntry(sp_data["power_id"], sp_data.get("rolls", {}))
+            return CombatantSnapshot(
+                name=data["name"],
+                atk=data["atk"],
+                defense=data["defense"],
+                agility=data["agility"],
+                max_hp=data["max_hp"],
+                affixes=affixes,
+                spirit_power=spirit_power,
+                realm_index=data.get("realm_index", 1),
+                damage_dealt_basis_points=data.get("damage_dealt_basis_points", 0),
+                damage_taken_basis_points=data.get("damage_taken_basis_points", 0),
+                damage_reduction_basis_points=data.get("damage_reduction_basis_points", 0),
+                versus_higher_realm_damage_basis_points=data.get(
+                    "versus_higher_realm_damage_basis_points", 0
+                ),
+                base_resilience=data.get("base_resilience", 0),
+            )
+        except (KeyError, TypeError):
+            return None
 
     # -----------------------------------------------------------------------
     # 节点战斗
