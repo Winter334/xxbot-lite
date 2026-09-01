@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 import discord
@@ -10,7 +9,6 @@ from sqlalchemy import select
 
 from bot.data.proving_ground import (
     PG_BOSS_DISPLAY_NAMES,
-    PG_BOSS_PRESET,
     PG_BOSS_SELF,
     PG_BOSS_STRONGEST,
     PG_INVEST_AFFIX_COSTS,
@@ -141,18 +139,22 @@ async def _do_enter(bot: XianBot, user_id: int, display_name: str) -> tuple[disc
 
         # 生成 BOSS 快照
         if run.boss_type == PG_BOSS_STRONGEST:
-            # 全服最强快照
+            # 道心投影：真人渡劫修士中战力最高者（排除自己）；无合格人选回退固定面板
             chars = await bot.character_service.list_characters(session)
-            if chars:
-                strongest = max(chars, key=lambda c: bot.character_service.calculate_total_stats(c).combat_power)
-                _, snap = pg_svc.generate_boss_from_character(strongest, bot.character_service, "道心投影")
-                run.boss_snapshot_json = json.dumps({"name": snap.name, "atk": snap.atk, "defense": snap.defense, "agility": snap.agility, "max_hp": snap.max_hp})
+            strongest = pg_svc.pick_projection_character(chars, character, bot.character_service)
+            if strongest is not None:
+                _, snap = pg_svc.generate_boss_from_character(
+                    strongest, bot.character_service, PG_BOSS_DISPLAY_NAMES[PG_BOSS_STRONGEST]
+                )
+            else:
+                _, snap = pg_svc.generate_boss_preset(name=PG_BOSS_DISPLAY_NAMES[PG_BOSS_STRONGEST])
         elif run.boss_type == PG_BOSS_SELF:
-            _, snap = pg_svc.generate_boss_from_character(character, bot.character_service, "心魔映射")
-            run.boss_snapshot_json = json.dumps({"name": snap.name, "atk": snap.atk, "defense": snap.defense, "agility": snap.agility, "max_hp": snap.max_hp})
-        elif run.boss_type == PG_BOSS_PRESET:
+            _, snap = pg_svc.generate_boss_from_character(
+                character, bot.character_service, PG_BOSS_DISPLAY_NAMES[PG_BOSS_SELF]
+            )
+        else:
             _, snap = pg_svc.generate_boss_preset()
-            run.boss_snapshot_json = json.dumps({"name": snap.name, "atk": snap.atk, "defense": snap.defense, "agility": snap.agility, "max_hp": snap.max_hp})
+        run.boss_snapshot_json = pg_svc.serialize_boss_snapshot(snap)
 
         session.add(run)
         await session.commit()
@@ -195,21 +197,8 @@ async def _do_advance(
 
         pg_svc: ProvingGroundService = bot.proving_ground_service
 
-        # 准备 BOSS 快照
-        boss_snapshot = None
-        if run.boss_snapshot_json and run.boss_snapshot_json != "{}":
-            try:
-                snap_data = json.loads(run.boss_snapshot_json)
-                from bot.services.combat_service import CombatantSnapshot
-                boss_snapshot = CombatantSnapshot(
-                    name=snap_data["name"],
-                    atk=snap_data["atk"],
-                    defense=snap_data["defense"],
-                    agility=snap_data["agility"],
-                    max_hp=snap_data["max_hp"],
-                )
-            except (json.JSONDecodeError, KeyError):
-                pass
+        # 准备 BOSS 快照（含词条/器灵；旧格式缺字段时安全降级）
+        boss_snapshot = pg_svc.deserialize_boss_snapshot(run.boss_snapshot_json)
 
         result = pg_svc.advance_to_node(
             run, target_node_id, character,
