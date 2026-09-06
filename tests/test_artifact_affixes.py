@@ -679,3 +679,92 @@ def test_resilience_damage_that_lands_exactly_on_threshold_triggers_huichun(serv
     assert actual == 1
     assert state.hp == 600
     assert state.huichun_triggered_thresholds == {50}
+
+
+def test_attack_log_keeps_hp_after_the_hit_not_after_followups(services) -> None:
+    actor = _combat_state(
+        services,
+        "锁灵修士",
+        atk=100,
+        defense=200,
+        agility=1000,
+        affixes=(
+            ArtifactAffixEntry(1, "suoling", {"stacks": 1, "buff_pct": 5}),
+            ArtifactAffixEntry(2, "zhuanji", {"damage_pct": 50, "max_layers": 4}),
+        ),
+    )
+    target = _combat_state(services, "木人", atk=1, defense=200, agility=1)
+    target.statuses.append(services.combat._create_buff_by_name("增伤"))
+    hp_before = target.hp
+
+    logs = services.combat._resolve_action(1, actor, target, SequenceRandom([0.99] * 20), set())
+    attack = next(log for log in logs if log.text is None)
+    suoling = next(i for i, log in enumerate(logs) if log.text and "锁灵" in log.text)
+    zhuanji = next(i for i, log in enumerate(logs) if log.text and "转机" in log.text)
+
+    assert attack.damage > 0
+    assert attack.target_hp_after == hp_before - attack.damage
+    assert attack.target_hp_after > target.hp
+    assert suoling < zhuanji
+
+
+def test_jinghua_log_appears_before_zhuanji_followup(services) -> None:
+    state = _combat_state(
+        services,
+        "净华修士",
+        affixes=(
+            ArtifactAffixEntry(1, "jinghua", {"stacks": 1}),
+            ArtifactAffixEntry(2, "zhuanji", {"damage_pct": 50, "max_layers": 4}),
+        ),
+    )
+    opponent = _combat_state(services, "木人")
+    source = _combat_state(services, "施加者")
+    state.statuses.append(_StatusEffect("蔓咒", atk_pct=-10, is_debuff=True, source=source))
+
+    logs = services.combat._trigger_round_start(1, state, opponent, SequenceRandom([0.99]), set())
+    jinghua = next(i for i, log in enumerate(logs) if log.text and "净华" in log.text)
+    zhuanji = next(i for i, log in enumerate(logs) if log.text and "转机" in log.text)
+
+    assert jinghua < zhuanji
+
+
+def test_attack_log_appears_before_huichun_and_keeps_pre_heal_hp(services) -> None:
+    actor = _combat_state(services, "重击", atk=600, defense=200, agility=1000)
+    target = _combat_state(
+        services,
+        "回春修士",
+        atk=1,
+        defense=200,
+        agility=1,
+        affixes=(ArtifactAffixEntry(1, "huichun", {"heal_pct": 20, "shengxi_stacks": 2}),),
+    )
+    target.hp = 1400
+    hp_before = target.hp
+
+    logs = services.combat._resolve_action(1, actor, target, SequenceRandom([0.99] * 20), set())
+    attack_i = next(i for i, log in enumerate(logs) if log.text is None)
+    huichun_i = next(i for i, log in enumerate(logs) if log.text and "回春" in log.text)
+    attack = logs[attack_i]
+
+    assert attack_i < huichun_i
+    assert attack.target_hp_after == hp_before - attack.damage
+    assert target.hp > attack.target_hp_after
+
+
+def test_attack_log_appears_before_liekai_threshold(services) -> None:
+    actor = _combat_state(services, "重击", atk=800, defense=200, agility=1000)
+    target = _combat_state(
+        services,
+        "裂铠修士",
+        atk=1,
+        defense=200,
+        agility=1,
+        affixes=(ArtifactAffixEntry(1, "liekai", {"shield_pct": 20, "backlash_pct": 50}),),
+    )
+    target.hp = 1200
+
+    logs = services.combat._resolve_action(1, actor, target, SequenceRandom([0.99] * 20), set())
+    attack_i = next(i for i, log in enumerate(logs) if log.text is None)
+    liekai_i = next(i for i, log in enumerate(logs) if log.text and "裂铠" in log.text)
+
+    assert attack_i < liekai_i
