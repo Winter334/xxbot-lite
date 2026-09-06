@@ -6,6 +6,7 @@ from bot.services.breakthrough_service import BreakthroughResult
 from bot.services.character_service import CharacterSnapshot
 from bot.services.combat_service import CombatService
 from bot.services.idle_service import IdleSettlement
+from bot.services.faction_service import FactionActionResult
 from bot.services.ladder_service import LadderChallengeResult
 from bot.services.pvp_service import ArenaChallengeResult, ArenaClaimResult, ArenaStatus, SparChallengeResult
 from bot.services.tower_service import TowerFloorResult, TowerRunResult
@@ -780,6 +781,8 @@ def build_public_battle_report_embed(
         "ladder": "论道 · 完整战报",
         "arena": "擂台 · 完整战报",
         "spar": "切磋 · 完整战报",
+        "bounty": "悬赏 · 完整战报",
+        "robbery": "劫掠 · 完整战报",
     }
     title = mode_titles.get(mode, "对决 · 完整战报")
     return build_pvp_battle_embed(
@@ -979,6 +982,26 @@ def build_ladder_battle_embed(challenger: CharacterSnapshot, defender: Character
             f"剩余挑战：`{result.remaining_attempts}` 次",
         ],
         footer_text=f"今日剩余论道次数：{result.remaining_attempts}",
+        report_page=report_page,
+    )
+
+
+def build_faction_battle_embed(
+    challenger: CharacterSnapshot,
+    defender: CharacterSnapshot,
+    result: FactionActionResult,
+    *,
+    title: str,
+    summary_lines: list[str],
+    report_page: int = 0,
+) -> discord.Embed:
+    return build_pvp_battle_embed(
+        challenger,
+        defender,
+        title=f"{challenger.player_name} · {title}",
+        description=result.message,
+        battle=result.battle,
+        summary_lines=summary_lines,
         report_page=report_page,
     )
 
