@@ -1,10 +1,10 @@
 """NPC 经济填充剂 Service。
 
 设计理念：NPC = "随机存档的玩家"。
-- 每天 0 点全清重生（懒结算 + 启动兜底触发 ensure_daily_pool）
+- 每天 0 点全清重生；3/6/9/12/15/18/21 点只补悬赏被打空的魔道名额
 - 不参与任何主动行为：不闭关/不游历/不打塔/不入宗门/不开擂
 - 仅作为「可被打的目标」存在：悬赏列表 / 劫掠列表 / 战斗管线
-- 所有资源 ≤ 全服真人最高（防捡漏）
+- 境界固定四档；器魂跟全服真人第二高走同档倍率，悬赏跟全服真人最高恶名走同档倍率
 - 完全融入真人 Character 表，靠 is_npc 字段区分
 """
 
@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import random
 import uuid
-from collections import Counter
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -23,7 +22,8 @@ from bot.data.npc_names import generate_xianxia_name
 from bot.data.realms import get_stage
 from bot.data.spirits import SPIRIT_TIER_ORDER
 from bot.models import Artifact, Character, LadderRecord, Player
-from bot.utils.time_utils import now_shanghai, today_shanghai
+from bot.services.faction_service import INFAMY_BY_REALM
+from bot.utils.time_utils import ensure_shanghai, now_shanghai, today_shanghai
 
 if TYPE_CHECKING:
     from bot.services.artifact_service import ArtifactService
@@ -44,6 +44,15 @@ class NpcService:
     SPIRIT_REROLL_LIMIT = 5
     """器灵品阶超 cap 时的重 roll 上限，防死循环"""
 
+    REFRESH_HOURS = (0, 3, 6, 9, 12, 15, 18, 21)
+    STAGE_KEYS = ("early", "mid", "late", "perfect")
+    REALM_SPAWN_BANDS = (
+        (0.50, ("lianqi", "zhuji", "jiedan"), 0.01, 0.05),
+        (0.30, ("yuanying", "huashen", "lianxu"), 0.05, 0.10),
+        (0.15, ("heti", "dacheng", "dujie"), 0.10, 0.15),
+        (0.05, ("weixian",), 0.15, 0.20),
+    )
+
     def __init__(
         self,
         rng: random.Random,
@@ -62,30 +71,54 @@ class NpcService:
     # 主入口：每日刷新（幂等）
     # ------------------------------------------------------------------
 
-    async def ensure_daily_pool(self, session: AsyncSession) -> int:
-        """幂等：当日已有 NPC 则跳过；否则删旧 NPC + 生成新池。
+    async def ensure_daily_pool(self, session: AsyncSession, *, now=None) -> int:
+        """0 点全换；其余 3 小时整点只补悬赏被打空的魔道名额。"""
+        current = ensure_shanghai(now or now_shanghai())
+        today = current.date()
+        npcs = await self._load_npcs(session)
 
-        返回值：本次新增 NPC 数（0 = 当日已生成或无真人样本）。
-        """
-        today = today_shanghai()
+        if not any(n.npc_spawned_on == today for n in npcs):
+            return await self._rebuild_pool(session, npcs, today)
+        if current.hour not in self.REFRESH_HOURS or current.hour == 0:
+            return 0
+        emptied = [n for n in npcs if n.faction == "demonic" and (n.bounty_soul or 0) <= 0]
+        if not emptied:
+            return 0
+        remaining = len(npcs) - len(emptied)
+        await self._delete_npcs(session, emptied)
+        room = max(0, self.DAILY_POOL_SIZE - remaining)
+        return await self._spawn_many(session, today, min(len(emptied), room), force_demonic=True)
 
-        npcs = (
-            await session.scalars(
-                select(Character)
-                .where(Character.is_npc.is_(True))
-                .options(
-                    selectinload(Character.player),
-                    selectinload(Character.artifact),
-                    selectinload(Character.ladder_record),
+    async def _load_npcs(self, session: AsyncSession) -> list[Character]:
+        return list(
+            (
+                await session.scalars(
+                    select(Character)
+                    .where(Character.is_npc.is_(True))
+                    .options(
+                        selectinload(Character.player),
+                        selectinload(Character.artifact),
+                        selectinload(Character.ladder_record),
+                    )
                 )
-            )
-        ).all()
+            ).all()
+        )
 
-        already_today = [n for n in npcs if n.npc_spawned_on == today]
-        if already_today:
-            return 0  # 当日已刷新
+    async def _load_real_chars(self, session: AsyncSession) -> list[Character]:
+        return list(
+            (
+                await session.scalars(
+                    select(Character)
+                    .where(Character.is_npc.is_(False))
+                    .options(
+                        selectinload(Character.player),
+                        selectinload(Character.artifact),
+                    )
+                )
+            ).all()
+        )
 
-        # 删除旧 NPC（cascade 自动清理 character / artifact / ladder_record）
+    async def _delete_npcs(self, session: AsyncSession, npcs: list[Character]) -> None:
         for npc in npcs:
             if npc.player is not None:
                 await session.delete(npc.player)
@@ -93,28 +126,29 @@ class NpcService:
                 await session.delete(npc)
         await session.flush()
 
-        # 取真人样本（NPC 不计入 caps 计算）
-        real_chars = (
-            await session.scalars(
-                select(Character)
-                .where(Character.is_npc.is_(False))
-                .options(
-                    selectinload(Character.player),
-                    selectinload(Character.artifact),
-                )
-            )
-        ).all()
-        if not real_chars:
-            return 0  # 无真人样本，不生成（避免冷启动空 caps 兜底复杂度）
+    async def _rebuild_pool(self, session: AsyncSession, npcs: list[Character], today) -> int:
+        await self._delete_npcs(session, npcs)
+        return await self._spawn_many(session, today, self.DAILY_POOL_SIZE)
 
-        caps = self._compute_caps(real_chars)
-        realm_dist = self._realm_distribution(real_chars)
-        if not realm_dist:
+    async def _spawn_many(self, session: AsyncSession, today, count: int, *, force_demonic: bool = False) -> int:
+        if count <= 0:
             return 0
-
+        real_chars = await self._load_real_chars(session)
+        if not real_chars:
+            return 0
+        caps = self._compute_caps(real_chars)
+        existing = await self._load_npcs(session)
+        start_index = len(existing)
         spawned = 0
-        for index in range(self.DAILY_POOL_SIZE):
-            await self._spawn_one(session, caps, realm_dist, today, index)
+        for offset in range(count):
+            await self._spawn_one(
+                session,
+                caps,
+                real_chars,
+                today,
+                start_index + offset,
+                force_demonic=force_demonic,
+            )
             spawned += 1
         await session.flush()
         return spawned
@@ -126,8 +160,7 @@ class NpcService:
     def _compute_caps(self, real_chars: list[Character]) -> dict[str, int]:
         """从真人样本计算各项资源上限。
 
-        经济资源（灵石/悬赏/器魂）使用去极值上限，
-        防止单个极端玩家污染全体 NPC 池导致经济崩溃。
+        灵石/器魂去极值（第二高）；悬赏上限取全服真人最高恶名。
         """
         return {
             "max_reinforce": max(
@@ -135,7 +168,7 @@ class NpcService:
                 default=0,
             ),
             "max_lingshi": self._dampened_cap([c.lingshi for c in real_chars]),
-            "max_bounty": self._dampened_cap([c.bounty_soul for c in real_chars]),
+            "max_bounty": max((c.infamy or 0 for c in real_chars), default=0),
             "max_virtue": max((c.virtue for c in real_chars), default=0),
             "max_infamy": max((c.infamy for c in real_chars), default=0),
             "max_soul_shards": self._dampened_cap(
@@ -178,11 +211,27 @@ class NpcService:
                 best = idx
         return best
 
-    def _realm_distribution(
-        self, real_chars: list[Character]
-    ) -> Counter[tuple[str, str]]:
-        """真人境界分布（用于按权重 roll NPC 境界，实现 E3 镜像）。"""
-        return Counter((c.realm_key, c.stage_key) for c in real_chars)
+    def _pick_realm_band(self):
+        roll = self.rng.random()
+        cumulative = 0.0
+        for weight, realm_keys, lo, hi in self.REALM_SPAWN_BANDS:
+            cumulative += weight
+            if roll < cumulative:
+                return realm_keys, lo, hi
+        realm_keys, lo, hi = self.REALM_SPAWN_BANDS[-1][1:]
+        return realm_keys, lo, hi
+
+    def _roll_realm_stage(self):
+        realm_keys, lo, hi = self._pick_realm_band()
+        realm_key = self.rng.choice(realm_keys)
+        stage_key = self.rng.choice(self.STAGE_KEYS)
+        return get_stage(realm_key, stage_key), lo, hi
+
+    def _band_amount(self, cap: int, lo: float, hi: float, *, floor: int = 0) -> int:
+        if cap <= 0:
+            return floor
+        amount = max(1, int(cap * self.rng.uniform(lo, hi)))
+        return min(amount, cap)
 
     # ------------------------------------------------------------------
     # 单个 NPC 生成
@@ -192,16 +241,16 @@ class NpcService:
         self,
         session: AsyncSession,
         caps: dict[str, int],
-        realm_dist: Counter[tuple[str, str]],
+        real_chars: list[Character],
         today,
         index: int,
+        *,
+        force_demonic: bool = False,
     ) -> None:
-        """生成单个 NPC：境界镜像 + caps 限制 + 完整 Character/Artifact/LadderRecord。"""
-        # ---- 1. 境界镜像（按真人分布权重 roll） ----
-        items = list(realm_dist.keys())
-        weights = list(realm_dist.values())
-        realm_key, stage_key = self.rng.choices(items, weights=weights, k=1)[0]
-        stage = get_stage(realm_key, stage_key)
+        """生成单个 NPC：固定境界档 + 同档悬赏/器魂倍率。"""
+        stage, band_lo, band_hi = self._roll_realm_stage()
+        realm_key = stage.realm_key
+        stage_key = stage.stage_key
 
         # ---- 2. 修为：该 stage 内 0 ~ 90% ----
         cultivation = self.rng.randint(0, max(0, int(stage.cultivation_max * 0.9)))
@@ -216,12 +265,10 @@ class NpcService:
         luck = self.fate_service.random_initial_luck()
 
         # ---- 5. 阵营 + 悬赏/罪业/功德 ----
-        is_demonic = (
-            self.rng.random() < self.DEMONIC_RATIO and caps["max_bounty"] > 0
-        )
+        is_demonic = force_demonic or self.rng.random() < self.DEMONIC_RATIO
         if is_demonic:
             faction = "demonic"
-            bounty = self._roll_bounty(caps["max_bounty"])
+            bounty = self._roll_bounty(caps["max_bounty"], realm_key=realm_key, lo=band_lo, hi=band_hi)
             infamy = (
                 self.rng.randint(100, max(101, caps["max_infamy"]))
                 if caps["max_infamy"] > 0
@@ -240,15 +287,12 @@ class NpcService:
 
         # ---- 6. 灵石（三段分布 × caps 限制） ----
         lingshi = self._roll_lingshi(caps["max_lingshi"])
-        # ---- 6b. 器魂（三段分布，偏激进；劫掠一次只能抢 10%）----
-        soul_shards = self._roll_soul_shards(caps["max_soul_shards"])
+        # ---- 6b. 器魂：上限=真人器魂第二高，倍率跟大境界档走 ----
+        soul_shards = self._roll_soul_shards(caps["max_soul_shards"], lo=band_lo, hi=band_hi)
 
-        # ---- 7. 法宝强化等级 + 三维成长 ----
-        reinforce_cap = min(caps["max_reinforce"], stage.reinforce_cap)
-        reinforce_level = (
-            self.rng.randint(0, reinforce_cap) if reinforce_cap > 0 else 0
-        )
-        atk_b, def_b, agi_b = self._roll_artifact_growth(stage, reinforce_level)
+        # ---- 7. 法宝强化拉满该境界 cap；三维取同境真人最高/最低均值 ±30% ----
+        reinforce_level = stage.reinforce_cap
+        atk_b, def_b, agi_b = self._roll_artifact_bonuses(stage, real_chars, fate.key)
 
         # ---- 8. 论道排名（NPC 不上榜，给占位高 rank） ----
         placeholder_rank = 9000 + index
@@ -379,61 +423,32 @@ class NpcService:
         amount = int(max_lingshi * mult)
         return min(amount, max_lingshi)
 
-    def _roll_bounty(self, max_bounty: int) -> int:
-        """悬赏三段分布（保守）：50% 低 / 35% 中 / 15% 高。
+    def _roll_bounty(self, max_bounty: int, *, realm_key: str, lo: float, hi: float) -> int:
+        """上限=全服真人最高恶名；全服恶名为 0 时按该境界固定恶名保底。"""
+        floor = INFAMY_BY_REALM.get(realm_key, 50)
+        return self._band_amount(max_bounty, lo, hi, floor=floor)
 
-        悬赏被正道讨伐时一次性全部带走，相对劫掠（10%）回报更高，
-        因此 NPC 携带的悬赏值偏保守，配合主人讨伐自然清空机制控制总量。
-        """
-        if max_bounty <= 0:
-            return 0
-        bucket = self.rng.random()
-        if bucket < 0.50:
-            mult = self.rng.uniform(0.05, 0.20)
-        elif bucket < 0.85:
-            mult = self.rng.uniform(0.20, 0.45)
-        else:
-            mult = self.rng.uniform(0.45, 0.70)
-        amount = max(1, int(max_bounty * mult))
-        return min(amount, max_bounty)
-
-    def _roll_soul_shards(self, max_soul_shards: int) -> int:
-        """器魂三段分布（激进）：20% 低 / 50% 中 / 30% 高。
-
-        劫掠一次只能抢走 10%，因此 NPC 携带器魂可以稍微激进些，
-        保证魔道劫掠玩法有持续产出。
-        """
-        if max_soul_shards <= 0:
-            return 0
-        bucket = self.rng.random()
-        if bucket < 0.20:
-            mult = self.rng.uniform(0.10, 0.30)
-        elif bucket < 0.70:
-            mult = self.rng.uniform(0.30, 0.70)
-        else:
-            mult = self.rng.uniform(0.70, 1.10)
-        amount = int(max_soul_shards * mult)
-        return min(amount, max_soul_shards)
+    def _roll_soul_shards(self, max_soul_shards: int, *, lo: float, hi: float) -> int:
+        """上限=全服真人器魂第二高，倍率跟 NPC 大境界档走。"""
+        return self._band_amount(max_soul_shards, lo, hi)
 
     # ------------------------------------------------------------------
     # 法宝三维成长模拟
     # ------------------------------------------------------------------
 
-    def _roll_artifact_growth(
-        self, stage, reinforce_level: int
-    ) -> tuple[int, int, int]:
-        """模拟 reinforce_level 次强化后的 atk/def/agi 加成（每次随机投点到三维之一）。"""
-        if reinforce_level <= 0:
+    def _roll_artifact_bonuses(self, stage, real_chars: list[Character], fate_key: str) -> tuple[int, int, int]:
+        peers = [c for c in real_chars if c.realm_key == stage.realm_key]
+        if not peers:
             return 0, 0, 0
-        growth_total = self.artifact_service._growth_total(stage)
-        total_points = growth_total * reinforce_level
-        atk_b = def_b = agi_b = 0
-        for _ in range(total_points):
-            choice = self.rng.randint(0, 2)
-            if choice == 0:
-                atk_b += 1
-            elif choice == 1:
-                def_b += 1
-            else:
-                agi_b += 1
-        return atk_b, def_b, agi_b
+        stats = [self.character_service.calculate_total_stats(c) for c in peers]
+        return (
+            self._bonus_for_target(min(s.atk for s in stats), max(s.atk for s in stats), stage.base_atk, fate_key, "atk"),
+            self._bonus_for_target(min(s.defense for s in stats), max(s.defense for s in stats), stage.base_def, fate_key, "def"),
+            self._bonus_for_target(min(s.agility for s in stats), max(s.agility for s in stats), stage.base_agi, fate_key, "agi"),
+        )
+
+    def _bonus_for_target(self, low: int, high: int, base: int, fate_key: str, stat: str) -> int:
+        target = max(1, int((low + high) / 2 * self.rng.uniform(0.70, 1.30)))
+        mult = self.fate_service.stat_multiplier(fate_key, stat)
+        raw = int(target / mult) if mult else target
+        return max(0, raw - base)

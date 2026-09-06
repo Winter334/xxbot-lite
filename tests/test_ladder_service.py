@@ -7,7 +7,8 @@ import pytest
 from bot.services.character_service import CharacterSnapshot
 from bot.services.combat_service import ActionLog
 from bot.services.ladder_service import LadderService
-from bot.ui.panel import build_battle_report_pages, build_public_battle_report_embed
+from bot.services.faction_service import FactionActionResult
+from bot.ui.panel import build_battle_report_pages, build_faction_battle_embed, build_public_battle_report_embed
 from bot.views.panel import PublicBattleReportView
 
 
@@ -165,6 +166,44 @@ def test_public_battle_report_embed_shows_page_index() -> None:
     overview = next(field for field in embed.fields if field.name == "战斗总览")
     assert "战报页：`2/" in overview.value
     assert embed.footer.text == "仅对战双方可翻页；所有人均可查看当前页。"
+
+
+def test_public_faction_battle_report_embed_uses_full_paged_log() -> None:
+    battle = _long_battle()
+
+    for mode, title in (("bounty", "悬赏 · 完整战报"), ("robbery", "劫掠 · 完整战报")):
+        embed = build_public_battle_report_embed(
+            _snapshot("甲", 1),
+            _snapshot("乙", 2),
+            battle,
+            mode=mode,
+            summary_lines=["目标：**乙**"],
+            report_page=0,
+        )
+        assert embed.title == title
+        assert any(field.name.startswith("完整战报") for field in embed.fields)
+        assert "**第 1 回合**" in "\n".join(field.value for field in embed.fields if field.name.startswith("完整战报"))
+
+
+def test_private_faction_battle_embed_keeps_full_report() -> None:
+    battle = _long_battle(2)
+    result = FactionActionResult(True, "劫掠得手，所夺资源已尽归己身。", battle, soul_delta=12, target_name="乙")
+
+    embed = build_faction_battle_embed(
+        _snapshot("甲", 1),
+        _snapshot("乙", 2),
+        result,
+        title="劫掠",
+        summary_lines=["目标：**乙**", "器魂：`+12`"],
+    )
+
+    assert embed.title == "甲 · 劫掠"
+    assert embed.description == "劫掠得手，所夺资源已尽归己身。"
+    assert any(field.name.startswith("完整战报") for field in embed.fields)
+    overview = next(field for field in embed.fields if field.name == "战斗总览")
+    assert "目标：**乙**" in overview.value
+    assert "器魂：`+12`" in overview.value
+    assert not any(field.name == "战报截取" for field in embed.fields)
 
 
 @pytest.mark.asyncio
