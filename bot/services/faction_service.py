@@ -20,16 +20,16 @@ FACTION_NAMES = {
 }
 
 INFAMY_BY_REALM = {
-    "lianqi": 5,
-    "zhuji": 10,
-    "jiedan": 20,
-    "yuanying": 40,
-    "huashen": 65,
-    "lianxu": 95,
-    "heti": 135,
-    "dacheng": 185,
-    "dujie": 300,
-    "weixian": 450,
+    "lianqi": 50,
+    "zhuji": 100,
+    "jiedan": 200,
+    "yuanying": 400,
+    "huashen": 650,
+    "lianxu": 950,
+    "heti": 1350,
+    "dacheng": 1500,
+    "dujie": 2000,
+    "weixian": 3000,
 }
 
 ROBBERY_SOUL_STEAL_BASIS_POINTS = 1000
@@ -53,6 +53,9 @@ ROBBERY_BONUS_LINGSHI_BY_REALM: dict[str, int] = {
 
 BOUNTY_LINGSHI_MULTIPLIER = 5
 """悬赏讨伐成功后每点 bounty_soul 兑换灵石的倍率。"""
+
+REALM_LOOT_STEP_PCT = 30
+"""大境界每差 1 层，战利品 ±30%。低于自己 4 层起为 0。"""
 
 
 @dataclass(slots=True)
@@ -191,7 +194,7 @@ class FactionService:
         return bonus
 
     def robbery_bonus_soul(self, target: Character, *, same_faction_halved: bool) -> int:
-        bonus_soul = max(2, INFAMY_BY_REALM.get(target.realm_key, 3) // 2)
+        bonus_soul = max(2, INFAMY_BY_REALM.get(target.realm_key, 50) // 2)
         if same_faction_halved:
             bonus_soul //= 2
         return bonus_soul
@@ -203,6 +206,23 @@ class FactionService:
             ROBBERY_DEFEATED_SOUL_STEAL_BASIS_POINTS if defeated_penalty else ROBBERY_SOUL_STEAL_BASIS_POINTS
         )
         return min(target_soul, max(1, target_soul * basis_points // 10_000))
+
+    @staticmethod
+    def realm_loot_multiplier_pct(actor_realm_index: int, target_realm_index: int) -> int:
+        delta = int(target_realm_index or 1) - int(actor_realm_index or 1)
+        return max(0, 100 + delta * REALM_LOOT_STEP_PCT)
+
+    def _scale_loot(self, amount: int, actor: Character, target: Character) -> int:
+        if amount <= 0:
+            return 0
+        return amount * self.realm_loot_multiplier_pct(actor.realm_index, target.realm_index) // 100
+
+    def _apply_bounty_on_infamy_gain(self, character: Character) -> int:
+        gain = max(0, int(character.infamy or 0) // 10)
+        if gain <= 0:
+            return 0
+        character.bounty_soul = (character.bounty_soul or 0) + gain
+        return gain
 
     def can_bounty_hunt(self, character: Character, *, now=None) -> tuple[bool, str | None]:
         if character.faction != "righteous":
@@ -281,14 +301,17 @@ class FactionService:
             hunter.last_highlight_text = f"方才追剿 {target.player.display_name} 未成。"
             return FactionActionResult(False, "你此番讨伐未能成事，悬赏仍在对方头上。", battle, target_name=target.player.display_name)
 
-        reward_soul = target.bounty_soul or 0
-        reward_lingshi = reward_soul * BOUNTY_LINGSHI_MULTIPLIER
+        raw_soul = target.bounty_soul or 0
+        reward_soul = self._scale_loot(raw_soul, hunter, target)
+        reward_lingshi = self._scale_loot(raw_soul * BOUNTY_LINGSHI_MULTIPLIER, hunter, target)
+        reward_virtue = self._scale_loot(raw_soul, hunter, target)
+        reward_luck = self._scale_loot(10, hunter, target)
         if hunter.artifact is not None and reward_soul > 0:
             hunter.artifact.soul_shards += reward_soul
         if reward_lingshi > 0:
             hunter.lingshi += reward_lingshi
-        hunter.virtue += reward_soul
-        hunter.luck += 10
+        hunter.virtue += reward_virtue
+        hunter.luck += reward_luck
         target.bounty_soul = 0
         # 讨伐成功清空当前恶名（避免被堵门反复刷成资源包）；
         # historical_max_infamy 保留，作为下次再作恶时"快速回升"的依据
@@ -306,9 +329,9 @@ class FactionService:
             battle,
             soul_delta=reward_soul,
             lingshi_delta=reward_lingshi,
-            luck_delta=10,
-            virtue_delta=reward_soul,
-            bounty_delta=-reward_soul,
+            luck_delta=reward_luck,
+            virtue_delta=reward_virtue,
+            bounty_delta=-raw_soul,
             target_name=target.player.display_name,
         )
 
@@ -330,6 +353,7 @@ class FactionService:
         defeated_penalty_applied = self.robbery_defeat_penalty_active(robber, now=current_time)
         if not battle.challenger_won:
             self._apply_infamy_gain(robber, 3)
+            self._apply_bounty_on_infamy_gain(robber)
             robber.last_highlight_text = f"方才劫掠 {target.player.display_name} 失手。"
             return FactionActionResult(
                 False,
@@ -350,41 +374,51 @@ class FactionService:
             stolen_soul //= 2
             stolen_lingshi //= 2
             stolen_luck //= 2
+        stolen_soul = self._scale_loot(stolen_soul, robber, target)
+        stolen_lingshi = self._scale_loot(stolen_lingshi, robber, target)
+        stolen_luck = self._scale_loot(stolen_luck, robber, target)
 
         actual_stolen_soul = 0
         if stolen_soul > 0 and target.artifact is not None and robber.artifact is not None:
-            target.artifact.soul_shards -= stolen_soul
-            robber.artifact.soul_shards += stolen_soul
-            actual_stolen_soul = stolen_soul
+            take_soul = min(stolen_soul, target.artifact.soul_shards or 0)
+            target.artifact.soul_shards -= take_soul
+            robber.artifact.soul_shards += take_soul
+            actual_stolen_soul = take_soul
         actual_stolen_lingshi = 0
         if stolen_lingshi > 0:
-            target.lingshi -= stolen_lingshi
-            robber.lingshi += stolen_lingshi
-            actual_stolen_lingshi = stolen_lingshi
+            take_lingshi = min(stolen_lingshi, target.lingshi or 0)
+            target.lingshi -= take_lingshi
+            robber.lingshi += take_lingshi
+            actual_stolen_lingshi = take_lingshi
         if stolen_luck > 0:
-            target.luck -= stolen_luck
-            robber.luck += stolen_luck
+            take_luck = min(stolen_luck, target.luck or 0)
+            target.luck -= take_luck
+            robber.luck += take_luck
+            stolen_luck = take_luck
 
         # 恶名增量 = 基础（按目标境界） + 历史最大恶名 × 5%（快速回升机制）
         # 讨伐清空当前 infamy 但 historical_max_infamy 保留，再次作恶时阶梯式回升
-        base_infamy_gain = INFAMY_BY_REALM.get(target.realm_key, 3)
+        base_infamy_gain = INFAMY_BY_REALM.get(target.realm_key, 50)
         escalation = int((robber.historical_max_infamy or 0) * 0.05)
         infamy_gain = base_infamy_gain + escalation
         # 系统额外注入器魂和灵石 bonus
-        bonus_soul = self.robbery_bonus_soul(
+        bonus_soul = self._scale_loot(
+            self.robbery_bonus_soul(target, same_faction_halved=same_faction_halved),
+            robber,
             target,
-            same_faction_halved=same_faction_halved,
         )
         actual_bonus_soul = 0
         if bonus_soul > 0 and robber.artifact is not None:
             robber.artifact.soul_shards += bonus_soul
             actual_bonus_soul = bonus_soul
-        bonus_lingshi = self.robbery_bonus_lingshi(
+        bonus_lingshi = self._scale_loot(
+            self.robbery_bonus_lingshi(target, same_faction_halved=same_faction_halved),
+            robber,
             target,
-            same_faction_halved=same_faction_halved,
         )
         robber.lingshi += bonus_lingshi
         self._apply_infamy_gain(robber, infamy_gain)
+        self._apply_bounty_on_infamy_gain(robber)
         robber.last_highlight_text = f"方才劫掠 {target.player.display_name} 得手。"
         target.last_highlight_text = f"方才遭 {robber.player.display_name} 劫掠。"
         if self.sect_service is not None:
