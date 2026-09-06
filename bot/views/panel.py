@@ -13,7 +13,6 @@ from bot.ui.artifact import (
     build_reinforce_panel_embed,
 )
 from bot.ui.panel import (
-    _battle_excerpt,
     build_arena_claim_embed,
     build_arena_claim_notice_embed,
     build_arena_embed,
@@ -21,6 +20,7 @@ from bot.ui.panel import (
     build_battle_report_pages,
     build_breakthrough_embed,
     build_faction_action_embed,
+    build_faction_battle_embed,
     build_faction_embed,
     build_fate_rewrite_confirm_embed,
     build_fate_rewrite_embed,
@@ -52,6 +52,72 @@ if TYPE_CHECKING:
 
 
 ROBBERY_TARGETS_PER_PAGE = 25
+
+
+def _pvp_allowed_user_ids(owner_user_id: int, defender) -> tuple[int, int]:
+    raw = getattr(getattr(defender, "player", None), "discord_user_id", None)
+    try:
+        defender_id = int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        defender_id = None
+    return (owner_user_id, defender_id if defender_id is not None else owner_user_id)
+
+
+def _bounty_summary_lines(result) -> list[str]:
+    lines = []
+    if result.target_name:
+        lines.append(f"目标：**{result.target_name}**")
+    if result.soul_delta:
+        lines.append(f"器魂：`+{result.soul_delta}`")
+    if result.lingshi_delta:
+        lines.append(f"灵石：`+{result.lingshi_delta}`")
+    if result.luck_delta:
+        lines.append(f"气运：`+{result.luck_delta}`")
+    if result.virtue_delta:
+        lines.append(f"善名：`+{result.virtue_delta}`")
+    return lines
+
+
+def _robbery_summary_lines(result) -> list[str]:
+    lines = []
+    if result.target_name:
+        lines.append(f"目标：**{result.target_name}**")
+    if result.soul_delta:
+        lines.append(f"器魂：`+{result.soul_delta}`")
+    if result.lingshi_delta:
+        lines.append(f"灵石：`+{result.lingshi_delta}`")
+    if result.luck_delta:
+        lines.append(f"气运：`+{result.luck_delta}`")
+    if result.infamy_delta:
+        lines.append(f"恶名：`+{result.infamy_delta}`")
+    if result.same_faction_halved:
+        lines.append("同为魔道，此次收益已减半。")
+    if result.defeated_penalty_applied:
+        lines.append("你今日方被讨伐，掠夺器魂与灵石降至1%，额外奖励不受影响。")
+    return lines
+
+
+def _faction_public_report(
+    owner_user_id: int,
+    target,
+    snapshot,
+    target_snapshot,
+    result,
+    *,
+    mode: str,
+    summary_lines: list[str],
+):
+    if result is None or result.battle is None or target_snapshot is None:
+        return None
+    view = PublicBattleReportView(
+        snapshot,
+        target_snapshot,
+        result.battle,
+        mode=mode,
+        summary_lines=summary_lines,
+        allowed_user_ids=_pvp_allowed_user_ids(owner_user_id, target),
+    )
+    return view.build_embed(), view
 
 
 def _info_embed(title: str, description: str) -> discord.Embed:
@@ -1161,38 +1227,42 @@ async def build_bounty_hunt_message(bot: XianBot, owner_user_id: int, display_na
         target_snapshot = await _sync_snapshot(bot, session, target) if target is not None else None
         refreshed = await bot.character_service.list_characters(session)
         targets = bot.faction_service.list_bounty_targets(refreshed) if actor.faction == "righteous" else []
+        summary_lines = _bounty_summary_lines(result) if result is not None else []
         if result is None:
             embed = build_faction_action_embed(snapshot, "悬赏讨伐", "未能找到该目标。", [], success=False)
+        elif result.battle is not None and target_snapshot is not None:
+            embed = build_faction_battle_embed(
+                snapshot,
+                target_snapshot,
+                result,
+                title="悬赏讨伐",
+                summary_lines=summary_lines,
+            )
         else:
-            lines = []
-            if result.target_name:
-                lines.append(f"目标：**{result.target_name}**")
-            if result.soul_delta:
-                lines.append(f"器魂：`+{result.soul_delta}`")
-            if result.lingshi_delta:
-                lines.append(f"灵石：`+{result.lingshi_delta}`")
-            if result.luck_delta:
-                lines.append(f"气运：`+{result.luck_delta}`")
-            if result.virtue_delta:
-                lines.append(f"善名：`+{result.virtue_delta}`")
-            embed = build_faction_action_embed(snapshot, "悬赏讨伐", result.message, lines, success=result.success)
-            if result.battle is not None:
-                embed.add_field(name="战报截取", value=_battle_excerpt(result.battle, limit=6, mode="bounty"), inline=False)
+            embed = build_faction_action_embed(snapshot, "悬赏讨伐", result.message, summary_lines, success=result.success)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    # Public summary
-    public_summary = None
-    if result is not None and result.success and result.battle is not None and target_snapshot is not None:
-        summary_lines = [f"讨伐目标：**{result.target_name}**"]
-        if result.soul_delta:
-            summary_lines.append(f"赏金：`+{result.soul_delta}` 器魂")
-        if result.lingshi_delta:
-            summary_lines.append(f"赏金：`+{result.lingshi_delta}` 灵石")
-        public_summary = build_pvp_summary_embed(
-            snapshot, target_snapshot, result.battle,
-            mode="bounty", summary_lines=summary_lines,
-        )
-    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets), broadcasts, public_summary
+    public_report = _faction_public_report(
+        owner_user_id,
+        target,
+        snapshot,
+        target_snapshot,
+        result,
+        mode="bounty",
+        summary_lines=_bounty_summary_lines(result) if result is not None else [],
+    )
+    return (
+        embed,
+        FactionView(
+            owner_user_id,
+            snapshot=snapshot,
+            targets=targets,
+            result=result,
+            defender_snapshot=target_snapshot,
+        ),
+        broadcasts,
+        public_report,
+    )
 
 
 async def build_robbery_message(
@@ -1213,42 +1283,43 @@ async def build_robbery_message(
         target_snapshot = await _sync_snapshot(bot, session, target) if target is not None else None
         refreshed = await bot.character_service.list_characters(session)
         targets = bot.faction_service.list_robbery_targets(refreshed, actor) if actor.faction == "demonic" else []
+        summary_lines = _robbery_summary_lines(result) if result is not None else []
         if result is None:
             embed = build_faction_action_embed(snapshot, "劫掠", "未能找到该目标。", [], success=False)
+        elif result.battle is not None and target_snapshot is not None:
+            embed = build_faction_battle_embed(
+                snapshot,
+                target_snapshot,
+                result,
+                title="劫掠",
+                summary_lines=summary_lines,
+            )
         else:
-            lines = []
-            if result.target_name:
-                lines.append(f"目标：**{result.target_name}**")
-            if result.soul_delta:
-                lines.append(f"器魂：`+{result.soul_delta}`")
-            if result.lingshi_delta:
-                lines.append(f"灵石：`+{result.lingshi_delta}`")
-            if result.luck_delta:
-                lines.append(f"气运：`+{result.luck_delta}`")
-            if result.infamy_delta:
-                lines.append(f"恶名：`+{result.infamy_delta}`")
-            if result.same_faction_halved:
-                lines.append("同为魔道，此次收益已减半。")
-            if result.defeated_penalty_applied:
-                lines.append("你今日方被讨伐，掠夺器魂与灵石降至1%，额外奖励不受影响。")
-            embed = build_faction_action_embed(snapshot, "劫掠", result.message, lines, success=result.success)
-            if result.battle is not None:
-                embed.add_field(name="战报截取", value=_battle_excerpt(result.battle, limit=6, mode="robbery"), inline=False)
+            embed = build_faction_action_embed(snapshot, "劫掠", result.message, summary_lines, success=result.success)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    # Public summary
-    public_summary = None
-    if result is not None and result.success and result.battle is not None and target_snapshot is not None:
-        summary_lines = [f"劫掠目标：**{result.target_name}**"]
-        if result.soul_delta:
-            summary_lines.append(f"掠得：`+{result.soul_delta}` 器魂")
-        if result.lingshi_delta:
-            summary_lines.append(f"掠得：`+{result.lingshi_delta}` 灵石")
-        public_summary = build_pvp_summary_embed(
-            snapshot, target_snapshot, result.battle,
-            mode="robbery", summary_lines=summary_lines,
-        )
-    return embed, FactionView(owner_user_id, snapshot=snapshot, targets=targets, robbery_page=robbery_page), broadcasts, public_summary
+    public_report = _faction_public_report(
+        owner_user_id,
+        target,
+        snapshot,
+        target_snapshot,
+        result,
+        mode="robbery",
+        summary_lines=_robbery_summary_lines(result) if result is not None else [],
+    )
+    return (
+        embed,
+        FactionView(
+            owner_user_id,
+            snapshot=snapshot,
+            targets=targets,
+            robbery_page=robbery_page,
+            result=result,
+            defender_snapshot=target_snapshot,
+        ),
+        broadcasts,
+        public_report,
+    )
 
 
 async def build_sect_message(bot: XianBot, owner_user_id: int, display_name: str):
@@ -2732,9 +2803,9 @@ class FactionTargetSelect(discord.ui.Select):
         bot: XianBot = interaction.client  # type: ignore[assignment]
         target_character_id = int(self.values[0])
         if self.mode == "bounty":
-            embed, view, broadcasts, public_summary = await build_bounty_hunt_message(bot, interaction.user.id, interaction.user.display_name, target_character_id)
+            embed, view, broadcasts, public_report = await build_bounty_hunt_message(bot, interaction.user.id, interaction.user.display_name, target_character_id)
         else:
-            embed, view, broadcasts, public_summary = await build_robbery_message(
+            embed, view, broadcasts, public_report = await build_robbery_message(
                 bot,
                 interaction.user.id,
                 interaction.user.display_name,
@@ -2743,16 +2814,30 @@ class FactionTargetSelect(discord.ui.Select):
             )
         await interaction.response.edit_message(embed=embed, view=view)
         await _send_broadcasts(bot, broadcasts)
-        if public_summary is not None:
-            await bot.broadcast_service.broadcast_embed(bot, public_summary)
+        if public_report is not None:
+            report_embed, report_view = public_report
+            await bot.broadcast_service.broadcast_embed(bot, report_embed, view=report_view)
 
 
 class FactionView(OwnerLockedView):
-    def __init__(self, owner_user_id: int, *, snapshot, targets: list[FactionTarget], robbery_page: int = 0) -> None:
+    def __init__(
+        self,
+        owner_user_id: int,
+        *,
+        snapshot,
+        targets: list[FactionTarget],
+        robbery_page: int = 0,
+        result=None,
+        defender_snapshot=None,
+        report_page: int = 0,
+    ) -> None:
         super().__init__(owner_user_id)
         self.snapshot = snapshot
         self.targets = targets
         self.robbery_page = _clamp_page(robbery_page, total_count=len(targets), page_size=ROBBERY_TARGETS_PER_PAGE)
+        self.result = result
+        self.defender_snapshot = defender_snapshot
+        self.report_page = report_page
         self._add_refresh_button()
         if snapshot.faction_key == "neutral":
             self._add_join_button("righteous", "加入正道", discord.ButtonStyle.success, row=0)
@@ -2764,6 +2849,7 @@ class FactionView(OwnerLockedView):
             self._add_board_button("demonic", "魔道榜", row=0)
             if targets:
                 self.add_item(FactionTargetSelect(owner_user_id, mode="bounty", targets=targets))
+            self._add_report_pagination_controls(row=2)
             return
         self._add_board_button("righteous", "正道榜", row=0)
         self._add_board_button("demonic", "魔道榜", row=0)
@@ -2772,6 +2858,7 @@ class FactionView(OwnerLockedView):
             self.add_item(FactionTargetSelect(owner_user_id, mode="robbery", targets=targets, page=self.robbery_page))
         if len(targets) > ROBBERY_TARGETS_PER_PAGE:
             self._add_robbery_pagination_controls()
+        self._add_report_pagination_controls(row=3)
 
     def _add_refresh_button(self) -> None:
         button = discord.ui.Button(label="刷新", row=0, style=discord.ButtonStyle.secondary)
@@ -2816,6 +2903,55 @@ class FactionView(OwnerLockedView):
             )
             await interaction.response.edit_message(embed=embed, view=view)
             await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_report_pagination_controls(self, *, row: int) -> None:
+        if self.result is None or getattr(self.result, "battle", None) is None or self.defender_snapshot is None:
+            return
+        page_count = len(build_battle_report_pages(self.result.battle))
+        if page_count <= 1:
+            return
+        self._add_report_page_button("战报上一页", self.report_page - 1, disabled=self.report_page <= 0, row=row)
+        self.add_item(
+            discord.ui.Button(
+                label=f"战报 {self.report_page + 1}/{page_count}",
+                row=row,
+                style=discord.ButtonStyle.secondary,
+                disabled=True,
+            )
+        )
+        self._add_report_page_button("战报下一页", self.report_page + 1, disabled=self.report_page >= page_count - 1, row=row)
+
+    def _add_report_page_button(self, label: str, page: int, *, disabled: bool, row: int) -> None:
+        button = discord.ui.Button(label=label, row=row, style=discord.ButtonStyle.secondary, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction, target_page: int = page) -> None:
+            title = "悬赏讨伐" if self.snapshot.faction_key == "righteous" else "劫掠"
+            summary_lines = (
+                _bounty_summary_lines(self.result)
+                if self.snapshot.faction_key == "righteous"
+                else _robbery_summary_lines(self.result)
+            )
+            embed = build_faction_battle_embed(
+                self.snapshot,
+                self.defender_snapshot,
+                self.result,
+                title=title,
+                summary_lines=summary_lines,
+                report_page=target_page,
+            )
+            view = FactionView(
+                self.owner_user_id,
+                snapshot=self.snapshot,
+                targets=self.targets,
+                robbery_page=self.robbery_page,
+                result=self.result,
+                defender_snapshot=self.defender_snapshot,
+                report_page=target_page,
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
 
         button.callback = callback
         self.add_item(button)
