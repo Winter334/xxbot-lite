@@ -34,6 +34,12 @@ class ArtifactAffixDefinition:
     def roll(self, rng: random.Random) -> dict[str, int]:
         return {key: rng.randint(low, high) for key, low, high in self.roll_ranges}
 
+    def max_rolls(self) -> dict[str, int]:
+        return {
+            key: (low if key in INVERTED_ROLL_KEYS else high)
+            for key, low, high in self.roll_ranges
+        }
+
     def describe(self, rolls: RollMap) -> str:
         return self.description_builder(self.normalize_rolls(rolls))
 
@@ -551,6 +557,25 @@ ARTIFACT_AFFIX_DEFINITIONS = (
 )
 
 ARTIFACT_AFFIXES_BY_ID = {definition.affix_id: definition for definition in ARTIFACT_AFFIX_DEFINITIONS}
+
+INVERTED_ROLL_KEYS = frozenset({"threshold_pct"})
+"""越低越好的数值；指定满值时取下限。"""
+
+AFFIX_SPECIFY_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("attack", "攻击", (
+        "ningshen", "juling", "zhuiming", "duanyue", "kuangfeng", "dengxiao",
+        "zhenguan", "zhengheng", "yazhen", "liechuang", "pokong", "tianwei",
+        "leiyin", "liekong", "zhuanji", "fanshi", "tanshi", "tongming",
+        "zhuohun", "yujin", "jinhuo",
+    )),
+    ("defense", "防御", ("liekai", "guiyuan", "cangbi", "guben", "chenchen")),
+    ("heal", "回血", ("huichun", "shiyin", "huyuan", "yangyuan", "xuming")),
+    ("status", "状态", (
+        "zhoufu", "shigu", "zhenpo", "manzhou", "suoling", "jinghua",
+        "fenxin", "fenjie", "huisheng", "lingyi", "qingxin",
+    )),
+    ("agility", "身法", ("lueying", "jifeng", "fengxing", "huanbu", "xianji")),
+)
 
 
 def get_artifact_affix_definition(affix_id: str) -> ArtifactAffixDefinition:

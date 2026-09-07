@@ -18,6 +18,7 @@ from bot.models.artifact import Artifact
 MAX_AFFIX_SLOTS = 5
 AFFIX_SLOT_UNLOCK_LEVELS = (10, 20, 30, 40, 50)
 AFFIX_REFINE_COST = 2
+AFFIX_SPECIFY_COST = 10_000
 ARTIFACT_AFFIX_IDS = {definition.affix_id for definition in ARTIFACT_AFFIX_DEFINITIONS}
 
 
@@ -111,6 +112,9 @@ class ArtifactService:
     def refine_cost(self) -> int:
         return AFFIX_REFINE_COST
 
+    def specify_cost(self) -> int:
+        return AFFIX_SPECIFY_COST
+
     def reinforce_cost(self, next_level: int) -> int:
         return 1 + ((next_level - 1) // 10)
 
@@ -202,6 +206,43 @@ class ArtifactService:
         pending_map[slot] = pending_entry
         self._store_entries(artifact, "affix_pending_json", pending_map.values())
         definition = get_artifact_affix_definition(pending_entry.affix_id)
+        return RefineAffixResult(
+            True,
+            f"槽{slot} 洗出待选词条「{definition.name}」。",
+            slot,
+            soul_cost,
+            soul_before,
+            artifact.soul_shards,
+            pending_entry,
+        )
+
+    def specify_affix(self, artifact: Artifact, slot: int, affix_id: str) -> RefineAffixResult:
+        self.ensure_affix_slots(artifact)
+        if slot < 1 or slot > MAX_AFFIX_SLOTS:
+            return RefineAffixResult(False, "所选词条槽位不存在。", slot, 0, artifact.soul_shards, artifact.soul_shards)
+        if not self.slot_is_unlocked(artifact, slot):
+            return RefineAffixResult(
+                False,
+                f"槽{slot} 尚未解锁，需要本命法宝达到 +{self.slot_unlock_level(slot)}。",
+                slot,
+                0,
+                artifact.soul_shards,
+                artifact.soul_shards,
+            )
+        if affix_id not in ARTIFACT_AFFIX_IDS:
+            return RefineAffixResult(False, "所选词条不存在。", slot, 0, artifact.soul_shards, artifact.soul_shards)
+
+        soul_before = artifact.soul_shards
+        soul_cost = self.specify_cost()
+        if soul_before < soul_cost:
+            return RefineAffixResult(False, f"器魂不足，指定词条需要 {soul_cost} 器魂。", slot, soul_cost, soul_before, soul_before)
+
+        artifact.soul_shards -= soul_cost
+        definition = get_artifact_affix_definition(affix_id)
+        pending_entry = ArtifactAffixEntry(slot=slot, affix_id=definition.affix_id, rolls=definition.max_rolls())
+        pending_map = {entry.slot: entry for entry in self.get_pending_affixes(artifact)}
+        pending_map[slot] = pending_entry
+        self._store_entries(artifact, "affix_pending_json", pending_map.values())
         return RefineAffixResult(
             True,
             f"槽{slot} 洗出待选词条「{definition.name}」。",

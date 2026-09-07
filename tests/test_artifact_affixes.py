@@ -230,6 +230,48 @@ async def test_discard_pending_affix_fails_cleanly_without_pending(session_facto
         assert result.message == "槽1 当前没有可放弃的待选词条。"
 
 
+def test_max_rolls_take_high_except_inverted_keys() -> None:
+    assert get_artifact_affix_definition("ningshen").max_rolls() == {"atk_pct": 9}
+    assert get_artifact_affix_definition("chenchen").max_rolls() == {"threshold_pct": 22, "reduction_pct": 55}
+
+
+@pytest.mark.asyncio
+async def test_specify_affix_writes_max_rolls_to_pending(session_factory, services) -> None:
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 5021, "定向")).character
+        artifact = character.artifact
+        artifact.reinforce_level = 10
+        artifact.soul_shards = 10_050
+        services.artifact.ensure_affix_slots(artifact)
+        current_before = services.artifact.get_affix_slots(artifact)[0]
+
+        result = services.artifact.specify_affix(artifact, 1, "chenchen")
+
+        assert result.success is True
+        assert result.soul_cost == 10_000
+        assert artifact.soul_shards == 50
+        pending = services.artifact.get_pending_affixes(artifact)[0]
+        assert pending.affix_id == "chenchen"
+        assert pending.rolls == {"threshold_pct": 22, "reduction_pct": 55}
+        assert services.artifact.get_affix_slots(artifact)[0].affix_id == current_before.affix_id
+
+
+@pytest.mark.asyncio
+async def test_specify_affix_fails_when_soul_is_insufficient(session_factory, services) -> None:
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 5022, "不够魂")).character
+        artifact = character.artifact
+        artifact.reinforce_level = 10
+        artifact.soul_shards = 9999
+        services.artifact.ensure_affix_slots(artifact)
+
+        result = services.artifact.specify_affix(artifact, 1, "ningshen")
+
+        assert result.success is False
+        assert artifact.soul_shards == 9999
+        assert services.artifact.get_pending_affixes(artifact) == []
+
+
 @pytest.mark.asyncio
 async def test_refine_embed_shows_affix_name_and_description(session_factory, services) -> None:
     services.artifact.rng = ArtifactRoller(["huichun", "ningshen"], [34, 8, 50])
