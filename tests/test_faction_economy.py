@@ -6,7 +6,7 @@ import pytest
 
 from bot.data.realms import get_stage
 from bot.services.combat_service import BattleResult
-from bot.services.faction_service import FactionService, INFAMY_BY_REALM
+from bot.services.faction_service import FactionService
 from bot.services.npc_service import NpcService
 from bot.utils.time_utils import SHANGHAI
 
@@ -205,7 +205,7 @@ async def test_npc_top_up_does_not_grow_pool_when_demonic_below_half(session_fac
         assert len(refreshed) == npc_service.DAILY_POOL_SIZE
 
 
-def test_npc_bounty_uses_infamy_floor_when_server_has_none(services) -> None:
+def test_npc_bounty_rolls_between_prev_and_current_realm_table(services) -> None:
     npc_service = NpcService(
         services.fate.rng,
         services.character,
@@ -213,9 +213,28 @@ def test_npc_bounty_uses_infamy_floor_when_server_has_none(services) -> None:
         services.artifact,
         services.spirit,
     )
-    assert npc_service._roll_bounty(0, realm_key="jiedan", lo=0.01, hi=0.05) == INFAMY_BY_REALM["jiedan"]
-    rolled = npc_service._roll_bounty(3000, realm_key="jiedan", lo=0.01, hi=0.05)
-    assert 30 <= rolled <= 150
+    assert npc_service._bounty_range("lianqi") == (1, 50)
+    assert npc_service._bounty_range("zhuji") == (50, 100)
+    assert npc_service._bounty_range("jiedan") == (100, 200)
+    assert npc_service._bounty_range("weixian") == (2000, 3000)
+    rolled = npc_service._roll_bounty("zhuji")
+    assert 50 <= rolled <= 100
+
+
+def test_npc_artifact_bonus_follows_stage_mult(services) -> None:
+    npc_service = NpcService(
+        services.fate.rng,
+        services.character,
+        services.fate,
+        services.artifact,
+        services.spirit,
+    )
+    npc_service.rng.uniform = lambda a, b: a
+    services.fate.stat_multiplier = lambda fate_key, stat: 1.0
+    early = npc_service._bonus_for_target(100, 100, 0, "x", "atk", *NpcService.STAGE_STAT_MULT["early"])
+    perfect = npc_service._bonus_for_target(100, 100, 0, "x", "atk", *NpcService.STAGE_STAT_MULT["perfect"])
+    assert early == 70
+    assert perfect == 130
 
 
 def test_npc_soul_and_bounty_follow_realm_band(services) -> None:
@@ -266,11 +285,5 @@ async def test_spawned_npc_soul_stays_within_realm_band(session_factory, service
             assert npc.realm_key == "weixian"
             assert 15000 <= soul <= 20000
         if npc.faction == "demonic":
-            if npc.realm_key in low:
-                assert 30 <= npc.bounty_soul <= 150
-            elif npc.realm_key in mid:
-                assert 150 <= npc.bounty_soul <= 300
-            elif npc.realm_key in high:
-                assert 300 <= npc.bounty_soul <= 450
-            else:
-                assert 450 <= npc.bounty_soul <= 600
+            lo, hi = NpcService._bounty_range(npc.realm_key)
+            assert lo <= npc.bounty_soul <= hi

@@ -44,6 +44,8 @@ from bot.ui.ranking import build_leaderboard_embed
 from bot.ui.sect import build_sect_directory_embed, build_sect_overview_embed, build_sect_task_board_embed, build_site_board_embed
 from bot.ui.sect import build_sect_help_embed
 from bot.ui.spirit import build_spirit_panel_embed
+from bot.data.artifact_affixes import AFFIX_SPECIFY_GROUPS, ArtifactAffixEntry, get_artifact_affix_definition
+from bot.services.artifact_service import AFFIX_SPECIFY_COST, AFFIX_SPECIFY_LINGSHI_COST
 from bot.services.faction_service import FactionTarget
 from bot.services.ladder_service import ChallengeTarget
 
@@ -1011,6 +1013,94 @@ async def build_discard_affix_message(bot: XianBot, owner_user_id: int, display_
         message=result.message,
         color=discord.Color.green() if result.success else discord.Color.orange(),
         action_title="放弃结果",
+        action_lines=action_lines,
+    )
+    return embed, ArtifactRefineView(owner_user_id, panel_state), broadcasts
+
+
+async def build_specify_slot_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.artifact_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = build_refine_panel_embed(
+        snapshot,
+        panel_state,
+        title=f"{snapshot.player_name} · 法宝洗炼",
+        message="选择要指定的槽位。",
+    )
+    return embed, ArtifactSpecifySlotView(owner_user_id, panel_state), broadcasts
+
+
+async def build_specify_pick_message(
+    bot: XianBot,
+    owner_user_id: int,
+    display_name: str,
+    slot: int,
+    *,
+    group_key: str | None = None,
+    affix_id: str | None = None,
+):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.artifact_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    if affix_id:
+        definition = get_artifact_affix_definition(affix_id)
+        preview = ArtifactAffixEntry(slot=slot, affix_id=definition.affix_id, rolls=definition.max_rolls())
+        message = f"槽{slot} 指定「{definition.name}」，确认后写入待选。"
+        action_title = "指定预览"
+        action_lines = [
+            f"槽位：槽{slot}",
+            f"消耗：`{AFFIX_SPECIFY_COST * max(1, definition.live_roll_count())}` 器魂 + `{AFFIX_SPECIFY_LINGSHI_COST}` 灵石",
+            f"待选词条：**{definition.name}**",
+            definition.describe(preview.rolls),
+        ]
+    else:
+        message = f"槽{slot} 已选定，继续选择词条。"
+        action_title = None
+        action_lines = None
+    embed = build_refine_panel_embed(
+        snapshot,
+        panel_state,
+        title=f"{snapshot.player_name} · 法宝洗炼",
+        message=message,
+        action_title=action_title,
+        action_lines=action_lines,
+    )
+    return embed, ArtifactSpecifyPickView(owner_user_id, slot, group_key=group_key, affix_id=affix_id), broadcasts
+
+
+async def build_specify_affix_message(bot: XianBot, owner_user_id: int, display_name: str, slot: int, affix_id: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.artifact_service.specify_affix(character, slot, affix_id)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.artifact_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines: list[str] = [
+        f"槽位：槽{slot}",
+        f"器魂：`{result.soul_before} -> {result.soul_after}`",
+        f"灵石：`{result.lingshi_before} -> {result.lingshi_after}`",
+    ]
+    if result.success and result.pending_entry is not None:
+        action_lines.append(f"待选词条：**{bot.artifact_service.affix_name(result.pending_entry)}**")
+        action_lines.append(bot.artifact_service.describe_affix(result.pending_entry))
+    embed = build_refine_panel_embed(
+        snapshot,
+        panel_state,
+        title=f"{snapshot.player_name} · 法宝洗炼",
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="本次指定",
         action_lines=action_lines,
     )
     return embed, ArtifactRefineView(owner_user_id, panel_state), broadcasts
@@ -2356,6 +2446,7 @@ class ArtifactRefineView(OwnerLockedView):
         super().__init__(owner_user_id)
         self._add_save_button(disabled=not panel_state.has_pending)
         self._add_refine_all_button(disabled=panel_state.unlocked_slots <= 0)
+        self._add_specify_button(disabled=panel_state.unlocked_slots <= 0)
         pending_slots = {slot.slot for slot in panel_state.pending_slots if slot.affix_id}
         for slot_view in panel_state.current_slots:
             self._add_refine_button(
@@ -2393,6 +2484,18 @@ class ArtifactRefineView(OwnerLockedView):
         button.callback = callback
         self.add_item(button)
 
+    def _add_specify_button(self, *, disabled: bool) -> None:
+        button = discord.ui.Button(label="指定", row=0, style=discord.ButtonStyle.secondary, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_specify_slot_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
     def _add_discard_button(self, *, slot: int, has_pending: bool) -> None:
         button = discord.ui.Button(label=f"弃槽{slot}", row=2, style=discord.ButtonStyle.danger, disabled=not has_pending)
 
@@ -2418,6 +2521,160 @@ class ArtifactRefineView(OwnerLockedView):
 
         button.callback = callback
         self.add_item(button)
+
+
+class ArtifactSpecifySlotView(OwnerLockedView):
+    def __init__(self, owner_user_id: int, panel_state) -> None:
+        super().__init__(owner_user_id)
+        self._add_back_button()
+        for slot_view in panel_state.current_slots:
+            self._add_slot_button(slot=slot_view.slot, unlock_level=slot_view.unlock_level, unlocked=slot_view.unlocked)
+
+    def _add_back_button(self) -> None:
+        button = discord.ui.Button(label="返回", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_refine_panel_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_slot_button(self, *, slot: int, unlock_level: int, unlocked: bool) -> None:
+        label = f"槽{slot}" if unlocked else f"槽{slot}（+{unlock_level}解锁）"
+        button = discord.ui.Button(label=label, row=1, style=discord.ButtonStyle.primary, disabled=not unlocked)
+
+        async def callback(interaction: discord.Interaction, slot_no: int = slot) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_specify_pick_message(
+                bot, interaction.user.id, interaction.user.display_name, slot_no
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+
+class ArtifactSpecifyGroupSelect(discord.ui.Select):
+    def __init__(self, owner_user_id: int, slot: int, *, group_key: str | None, affix_id: str | None) -> None:
+        self.owner_user_id = owner_user_id
+        self.slot = slot
+        self.affix_id = affix_id
+        options = [
+            discord.SelectOption(label=name, value=key, default=key == group_key)
+            for key, name, _ids in AFFIX_SPECIFY_GROUPS
+        ]
+        super().__init__(placeholder="选择类型", options=options, row=1, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_user_id:
+            await interaction.response.send_message("这张面板并非为你而开。", ephemeral=True)
+            return
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        group_key = self.values[0]
+        affix_id = self.affix_id if any(group_key == key and self.affix_id in ids for key, _name, ids in AFFIX_SPECIFY_GROUPS) else None
+        embed, view, broadcasts = await build_specify_pick_message(
+            bot,
+            interaction.user.id,
+            interaction.user.display_name,
+            self.slot,
+            group_key=group_key,
+            affix_id=affix_id,
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+        await _send_broadcasts(bot, broadcasts)
+
+
+class ArtifactSpecifyAffixSelect(discord.ui.Select):
+    def __init__(self, owner_user_id: int, slot: int, *, group_key: str, affix_id: str | None) -> None:
+        self.owner_user_id = owner_user_id
+        self.slot = slot
+        self.group_key = group_key
+        group_ids = next(ids for key, _name, ids in AFFIX_SPECIFY_GROUPS if key == group_key)
+        options = []
+        for item_id in group_ids:
+            definition = get_artifact_affix_definition(item_id)
+            description = definition.describe(definition.max_rolls())[:100]
+            options.append(
+                discord.SelectOption(
+                    label=definition.name[:100],
+                    description=description,
+                    value=item_id,
+                    default=item_id == affix_id,
+                )
+            )
+        super().__init__(placeholder="选择词条", options=options, row=2, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_user_id:
+            await interaction.response.send_message("这张面板并非为你而开。", ephemeral=True)
+            return
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await build_specify_pick_message(
+            bot,
+            interaction.user.id,
+            interaction.user.display_name,
+            self.slot,
+            group_key=self.group_key,
+            affix_id=self.values[0],
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+        await _send_broadcasts(bot, broadcasts)
+
+
+class ArtifactSpecifyPickView(OwnerLockedView):
+    def __init__(self, owner_user_id: int, slot: int, *, group_key: str | None = None, affix_id: str | None = None) -> None:
+        super().__init__(owner_user_id)
+        self.slot = slot
+        self.group_key = group_key
+        self.affix_id = affix_id
+        self._add_back_button()
+        self.add_item(ArtifactSpecifyGroupSelect(owner_user_id, slot, group_key=group_key, affix_id=affix_id))
+        if group_key is not None:
+            self.add_item(ArtifactSpecifyAffixSelect(owner_user_id, slot, group_key=group_key, affix_id=affix_id))
+        self._add_confirm_button(disabled=affix_id is None)
+
+    def _add_back_button(self) -> None:
+        button = discord.ui.Button(label="返回", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_specify_slot_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_confirm_button(self, *, disabled: bool) -> None:
+        cost = AFFIX_SPECIFY_COST
+        if self.affix_id:
+            cost = AFFIX_SPECIFY_COST * max(1, get_artifact_affix_definition(self.affix_id).live_roll_count())
+        button = discord.ui.Button(
+            label=f"确认指定 · {cost}器魂+{AFFIX_SPECIFY_LINGSHI_COST}灵石",
+            row=3,
+            style=discord.ButtonStyle.success,
+            disabled=disabled,
+        )
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await build_specify_affix_message(
+                bot,
+                interaction.user.id,
+                interaction.user.display_name,
+                self.slot,
+                self.affix_id or "",
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
 
 class SpiritOverviewView(OwnerLockedView):
     def __init__(self, owner_user_id: int, panel_state) -> None:

@@ -31,6 +31,13 @@ def format_big_number(value: int) -> str:
     return _format_unit(value, 10_000_000_000, "万亿")
 
 
+def format_hp_log_suffix(damage: int, hp_after: int, shield_after: int | None = None) -> str:
+    line = f"造成 {format_big_number(damage)} 点伤害，余血 {format_big_number(hp_after)}"
+    if shield_after:
+        line += f"，护盾剩余 {format_big_number(shield_after)}"
+    return line
+
+
 def _format_unit(value: int, base: int, suffix: str) -> str:
     scaled = value / base
     rendered = f"{scaled:.2f}".rstrip("0").rstrip(".")
