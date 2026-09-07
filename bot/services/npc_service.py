@@ -46,6 +46,12 @@ class NpcService:
 
     REFRESH_HOURS = (0, 3, 6, 9, 12, 15, 18, 21)
     STAGE_KEYS = ("early", "mid", "late", "perfect")
+    STAGE_STAT_MULT = {
+        "early": (0.70, 0.90),
+        "mid": (0.90, 1.10),
+        "late": (1.10, 1.30),
+        "perfect": (1.30, 1.50),
+    }
     REALM_SPAWN_BANDS = (
         (0.50, ("lianqi", "zhuji", "jiedan"), 0.01, 0.05),
         (0.30, ("yuanying", "huashen", "lianxu"), 0.05, 0.10),
@@ -289,7 +295,7 @@ class NpcService:
         # ---- 6b. 器魂：上限=真人器魂第二高，倍率跟大境界档走 ----
         soul_shards = self._roll_soul_shards(caps["max_soul_shards"], lo=band_lo, hi=band_hi)
 
-        # ---- 7. 法宝强化拉满该境界 cap；三维取同境真人最高/最低均值 ±30% ----
+        # ---- 7. 法宝强化拉满该境界 cap；三维按小境倍率取同境真人 (min+max)/2 ----
         reinforce_level = stage.reinforce_cap
         atk_b, def_b, agi_b = self._roll_artifact_bonuses(stage, real_chars, fate.key)
 
@@ -450,14 +456,15 @@ class NpcService:
         if not peers:
             return 0, 0, 0
         stats = [self.character_service.calculate_total_stats(c) for c in peers]
+        lo, hi = self.STAGE_STAT_MULT.get(stage.stage_key, (0.90, 1.10))
         return (
-            self._bonus_for_target(min(s.atk for s in stats), max(s.atk for s in stats), stage.base_atk, fate_key, "atk"),
-            self._bonus_for_target(min(s.defense for s in stats), max(s.defense for s in stats), stage.base_def, fate_key, "def"),
-            self._bonus_for_target(min(s.agility for s in stats), max(s.agility for s in stats), stage.base_agi, fate_key, "agi"),
+            self._bonus_for_target(min(s.atk for s in stats), max(s.atk for s in stats), stage.base_atk, fate_key, "atk", lo, hi),
+            self._bonus_for_target(min(s.defense for s in stats), max(s.defense for s in stats), stage.base_def, fate_key, "def", lo, hi),
+            self._bonus_for_target(min(s.agility for s in stats), max(s.agility for s in stats), stage.base_agi, fate_key, "agi", lo, hi),
         )
 
-    def _bonus_for_target(self, low: int, high: int, base: int, fate_key: str, stat: str) -> int:
-        target = max(1, int((low + high) / 2 * self.rng.uniform(0.70, 1.30)))
+    def _bonus_for_target(self, low: int, high: int, base: int, fate_key: str, stat: str, lo: float, hi: float) -> int:
+        target = max(1, int((low + high) / 2 * self.rng.uniform(lo, hi)))
         mult = self.fate_service.stat_multiplier(fate_key, stat)
         raw = int(target / mult) if mult else target
         return max(0, raw - base)
