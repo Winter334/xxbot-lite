@@ -28,7 +28,7 @@ from bot.services.proving_ground_service import (
     PGNodeResult,
     PGSettlement,
 )
-from bot.utils.formatters import format_big_number
+from bot.utils.formatters import format_big_number, format_hp_log_suffix
 
 
 MAX_BATTLE_ROUNDS = CombatService.max_rounds
@@ -266,7 +266,10 @@ def _format_log_entry(entry) -> str:
     if entry.dodged:
         return f"{prefix} {entry.actor_name} 一击落空，被 {entry.target_name} 避开。"
     crit = "暴击" if entry.critical else "命中"
-    return f"{prefix} {entry.actor_name} {crit} {entry.target_name}，造成 {format_big_number(entry.damage)} 伤害。"
+    return (
+        f"{prefix} {entry.actor_name} {crit} {entry.target_name}，"
+        f"{format_hp_log_suffix(entry.damage, entry.target_hp_after, entry.shield_after)}。"
+    )
 
 
 def _battle_excerpt(battle, limit: int = 6) -> str:
