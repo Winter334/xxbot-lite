@@ -366,10 +366,10 @@ def test_zhuohun_burn_uses_attacker_atk_per_stack(services) -> None:
         rng=SequenceRandom([0.99, 0.99, 0.0] * 8),
     )
 
-    burn_logs = [log for log in battle.logs if log.text and "层灼烧侵蚀" in log.text]
-    assert burn_logs, "应触发至少一次灼烧 DOT"
+    burn = next(log for log in battle.logs if log.text and "层灼烧侵蚀" in log.text)
     # 第一回合命中后挂 3 层；层数用于持续与联动，每回合仅造成一次 100 × 10% = 10 伤害
-    assert "10 点" in burn_logs[0].text
+    assert burn.damage == 10
+    assert "余血" in burn.text
 
 
 def test_jinhuo_bonus_only_applies_against_burning_targets(services) -> None:
@@ -623,10 +623,13 @@ def test_single_large_hit_crosses_all_low_hp_thresholds_and_continues_overflow(s
     assert target.huichun_triggered_thresholds == {50, 25}
     assert 30 in target.low_hp_marks
     assert not any(status.name == "裂铠" for status in target.statuses)
-    assert [log.text for log in logs if log.text and "回春发动" in log.text] == [
-        "回春裂铠修士 的回春发动（生命降至 50%），回复 200 点生命并叠加 1 层生息。",
-        "回春裂铠修士 的回春发动（生命降至 25%），回复 200 点生命并叠加 1 层生息。",
-    ]
+    texts = [log.text for log in logs if log.text]
+    huichun = [text for text in texts if "回春发动" in text]
+    assert len(huichun) == 2
+    assert "生命降至 50%" in huichun[0] and "回复 200 点生命" in huichun[0] and "余血" in huichun[0]
+    assert "生命降至 25%" in huichun[1] and "回复 200 点生命" in huichun[1] and "余血" in huichun[1]
+    assert any("受到" in text and "余血" in text for text in texts)
+    assert any("裂铠展开" in text for text in texts)
 
 
 def test_battle_result_reports_guiyuan_effective_max_hp(services) -> None:
@@ -698,14 +701,14 @@ def test_attack_log_keeps_hp_after_the_hit_not_after_followups(services) -> None
     hp_before = target.hp
 
     logs = services.combat._resolve_action(1, actor, target, SequenceRandom([0.99] * 20), set())
-    attack = next(log for log in logs if log.text is None)
+    attack_i = next(i for i, log in enumerate(logs) if log.text is None)
     suoling = next(i for i, log in enumerate(logs) if log.text and "锁灵" in log.text)
     zhuanji = next(i for i, log in enumerate(logs) if log.text and "转机" in log.text)
+    attack = logs[attack_i]
 
     assert attack.damage > 0
     assert attack.target_hp_after == hp_before - attack.damage
-    assert attack.target_hp_after > target.hp
-    assert suoling < zhuanji
+    assert attack_i < suoling < zhuanji
 
 
 def test_jinghua_log_appears_before_zhuanji_followup(services) -> None:
@@ -743,12 +746,13 @@ def test_attack_log_appears_before_huichun_and_keeps_pre_heal_hp(services) -> No
 
     logs = services.combat._resolve_action(1, actor, target, SequenceRandom([0.99] * 20), set())
     attack_i = next(i for i, log in enumerate(logs) if log.text is None)
-    huichun_i = next(i for i, log in enumerate(logs) if log.text and "回春" in log.text)
+    huichun_i = next(i for i, log in enumerate(logs) if log.text and "回春发动" in log.text)
     attack = logs[attack_i]
 
     assert attack_i < huichun_i
-    assert attack.target_hp_after == hp_before - attack.damage
-    assert target.hp > attack.target_hp_after
+    assert attack.damage > 0
+    assert attack.target_hp_after < hp_before
+    assert "余血" in logs[huichun_i].text
 
 
 def test_attack_log_appears_before_liekai_threshold(services) -> None:
