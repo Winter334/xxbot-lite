@@ -59,6 +59,49 @@ class ArenaClaimResult:
     win_streak: int
 
 
+ARENA_STREAK_HONORS: tuple[tuple[int, str], ...] = (
+    (10, "十连胜"),
+    (20, "二十连胜"),
+    (30, "三十连胜"),
+    (40, "四十连胜"),
+    (50, "五十连胜"),
+    (60, "六十连胜"),
+    (70, "七十连胜"),
+    (80, "八十连胜"),
+    (90, "九十连胜"),
+    (100, "霸主"),
+)
+_ARENA_STREAK_HONOR_RANK = {tag: threshold for threshold, tag in ARENA_STREAK_HONORS}
+
+
+def arena_streak_honor(win_streak: int) -> str | None:
+    tag = None
+    for threshold, name in ARENA_STREAK_HONORS:
+        if win_streak >= threshold:
+            tag = name
+    return tag
+
+
+def apply_arena_streak_honor(character: Character, win_streak: int) -> str | None:
+    tag = arena_streak_honor(win_streak)
+    if tag is None:
+        return None
+    new_rank = _ARENA_STREAK_HONOR_RANK[tag]
+    kept: list[str] = []
+    existing_rank = 0
+    for item in character.stored_honor_tags():
+        rank = _ARENA_STREAK_HONOR_RANK.get(item, 0)
+        if rank:
+            existing_rank = max(existing_rank, rank)
+            continue
+        kept.append(item)
+    if new_rank <= existing_rank:
+        return None
+    kept.append(tag)
+    character.set_honor_tags(kept)
+    return tag
+
+
 class PvpService:
     public_arena_key = "public"
 
@@ -199,13 +242,14 @@ class PvpService:
         if battle.challenger_won:
             arena.champion_character_id = challenger.id
             arena.win_streak = 1
+            honor_note = self._arena_honor_note(challenger, arena.win_streak)
             challenger.last_highlight_text = f"方才夺下单擂台，当前擂池为 {arena.pot_soul} 器魂。"
             defender.last_highlight_text = f"方才在擂台战中失擂，被 {challenger.player.display_name} 夺位。"
             if self.sect_service is not None:
                 self.sect_service.record_task_event(challenger, "pvp_arena")
             return ArenaChallengeResult(
                 True,
-                f"{challenger.player.display_name} 攻擂得手，夺下擂台。当前可收擂离场，也可继续接受挑战。",
+                f"{challenger.player.display_name} 攻擂得手，夺下擂台。当前可收擂离场，也可继续接受挑战。{honor_note}",
                 battle,
                 challenger.player.display_name,
                 arena.stake_soul,
@@ -215,13 +259,14 @@ class PvpService:
             )
 
         arena.win_streak += 1
+        honor_note = self._arena_honor_note(defender, arena.win_streak)
         defender.last_highlight_text = f"方才守住擂台，当前擂池为 {arena.pot_soul} 器魂。"
         challenger.last_highlight_text = f"方才攻擂失手，败给了 {defender.player.display_name}。"
         if self.sect_service is not None:
             self.sect_service.record_task_event(challenger, "pvp_arena")
         return ArenaChallengeResult(
             True,
-            f"{defender.player.display_name} 守擂成功，当前可收擂离场，也可继续接受挑战。",
+            f"{defender.player.display_name} 守擂成功，当前可收擂离场，也可继续接受挑战。{honor_note}",
             battle,
             defender.player.display_name,
             arena.stake_soul,
@@ -283,3 +328,8 @@ class PvpService:
         arena.stake_soul = 0
         arena.pot_soul = 0
         arena.win_streak = 0
+
+    @staticmethod
+    def _arena_honor_note(character: Character, win_streak: int) -> str:
+        gained = apply_arena_streak_honor(character, win_streak)
+        return f"得荣誉「{gained}」。" if gained else ""

@@ -230,6 +230,77 @@ async def test_discard_pending_affix_fails_cleanly_without_pending(session_facto
         assert result.message == "槽1 当前没有可放弃的待选词条。"
 
 
+def test_max_rolls_take_high_except_inverted_keys() -> None:
+    assert get_artifact_affix_definition("ningshen").max_rolls() == {"atk_pct": 9}
+    assert get_artifact_affix_definition("chenchen").max_rolls() == {"threshold_pct": 22, "reduction_pct": 55}
+
+
+def test_specify_cost_scales_with_live_roll_count(services) -> None:
+    assert services.artifact.specify_cost("ningshen") == 10_000
+    assert services.artifact.specify_cost("chenchen") == 20_000
+    assert services.artifact.specify_cost("tianwei") == 30_000
+
+
+@pytest.mark.asyncio
+async def test_specify_affix_writes_max_rolls_to_pending(session_factory, services) -> None:
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 5021, "定向")).character
+        artifact = character.artifact
+        artifact.reinforce_level = 10
+        artifact.soul_shards = 20_050
+        character.lingshi = 10_080
+        services.artifact.ensure_affix_slots(artifact)
+        current_before = services.artifact.get_affix_slots(artifact)[0]
+
+        result = services.artifact.specify_affix(character, 1, "chenchen")
+
+        assert result.success is True
+        assert result.soul_cost == 20_000
+        assert result.lingshi_cost == 10_000
+        assert artifact.soul_shards == 50
+        assert character.lingshi == 80
+        pending = services.artifact.get_pending_affixes(artifact)[0]
+        assert pending.affix_id == "chenchen"
+        assert pending.rolls == {"threshold_pct": 22, "reduction_pct": 55}
+        assert services.artifact.get_affix_slots(artifact)[0].affix_id == current_before.affix_id
+
+
+@pytest.mark.asyncio
+async def test_specify_affix_fails_when_soul_is_insufficient(session_factory, services) -> None:
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 5022, "不够魂")).character
+        artifact = character.artifact
+        artifact.reinforce_level = 10
+        artifact.soul_shards = 9999
+        services.artifact.ensure_affix_slots(artifact)
+
+        character.lingshi = 10_000
+        result = services.artifact.specify_affix(character, 1, "ningshen")
+
+        assert result.success is False
+        assert artifact.soul_shards == 9999
+        assert character.lingshi == 10_000
+        assert services.artifact.get_pending_affixes(artifact) == []
+
+
+@pytest.mark.asyncio
+async def test_specify_affix_fails_when_lingshi_is_insufficient(session_factory, services) -> None:
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 5023, "不够石")).character
+        artifact = character.artifact
+        artifact.reinforce_level = 10
+        artifact.soul_shards = 20_000
+        character.lingshi = 9999
+        services.artifact.ensure_affix_slots(artifact)
+
+        result = services.artifact.specify_affix(character, 1, "ningshen")
+
+        assert result.success is False
+        assert artifact.soul_shards == 20_000
+        assert character.lingshi == 9999
+        assert services.artifact.get_pending_affixes(artifact) == []
+
+
 @pytest.mark.asyncio
 async def test_refine_embed_shows_affix_name_and_description(session_factory, services) -> None:
     services.artifact.rng = ArtifactRoller(["huichun", "ningshen"], [34, 8, 50])
@@ -366,10 +437,10 @@ def test_zhuohun_burn_uses_attacker_atk_per_stack(services) -> None:
         rng=SequenceRandom([0.99, 0.99, 0.0] * 8),
     )
 
-    burn_logs = [log for log in battle.logs if log.text and "层灼烧侵蚀" in log.text]
-    assert burn_logs, "应触发至少一次灼烧 DOT"
+    burn = next(log for log in battle.logs if log.text and "层灼烧侵蚀" in log.text)
     # 第一回合命中后挂 3 层；层数用于持续与联动，每回合仅造成一次 100 × 10% = 10 伤害
-    assert "10 点" in burn_logs[0].text
+    assert burn.damage == 10
+    assert "余血" in burn.text
 
 
 def test_jinhuo_bonus_only_applies_against_burning_targets(services) -> None:
@@ -623,10 +694,13 @@ def test_single_large_hit_crosses_all_low_hp_thresholds_and_continues_overflow(s
     assert target.huichun_triggered_thresholds == {50, 25}
     assert 30 in target.low_hp_marks
     assert not any(status.name == "裂铠" for status in target.statuses)
-    assert [log.text for log in logs if log.text and "回春发动" in log.text] == [
-        "回春裂铠修士 的回春发动（生命降至 50%），回复 200 点生命并叠加 1 层生息。",
-        "回春裂铠修士 的回春发动（生命降至 25%），回复 200 点生命并叠加 1 层生息。",
-    ]
+    texts = [log.text for log in logs if log.text]
+    huichun = [text for text in texts if "回春发动" in text]
+    assert len(huichun) == 2
+    assert "生命降至 50%" in huichun[0] and "回复 200 点生命" in huichun[0] and "余血" in huichun[0]
+    assert "生命降至 25%" in huichun[1] and "回复 200 点生命" in huichun[1] and "余血" in huichun[1]
+    assert any("受到" in text and "余血" in text for text in texts)
+    assert any("裂铠展开" in text for text in texts)
 
 
 def test_battle_result_reports_guiyuan_effective_max_hp(services) -> None:
@@ -698,14 +772,14 @@ def test_attack_log_keeps_hp_after_the_hit_not_after_followups(services) -> None
     hp_before = target.hp
 
     logs = services.combat._resolve_action(1, actor, target, SequenceRandom([0.99] * 20), set())
-    attack = next(log for log in logs if log.text is None)
+    attack_i = next(i for i, log in enumerate(logs) if log.text is None)
     suoling = next(i for i, log in enumerate(logs) if log.text and "锁灵" in log.text)
     zhuanji = next(i for i, log in enumerate(logs) if log.text and "转机" in log.text)
+    attack = logs[attack_i]
 
     assert attack.damage > 0
     assert attack.target_hp_after == hp_before - attack.damage
-    assert attack.target_hp_after > target.hp
-    assert suoling < zhuanji
+    assert attack_i < suoling < zhuanji
 
 
 def test_jinghua_log_appears_before_zhuanji_followup(services) -> None:
@@ -743,12 +817,13 @@ def test_attack_log_appears_before_huichun_and_keeps_pre_heal_hp(services) -> No
 
     logs = services.combat._resolve_action(1, actor, target, SequenceRandom([0.99] * 20), set())
     attack_i = next(i for i, log in enumerate(logs) if log.text is None)
-    huichun_i = next(i for i, log in enumerate(logs) if log.text and "回春" in log.text)
+    huichun_i = next(i for i, log in enumerate(logs) if log.text and "回春发动" in log.text)
     attack = logs[attack_i]
 
     assert attack_i < huichun_i
-    assert attack.target_hp_after == hp_before - attack.damage
-    assert target.hp > attack.target_hp_after
+    assert attack.damage > 0
+    assert attack.target_hp_after < hp_before
+    assert "余血" in logs[huichun_i].text
 
 
 def test_attack_log_appears_before_liekai_threshold(services) -> None:

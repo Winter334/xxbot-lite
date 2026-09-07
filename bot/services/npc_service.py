@@ -4,7 +4,7 @@
 - 每天 0 点全清重生；3/6/9/12/15/18/21 点只补悬赏被打空的魔道名额
 - 不参与任何主动行为：不闭关/不游历/不打塔/不入宗门/不开擂
 - 仅作为「可被打的目标」存在：悬赏列表 / 劫掠列表 / 战斗管线
-- 境界固定四档；器魂跟全服真人第二高走同档倍率，悬赏跟全服真人最高恶名走同档倍率
+- 境界固定四档；器魂跟全服真人第二高走同档倍率，悬赏在该境界恶名表与上一档之间随机
 - 完全融入真人 Character 表，靠 is_npc 字段区分
 """
 
@@ -46,6 +46,12 @@ class NpcService:
 
     REFRESH_HOURS = (0, 3, 6, 9, 12, 15, 18, 21)
     STAGE_KEYS = ("early", "mid", "late", "perfect")
+    STAGE_STAT_MULT = {
+        "early": (0.70, 0.90),
+        "mid": (0.90, 1.10),
+        "late": (1.10, 1.30),
+        "perfect": (1.30, 1.50),
+    }
     REALM_SPAWN_BANDS = (
         (0.50, ("lianqi", "zhuji", "jiedan"), 0.01, 0.05),
         (0.30, ("yuanying", "huashen", "lianxu"), 0.05, 0.10),
@@ -160,7 +166,7 @@ class NpcService:
     def _compute_caps(self, real_chars: list[Character]) -> dict[str, int]:
         """从真人样本计算各项资源上限。
 
-        灵石/器魂去极值（第二高）；悬赏上限取全服真人最高恶名。
+        灵石/器魂去极值（第二高）。悬赏按境界恶名表区间另算。
         """
         return {
             "max_reinforce": max(
@@ -168,7 +174,6 @@ class NpcService:
                 default=0,
             ),
             "max_lingshi": self._dampened_cap([c.lingshi for c in real_chars]),
-            "max_bounty": max((c.infamy or 0 for c in real_chars), default=0),
             "max_virtue": max((c.virtue for c in real_chars), default=0),
             "max_infamy": max((c.infamy for c in real_chars), default=0),
             "max_soul_shards": self._dampened_cap(
@@ -247,7 +252,7 @@ class NpcService:
         *,
         force_demonic: bool = False,
     ) -> None:
-        """生成单个 NPC：固定境界档 + 同档悬赏/器魂倍率。"""
+        """生成单个 NPC：固定境界档；器魂走同档倍率，悬赏走恶名表区间。"""
         stage, band_lo, band_hi = self._roll_realm_stage()
         realm_key = stage.realm_key
         stage_key = stage.stage_key
@@ -268,7 +273,7 @@ class NpcService:
         is_demonic = force_demonic or self.rng.random() < self.DEMONIC_RATIO
         if is_demonic:
             faction = "demonic"
-            bounty = self._roll_bounty(caps["max_bounty"], realm_key=realm_key, lo=band_lo, hi=band_hi)
+            bounty = self._roll_bounty(realm_key)
             infamy = (
                 self.rng.randint(100, max(101, caps["max_infamy"]))
                 if caps["max_infamy"] > 0
@@ -290,7 +295,7 @@ class NpcService:
         # ---- 6b. 器魂：上限=真人器魂第二高，倍率跟大境界档走 ----
         soul_shards = self._roll_soul_shards(caps["max_soul_shards"], lo=band_lo, hi=band_hi)
 
-        # ---- 7. 法宝强化拉满该境界 cap；三维取同境真人最高/最低均值 ±30% ----
+        # ---- 7. 法宝强化拉满该境界 cap；三维按小境倍率取同境真人 (min+max)/2 ----
         reinforce_level = stage.reinforce_cap
         atk_b, def_b, agi_b = self._roll_artifact_bonuses(stage, real_chars, fate.key)
 
@@ -423,10 +428,20 @@ class NpcService:
         amount = int(max_lingshi * mult)
         return min(amount, max_lingshi)
 
-    def _roll_bounty(self, max_bounty: int, *, realm_key: str, lo: float, hi: float) -> int:
-        """上限=全服真人最高恶名；全服恶名为 0 时按该境界固定恶名保底。"""
-        floor = INFAMY_BY_REALM.get(realm_key, 50)
-        return self._band_amount(max_bounty, lo, hi, floor=floor)
+    @staticmethod
+    def _bounty_range(realm_key: str) -> tuple[int, int]:
+        """炼气 1~50，筑基 50~100，依恶名表上一档~本档。"""
+        hi = INFAMY_BY_REALM.get(realm_key, 50)
+        lo = 1
+        for key, value in INFAMY_BY_REALM.items():
+            if key == realm_key:
+                return lo, hi
+            lo = value
+        return 1, hi
+
+    def _roll_bounty(self, realm_key: str) -> int:
+        lo, hi = self._bounty_range(realm_key)
+        return self.rng.randint(lo, hi)
 
     def _roll_soul_shards(self, max_soul_shards: int, *, lo: float, hi: float) -> int:
         """上限=全服真人器魂第二高，倍率跟 NPC 大境界档走。"""
@@ -441,14 +456,15 @@ class NpcService:
         if not peers:
             return 0, 0, 0
         stats = [self.character_service.calculate_total_stats(c) for c in peers]
+        lo, hi = self.STAGE_STAT_MULT.get(stage.stage_key, (0.90, 1.10))
         return (
-            self._bonus_for_target(min(s.atk for s in stats), max(s.atk for s in stats), stage.base_atk, fate_key, "atk"),
-            self._bonus_for_target(min(s.defense for s in stats), max(s.defense for s in stats), stage.base_def, fate_key, "def"),
-            self._bonus_for_target(min(s.agility for s in stats), max(s.agility for s in stats), stage.base_agi, fate_key, "agi"),
+            self._bonus_for_target(min(s.atk for s in stats), max(s.atk for s in stats), stage.base_atk, fate_key, "atk", lo, hi),
+            self._bonus_for_target(min(s.defense for s in stats), max(s.defense for s in stats), stage.base_def, fate_key, "def", lo, hi),
+            self._bonus_for_target(min(s.agility for s in stats), max(s.agility for s in stats), stage.base_agi, fate_key, "agi", lo, hi),
         )
 
-    def _bonus_for_target(self, low: int, high: int, base: int, fate_key: str, stat: str) -> int:
-        target = max(1, int((low + high) / 2 * self.rng.uniform(0.70, 1.30)))
+    def _bonus_for_target(self, low: int, high: int, base: int, fate_key: str, stat: str, lo: float, hi: float) -> int:
+        target = max(1, int((low + high) / 2 * self.rng.uniform(lo, hi)))
         mult = self.fate_service.stat_multiplier(fate_key, stat)
         raw = int(target / mult) if mult else target
         return max(0, raw - base)

@@ -11,7 +11,7 @@ from bot.services.ladder_service import LadderChallengeResult
 from bot.services.pvp_service import ArenaChallengeResult, ArenaClaimResult, ArenaStatus, SparChallengeResult
 from bot.services.tower_service import TowerFloorResult, TowerRunResult
 from bot.services.travel_service import TravelSettlement
-from bot.utils.formatters import RARITY_BADGES, RARITY_COLORS, format_big_number, format_duration_minutes, format_progress, format_qi
+from bot.utils.formatters import RARITY_BADGES, RARITY_COLORS, format_big_number, format_duration_minutes, format_hp_log_suffix, format_progress, format_qi
 
 
 MAX_BATTLE_ROUNDS = CombatService.max_rounds
@@ -541,7 +541,10 @@ def _format_battle_log_line(action, *, include_round: bool) -> str:
     if action.dodged:
         return f"{prefix}{action.actor_name} 一击落空，被 {action.target_name} 避开。"
     critical = "暴击" if action.critical else "命中"
-    return f"{prefix}{action.actor_name} {critical} {action.target_name}，造成 {format_big_number(action.damage)} 点伤害。"
+    return (
+        f"{prefix}{action.actor_name} {critical} {action.target_name}，"
+        f"{format_hp_log_suffix(action.damage, action.target_hp_after, action.shield_after)}。"
+    )
 
 
 def _format_pvp_log_line(action) -> str:
@@ -552,8 +555,7 @@ def _format_pvp_log_line(action) -> str:
     critical = "暴击" if action.critical else "命中"
     return (
         f"{action.actor_name} {critical} {action.target_name}，"
-        f"造成 {format_big_number(action.damage)} 点伤害，"
-        f"{action.target_name} 余血 {format_big_number(action.target_hp_after)}。"
+        f"{format_hp_log_suffix(action.damage, action.target_hp_after, action.shield_after)}。"
     )
 
 
@@ -1035,10 +1037,7 @@ def _tower_reward_text(floor_result: TowerFloorResult) -> str:
 def _battle_excerpt(battle, limit: int, *, mode: str = "ladder") -> str:
     lines = []
     for action in battle.logs[-limit:]:
-        line = _format_battle_log_line(action, include_round=True)
-        if not action.dodged:
-            line = f"{line[:-1]}，余血 {format_big_number(action.target_hp_after)}。"
-        lines.append(line)
+        lines.append(_format_battle_log_line(action, include_round=True))
     if battle.reached_round_limit:
         if mode == "ladder":
             lines.append(f"战至 {MAX_BATTLE_ROUNDS} 回合上限，挑战方未能夺位。")

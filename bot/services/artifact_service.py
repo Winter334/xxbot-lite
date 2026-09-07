@@ -13,11 +13,14 @@ from bot.data.artifact_affixes import (
 from bot.data.artifacts import ARTIFACT_NAMES
 from bot.data.realms import RealmStage
 from bot.models.artifact import Artifact
+from bot.models.character import Character
 
 
 MAX_AFFIX_SLOTS = 5
 AFFIX_SLOT_UNLOCK_LEVELS = (10, 20, 30, 40, 50)
 AFFIX_REFINE_COST = 2
+AFFIX_SPECIFY_COST = 10_000
+AFFIX_SPECIFY_LINGSHI_COST = 10_000
 ARTIFACT_AFFIX_IDS = {definition.affix_id for definition in ARTIFACT_AFFIX_DEFINITIONS}
 
 
@@ -70,6 +73,9 @@ class RefineAffixResult:
     soul_before: int
     soul_after: int
     pending_entry: ArtifactAffixEntry | None = None
+    lingshi_cost: int = 0
+    lingshi_before: int = 0
+    lingshi_after: int = 0
 
 
 @dataclass(slots=True)
@@ -110,6 +116,12 @@ class ArtifactService:
 
     def refine_cost(self) -> int:
         return AFFIX_REFINE_COST
+
+    def specify_cost(self, affix_id: str | None = None) -> int:
+        if not affix_id:
+            return AFFIX_SPECIFY_COST
+        live = max(1, get_artifact_affix_definition(affix_id).live_roll_count())
+        return AFFIX_SPECIFY_COST * live
 
     def reinforce_cost(self, next_level: int) -> int:
         return 1 + ((next_level - 1) // 10)
@@ -210,6 +222,77 @@ class ArtifactService:
             soul_before,
             artifact.soul_shards,
             pending_entry,
+        )
+
+    def specify_lingshi_cost(self) -> int:
+        return AFFIX_SPECIFY_LINGSHI_COST
+
+    def specify_affix(self, character: Character, slot: int, affix_id: str) -> RefineAffixResult:
+        artifact = character.artifact
+        lingshi_before = character.lingshi or 0
+        self.ensure_affix_slots(artifact)
+        if slot < 1 or slot > MAX_AFFIX_SLOTS:
+            return RefineAffixResult(False, "所选词条槽位不存在。", slot, 0, artifact.soul_shards, artifact.soul_shards, lingshi_before=lingshi_before, lingshi_after=lingshi_before)
+        if not self.slot_is_unlocked(artifact, slot):
+            return RefineAffixResult(
+                False,
+                f"槽{slot} 尚未解锁，需要本命法宝达到 +{self.slot_unlock_level(slot)}。",
+                slot,
+                0,
+                artifact.soul_shards,
+                artifact.soul_shards,
+                lingshi_before=lingshi_before,
+                lingshi_after=lingshi_before,
+            )
+        if affix_id not in ARTIFACT_AFFIX_IDS:
+            return RefineAffixResult(False, "所选词条不存在。", slot, 0, artifact.soul_shards, artifact.soul_shards, lingshi_before=lingshi_before, lingshi_after=lingshi_before)
+
+        soul_before = artifact.soul_shards
+        soul_cost = self.specify_cost(affix_id)
+        lingshi_cost = self.specify_lingshi_cost()
+        if soul_before < soul_cost:
+            return RefineAffixResult(
+                False,
+                f"器魂不足，指定词条需要 {soul_cost} 器魂。",
+                slot,
+                soul_cost,
+                soul_before,
+                soul_before,
+                lingshi_cost=lingshi_cost,
+                lingshi_before=lingshi_before,
+                lingshi_after=lingshi_before,
+            )
+        if lingshi_before < lingshi_cost:
+            return RefineAffixResult(
+                False,
+                f"灵石不足，指定词条需要 {lingshi_cost} 灵石。",
+                slot,
+                soul_cost,
+                soul_before,
+                soul_before,
+                lingshi_cost=lingshi_cost,
+                lingshi_before=lingshi_before,
+                lingshi_after=lingshi_before,
+            )
+
+        artifact.soul_shards -= soul_cost
+        character.lingshi = lingshi_before - lingshi_cost
+        definition = get_artifact_affix_definition(affix_id)
+        pending_entry = ArtifactAffixEntry(slot=slot, affix_id=definition.affix_id, rolls=definition.max_rolls())
+        pending_map = {entry.slot: entry for entry in self.get_pending_affixes(artifact)}
+        pending_map[slot] = pending_entry
+        self._store_entries(artifact, "affix_pending_json", pending_map.values())
+        return RefineAffixResult(
+            True,
+            f"槽{slot} 洗出待选词条「{definition.name}」。",
+            slot,
+            soul_cost,
+            soul_before,
+            artifact.soul_shards,
+            pending_entry,
+            lingshi_cost=lingshi_cost,
+            lingshi_before=lingshi_before,
+            lingshi_after=character.lingshi,
         )
 
     def refine_all_affixes(self, artifact: Artifact, rng: random.Random | None = None) -> RefineAllAffixesResult:
