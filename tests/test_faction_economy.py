@@ -221,6 +221,22 @@ def test_npc_bounty_rolls_between_prev_and_current_realm_table(services) -> None
     assert 50 <= rolled <= 100
 
 
+def test_npc_artifact_bonus_follows_stage_mult(services) -> None:
+    npc_service = NpcService(
+        services.fate.rng,
+        services.character,
+        services.fate,
+        services.artifact,
+        services.spirit,
+    )
+    npc_service.rng.uniform = lambda a, b: a
+    services.fate.stat_multiplier = lambda fate_key, stat: 1.0
+    early = npc_service._bonus_for_target(100, 100, 0, "x", "atk", *NpcService.STAGE_STAT_MULT["early"])
+    perfect = npc_service._bonus_for_target(100, 100, 0, "x", "atk", *NpcService.STAGE_STAT_MULT["perfect"])
+    assert early == 70
+    assert perfect == 130
+
+
 def test_npc_soul_and_bounty_follow_realm_band(services) -> None:
     npc_service = NpcService(
         services.fate.rng,
