@@ -235,21 +235,30 @@ def test_max_rolls_take_high_except_inverted_keys() -> None:
     assert get_artifact_affix_definition("chenchen").max_rolls() == {"threshold_pct": 22, "reduction_pct": 55}
 
 
+def test_specify_cost_scales_with_live_roll_count(services) -> None:
+    assert services.artifact.specify_cost("ningshen") == 10_000
+    assert services.artifact.specify_cost("chenchen") == 20_000
+    assert services.artifact.specify_cost("tianwei") == 30_000
+
+
 @pytest.mark.asyncio
 async def test_specify_affix_writes_max_rolls_to_pending(session_factory, services) -> None:
     async with session_factory() as session:
         character = (await services.character.get_or_create_character(session, 5021, "定向")).character
         artifact = character.artifact
         artifact.reinforce_level = 10
-        artifact.soul_shards = 10_050
+        artifact.soul_shards = 20_050
+        character.lingshi = 10_080
         services.artifact.ensure_affix_slots(artifact)
         current_before = services.artifact.get_affix_slots(artifact)[0]
 
-        result = services.artifact.specify_affix(artifact, 1, "chenchen")
+        result = services.artifact.specify_affix(character, 1, "chenchen")
 
         assert result.success is True
-        assert result.soul_cost == 10_000
+        assert result.soul_cost == 20_000
+        assert result.lingshi_cost == 10_000
         assert artifact.soul_shards == 50
+        assert character.lingshi == 80
         pending = services.artifact.get_pending_affixes(artifact)[0]
         assert pending.affix_id == "chenchen"
         assert pending.rolls == {"threshold_pct": 22, "reduction_pct": 55}
@@ -265,10 +274,30 @@ async def test_specify_affix_fails_when_soul_is_insufficient(session_factory, se
         artifact.soul_shards = 9999
         services.artifact.ensure_affix_slots(artifact)
 
-        result = services.artifact.specify_affix(artifact, 1, "ningshen")
+        character.lingshi = 10_000
+        result = services.artifact.specify_affix(character, 1, "ningshen")
 
         assert result.success is False
         assert artifact.soul_shards == 9999
+        assert character.lingshi == 10_000
+        assert services.artifact.get_pending_affixes(artifact) == []
+
+
+@pytest.mark.asyncio
+async def test_specify_affix_fails_when_lingshi_is_insufficient(session_factory, services) -> None:
+    async with session_factory() as session:
+        character = (await services.character.get_or_create_character(session, 5023, "不够石")).character
+        artifact = character.artifact
+        artifact.reinforce_level = 10
+        artifact.soul_shards = 20_000
+        character.lingshi = 9999
+        services.artifact.ensure_affix_slots(artifact)
+
+        result = services.artifact.specify_affix(character, 1, "ningshen")
+
+        assert result.success is False
+        assert artifact.soul_shards == 20_000
+        assert character.lingshi == 9999
         assert services.artifact.get_pending_affixes(artifact) == []
 
 
