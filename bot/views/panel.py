@@ -45,7 +45,7 @@ from bot.ui.sect import build_sect_directory_embed, build_sect_overview_embed, b
 from bot.ui.sect import build_sect_help_embed
 from bot.ui.spirit import build_spirit_panel_embed
 from bot.data.artifact_affixes import AFFIX_SPECIFY_GROUPS, ArtifactAffixEntry, get_artifact_affix_definition
-from bot.services.artifact_service import AFFIX_SPECIFY_COST
+from bot.services.artifact_service import AFFIX_SPECIFY_COST, AFFIX_SPECIFY_LINGSHI_COST
 from bot.services.faction_service import FactionTarget
 from bot.services.ladder_service import ChallengeTarget
 
@@ -1058,7 +1058,7 @@ async def build_specify_pick_message(
         action_title = "指定预览"
         action_lines = [
             f"槽位：槽{slot}",
-            f"消耗：`{AFFIX_SPECIFY_COST}` 器魂",
+            f"消耗：`{AFFIX_SPECIFY_COST * max(1, definition.live_roll_count())}` 器魂 + `{AFFIX_SPECIFY_LINGSHI_COST}` 灵石",
             f"待选词条：**{definition.name}**",
             definition.describe(preview.rolls),
         ]
@@ -1081,12 +1081,16 @@ async def build_specify_affix_message(bot: XianBot, owner_user_id: int, display_
     async with bot.session_factory() as session:
         creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
         character = creation.character
-        result = bot.artifact_service.specify_affix(character.artifact, slot, affix_id)
+        result = bot.artifact_service.specify_affix(character, slot, affix_id)
         snapshot = await _sync_snapshot(bot, session, character)
         panel_state = bot.artifact_service.build_panel_state(character.artifact)
         await session.commit()
     broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
-    action_lines: list[str] = [f"槽位：槽{slot}", f"器魂：`{result.soul_before} -> {result.soul_after}`"]
+    action_lines: list[str] = [
+        f"槽位：槽{slot}",
+        f"器魂：`{result.soul_before} -> {result.soul_after}`",
+        f"灵石：`{result.lingshi_before} -> {result.lingshi_after}`",
+    ]
     if result.success and result.pending_entry is not None:
         action_lines.append(f"待选词条：**{bot.artifact_service.affix_name(result.pending_entry)}**")
         action_lines.append(bot.artifact_service.describe_affix(result.pending_entry))
@@ -2646,8 +2650,11 @@ class ArtifactSpecifyPickView(OwnerLockedView):
         self.add_item(button)
 
     def _add_confirm_button(self, *, disabled: bool) -> None:
+        cost = AFFIX_SPECIFY_COST
+        if self.affix_id:
+            cost = AFFIX_SPECIFY_COST * max(1, get_artifact_affix_definition(self.affix_id).live_roll_count())
         button = discord.ui.Button(
-            label=f"确认指定 · {AFFIX_SPECIFY_COST}器魂",
+            label=f"确认指定 · {cost}器魂+{AFFIX_SPECIFY_LINGSHI_COST}灵石",
             row=3,
             style=discord.ButtonStyle.success,
             disabled=disabled,

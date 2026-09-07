@@ -92,7 +92,7 @@ def build_refine_panel_embed(
     embed.add_field(name="待选词条", value=_render_affix_column(panel_state.pending_slots), inline=True)
     if action_title and action_lines:
         embed.add_field(name=action_title, value="\n".join(action_lines), inline=False)
-    embed.set_footer(text="单槽洗炼消耗 2 器魂；指定满值消耗 10000 器魂；待选可点“弃槽X”放弃，保存后才会写入。同一触发时机的词条，依法宝槽位由前至后结算；槽位顺序可能影响联动结果。")
+    embed.set_footer(text="单槽洗炼消耗 2 器魂；指定满值按变量数消耗 10000 器魂／个，另加 10000 灵石；待选可点“弃槽X”放弃，保存后才会写入。同一触发时机的词条，依法宝槽位由前至后结算；槽位顺序可能影响联动结果。")
     return embed
 
 

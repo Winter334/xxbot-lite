@@ -40,6 +40,9 @@ class ArtifactAffixDefinition:
             for key, low, high in self.roll_ranges
         }
 
+    def live_roll_count(self) -> int:
+        return sum(1 for _key, low, high in self.roll_ranges if high > low)
+
     def describe(self, rolls: RollMap) -> str:
         return self.description_builder(self.normalize_rolls(rolls))
 
