@@ -843,3 +843,36 @@ def test_attack_log_appears_before_liekai_threshold(services) -> None:
     liekai_i = next(i for i, log in enumerate(logs) if log.text and "裂铠" in log.text)
 
     assert attack_i < liekai_i
+
+
+def test_qingxin_does_nothing_without_cleanseable_debuff(services) -> None:
+    actor = _combat_state(
+        services,
+        "清心修士",
+        affixes=(ArtifactAffixEntry(1, "qingxin", {"stacks": 2, "heal_pct": 10}),),
+    )
+    opponent = _combat_state(services, "对手")
+    actor.hp = 100
+
+    logs = services.combat._trigger_round_start(1, actor, opponent, SequenceRandom([]), set())
+
+    assert actor.hp == 100
+    assert logs == []
+
+    services.combat._add_status(
+        actor,
+        _StatusEffect("死兆", heal_received_pct=-40, is_debuff=True, cleanseable=False, source=opponent),
+    )
+    logs = services.combat._trigger_round_start(1, actor, opponent, SequenceRandom([]), set())
+    assert actor.hp == 100
+    assert services.combat._status_count(actor, "死兆") == 1
+    assert logs == []
+
+    services.combat._add_status(
+        actor,
+        _StatusEffect("创伤", stacks=2, damage_taken_pct=5, is_debuff=True, source=opponent),
+    )
+    logs = services.combat._trigger_round_start(1, actor, opponent, SequenceRandom([]), set())
+    assert services.combat._status_count(actor, "创伤") == 0
+    assert actor.hp > 100
+    assert any(log.text and "清心净念" in log.text for log in logs)

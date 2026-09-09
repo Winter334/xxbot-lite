@@ -398,7 +398,7 @@ SPIRIT_POWER_DEFINITIONS = (
             peak=(("chain_pct", 50, 68),),
             supreme=(("chain_pct", 62, 80),),
         ),
-        description_builder=lambda rolls: f"回合开始自动执行：优先窃取敌方 1 个正面效果（转移至自身）；敌方无正面时改为转移自身 1 个负面给敌方。成功后 {rolls['chain_pct']}% 概率再次触发（无限链式，无上限）。",
+        description_builder=lambda rolls: f"回合开始自动执行：优先窃取敌方 1 层可净化正面效果（转移至自身）；敌方无正面时改为转移自身 1 层可净化负面给敌方。成功后 {rolls['chain_pct']}% 概率再次触发。护盾、待发追打与不可净化标记不可窃取。",
     ),
     _define_power(
         "zhuifeng",
