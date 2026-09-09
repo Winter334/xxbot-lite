@@ -372,7 +372,7 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
 @pytest.mark.parametrize(
     ("power_id", "rolls", "expected"),
     [
-        ("xuanjia", {"proc_pct": 60, "reduce_pct": 100}, {"def_pct": 100, "proc_pct": 60}),
+        ("xuanjia", {"proc_pct": 60, "reduce_pct": 100}, {"def_pct": 100, "proc_pct": 55, "heal_down_pct": 50}),
         ("jinmai", {"proc_pct": 85, "per_disrupt_pct": 10, "seal_stacks": 3}, {"proc_pct": 35, "per_disrupt_pct": 5}),
         ("zhuifeng", {"r1_crit_bonus": 100, "r1_agility_pct": 50, "r1_damage_pct": 480}, {"r1_crit_bonus": 50, "r1_agility_pct": 25}),
         ("leifa", {"mark_crit_pct": 15, "mark_crit_damage_pct": 20, "thunder_pct": 450}, {"mark_crit_pct": 15, "mark_crit_damage_pct": 20}),
@@ -425,7 +425,7 @@ def test_legacy_proving_ground_spirits_use_current_rolls() -> None:
     )
 
     assert xuanjia.spirit_power is not None
-    assert xuanjia.spirit_power.rolls == {"def_pct": 100, "proc_pct": 60}
+    assert xuanjia.spirit_power.rolls == {"def_pct": 100, "proc_pct": 55, "heal_down_pct": 50}
     assert jinmai.spirit_power is not None
     assert jinmai.spirit_power.rolls == {"proc_pct": 35, "per_disrupt_pct": 5}
 
@@ -451,13 +451,13 @@ def test_proving_ground_spirit_tier_changes_normalize_immediately(services) -> N
 
     xuanjia = PGBuild(
         spirit_tier="supreme",
-        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 100, "proc_pct": 80}),
+        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 100, "proc_pct": 80, "heal_down_pct": 60}),
     )
     run = ProvingGroundRun(character_id=1, pending_affix_ops=0)
     proving_ground._apply_lingshi("accept", xuanjia, run, None)
     assert xuanjia.spirit_tier == "peak"
     assert xuanjia.spirit_power is not None
-    assert xuanjia.spirit_power.rolls == {"def_pct": 80, "proc_pct": 60}
+    assert xuanjia.spirit_power.rolls == {"def_pct": 80, "proc_pct": 40, "heal_down_pct": 50}
 
 
 def test_spirit_power_description_accepts_legacy_rolls() -> None:
@@ -860,19 +860,19 @@ def test_wanzhou_bursts_curse_seals_into_debuffs(services) -> None:
 
 
 @pytest.mark.parametrize(
-    ("tier", "def_pct", "proc_range"),
+    ("tier", "def_pct", "proc_range", "heal_down_range"),
     [
-        ("low", 10, (25, 32)),
-        ("mid", 30, (30, 38)),
-        ("high", 50, (36, 45)),
-        ("peak", 80, (42, 60)),
-        ("supreme", 100, (60, 80)),
+        ("low", 10, (1, 10), (10, 20)),
+        ("mid", 30, (10, 20), (20, 30)),
+        ("high", 50, (20, 30), (30, 40)),
+        ("peak", 80, (30, 40), (40, 50)),
+        ("supreme", 100, (45, 55), (50, 60)),
     ],
 )
-def test_xuanjia_tier_values_and_battle_start_hp(services, tier, def_pct, proc_range) -> None:
+def test_xuanjia_tier_values_and_battle_start_hp(services, tier, def_pct, proc_range, heal_down_range) -> None:
     definition = get_spirit_power_definition("xuanjia")
     ranges = {key: (low, high) for key, low, high in definition.roll_ranges_by_tier[tier]}
-    assert ranges == {"def_pct": (def_pct, def_pct), "proc_pct": proc_range}
+    assert ranges == {"def_pct": (def_pct, def_pct), "proc_pct": proc_range, "heal_down_pct": heal_down_range}
 
     state = _spirit_state(
         services,
@@ -885,6 +885,18 @@ def test_xuanjia_tier_values_and_battle_start_hp(services, tier, def_pct, proc_r
     assert state.hp == state.get_max_hp()
     services.combat._trigger_battle_start(1, state, set())
     assert state.get_max_hp() == 1000 + 1000 * def_pct // 100
+
+
+def test_xuanjia_reduces_healing_received(services) -> None:
+    combat = services.combat
+    state = _spirit_state(
+        services,
+        "玄甲主",
+        defense=100,
+        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 10, "proc_pct": 0, "heal_down_pct": 50}),
+    )
+    state.hp = 500
+    assert combat._heal_by_damage(state, 200, 100) == 100
 
 
 def test_xuanjia_blocks_each_damage_packet_before_shield(services) -> None:

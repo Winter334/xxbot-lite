@@ -164,13 +164,16 @@ SPIRIT_POWER_DEFINITIONS = (
         "xuanjia",
         "玄甲",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("def_pct", 10, 10), ("proc_pct", 25, 32)),
-            mid=(("def_pct", 30, 30), ("proc_pct", 30, 38)),
-            high=(("def_pct", 50, 50), ("proc_pct", 36, 45)),
-            peak=(("def_pct", 80, 80), ("proc_pct", 42, 60)),
-            supreme=(("def_pct", 100, 100), ("proc_pct", 60, 80)),
+            low=(("def_pct", 10, 10), ("proc_pct", 1, 10), ("heal_down_pct", 10, 20)),
+            mid=(("def_pct", 30, 30), ("proc_pct", 10, 20), ("heal_down_pct", 20, 30)),
+            high=(("def_pct", 50, 50), ("proc_pct", 20, 30), ("heal_down_pct", 30, 40)),
+            peak=(("def_pct", 80, 80), ("proc_pct", 30, 40), ("heal_down_pct", 40, 50)),
+            supreme=(("def_pct", 100, 100), ("proc_pct", 45, 55), ("heal_down_pct", 50, 60)),
         ),
-        description_builder=lambda rolls: f"战斗开始时护体提高 {rolls['def_pct']}%；每次受击时，有 {rolls['proc_pct']}% 概率格挡本次伤害。",
+        description_builder=lambda rolls: (
+            f"战斗开始时最大生命提高 {rolls['def_pct']}%；每次受到伤害时，有 {rolls['proc_pct']}% 概率完全格挡；"
+            f"自身受疗降低 {rolls['heal_down_pct']}%"
+        ),
     ),
     _define_power(
         "fanji",
