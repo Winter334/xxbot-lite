@@ -156,11 +156,16 @@ def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int | float])
             # 涤世 2026-05-27 削弱：废弃 kind_pct 字段，移除残留 roll 值
             clamped.pop("kind_pct", None)
     elif power_id == "jueming":
+        if "execute_pct" in clamped:
+            clamped["hp_pct"] = clamped["execute_pct"]
+        elif "damage_pct" in clamped:
+            clamped["hp_pct"] = clamped["damage_pct"]
+        clamped.pop("execute_pct", None)
+        clamped.pop("max_stacks", None)
+        clamped.pop("damage_pct", None)
         fixed = _JUEMING_OMEN_COST.get(tier)
         if fixed is not None:
             clamped["omen_cost"] = fixed
-            clamped.pop("max_stacks", None)
-            clamped.pop("damage_pct", None)
     elif power_id in {"xuanjia", "jinmai", "zhuifeng", "leifa", "wanzhou", "qiedao"}:
         definition = get_spirit_power_definition(power_id)
         ranges = definition.roll_ranges_by_tier.get(tier)

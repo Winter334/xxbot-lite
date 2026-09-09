@@ -148,15 +148,16 @@ SPIRIT_POWER_DEFINITIONS = (
         "jueming",
         "绝命",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("omen_cost", 8, 8), ("execute_pct", 18, 18), ("heal_down_pct", 35, 35)),
-            mid=(("omen_cost", 7, 7), ("execute_pct", 22, 22), ("heal_down_pct", 40, 40)),
-            high=(("omen_cost", 6, 6), ("execute_pct", 26, 26), ("heal_down_pct", 45, 45)),
-            peak=(("omen_cost", 5, 5), ("execute_pct", 30, 30), ("heal_down_pct", 50, 50)),
-            supreme=(("omen_cost", 4, 4), ("execute_pct", 35, 35), ("heal_down_pct", 55, 55)),
+            low=(("omen_cost", 8, 8), ("hp_pct", 18, 18), ("heal_down_pct", 35, 35)),
+            mid=(("omen_cost", 7, 7), ("hp_pct", 22, 22), ("heal_down_pct", 40, 40)),
+            high=(("omen_cost", 6, 6), ("hp_pct", 26, 26), ("heal_down_pct", 45, 45)),
+            peak=(("omen_cost", 5, 5), ("hp_pct", 30, 30), ("heal_down_pct", 50, 50)),
+            supreme=(("omen_cost", 4, 4), ("hp_pct", 35, 35), ("heal_down_pct", 55, 55)),
         ),
         description_builder=lambda rolls: (
             f"回合结束时，若目标咒印≥{rolls['omen_cost']}层，消耗{rolls['omen_cost']}层咒印凝成 1 层死兆；"
-            f"每层死兆使目标受疗降低 {rolls['heal_down_pct']}%，并提高 {rolls['execute_pct']}% 斩杀线；死兆 3 层时直接斩杀。"
+            f"每层死兆使目标受疗降低 {rolls['heal_down_pct']}%，并立刻造成自身最大生命 {rolls['hp_pct']}%×当前层数 的伤害。"
+            f"叠满 3 层后伤害结算完毕，死兆清空并重新叠层。"
         ),
     ),
     _define_power(

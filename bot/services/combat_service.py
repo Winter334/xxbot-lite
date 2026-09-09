@@ -1411,7 +1411,7 @@ class CombatService:
         for state, opponent in ((challenger, defender), (defender, challenger)):
             if state.hp > 0 and opponent.hp > 0:
                 logs.extend(self._trigger_spirit_round_end(round_no, state, opponent, roller))
-        # 绝命结算：回合结束时检查印记层数（必须在涤世之后，处理涤世新叠的印记）
+        # 绝命结算：回合结束时消耗咒印凝死兆并立刻结算层数伤害
         for state, opponent in ((challenger, defender), (defender, challenger)):
             if state.hp > 0 and opponent.hp > 0:
                 logs.extend(self._settle_jueming_marks(round_no, state, opponent))
@@ -2478,7 +2478,7 @@ class CombatService:
         - respects_resilience=True（默认）：扣减 state.snapshot.base_resilience % 后再扣血。
           普攻、反棘、归锋、追击、灼烧 DOT、春生、蚀焰等所有伤害管线最终都汇聚到这里。
         - respects_resilience=False：豁免境界韧性。仅“机制性必杀真伤”使用。
-        - 绝命斩杀直接 `target.hp = 0`，不走本函数，天然豁免。
+        - 绝命死兆伤害走普通伤害管线，由本函数处理。
         """
         if damage <= 0 or state.hp <= 0:
             return 0
@@ -3035,6 +3035,9 @@ class CombatService:
         state.dishi_last_round = round_no
         return logs
 
+    def _clear_death_omens(self, state: _CombatState) -> None:
+        state.statuses = [status for status in state.statuses if status.name != "死兆"]
+
     def _settle_jueming_marks(
         self,
         round_no: int,
@@ -3042,45 +3045,52 @@ class CombatService:
         opponent: _CombatState,
         roller: random.Random | None = None,
     ) -> list[ActionLog]:
-        """绝命重做：消耗咒印凝成死兆，并按死兆层数执行斩杀。"""
+        """消耗咒印凝成死兆，立刻按当前层数打自身最大生命百分比伤害；满 3 层后清空重叠。"""
         logs: list[ActionLog] = []
         power = state.snapshot.spirit_power
         if power is None or power.power_id != "jueming" or state.hp <= 0 or opponent.hp <= 0:
             return logs
         owner = state.snapshot.name
-        execute_pct = _roll(power.rolls, "execute_pct", _roll(power.rolls, "damage_pct", 20))
-        omen_cost = _roll(power.rolls, "omen_cost", _roll(power.rolls, "max_stacks", 8))
+        omen_cost = _roll(power.rolls, "omen_cost", 8)
         heal_down_pct = _roll(power.rolls, "heal_down_pct", 40)
-
-        def execute_if_ready() -> bool:
-            omen_count = self._death_omen_count(opponent)
-            if omen_count >= 3:
-                opponent.hp = 0
-                logs.append(self._effect_log(round_no, opponent, f"{owner} 的绝命发动，{opponent.snapshot.name} 三重死兆尽显，当刻毙命。", actor_name=owner))
-                return True
-            if omen_count > 0 and opponent.hp * 100 <= opponent.get_max_hp() * execute_pct * omen_count:
-                opponent.hp = 0
-                logs.append(self._effect_log(round_no, opponent, f"{owner} 的绝命发动，{opponent.snapshot.name} 死兆压身，血线已入斩域。", actor_name=owner))
-                return True
-            return False
-
-        if execute_if_ready():
+        hp_pct = _roll(power.rolls, "hp_pct", _roll(power.rolls, "execute_pct", 18))
+        if omen_cost <= 0 or self._curse_seal_count(opponent) < omen_cost:
             return logs
-        if self._curse_seal_count(opponent) >= omen_cost and omen_cost > 0:
-            self._consume_curse_seal(opponent, omen_cost)
-            active_roller = roller or opponent.roller or self.rng
-            xuanjia = opponent.snapshot.spirit_power
-            if (
-                xuanjia is not None
-                and xuanjia.power_id == "xuanjia"
-                and active_roller.random() < _roll(xuanjia.rolls, "proc_pct", 0) / 100
-            ):
-                logs.append(self._effect_log(round_no, opponent, f"{opponent.snapshot.name} 的玄甲格挡死兆凝结；咒印已耗，死兆未生。", actor_name=owner))
-                return logs
-            self._add_death_omen(opponent, state, heal_down_pct)
-            omen_count = self._death_omen_count(opponent)
-            logs.append(self._effect_log(round_no, opponent, f"{owner} 炼化 {omen_cost} 层咒印，{opponent.snapshot.name} 凝成第 {omen_count} 层死兆。", actor_name=owner))
-            execute_if_ready()
+        self._consume_curse_seal(opponent, omen_cost)
+        self._add_death_omen(opponent, state, heal_down_pct)
+        omen_count = self._death_omen_count(opponent)
+        if omen_count <= 0:
+            return logs
+        raw_damage = max(1, state.get_max_hp() * hp_pct * omen_count // 100)
+        cause = self._effect_log(
+            round_no,
+            opponent,
+            f"{owner} 炼化 {omen_cost} 层咒印，{opponent.snapshot.name} 凝成第 {omen_count} 层死兆。",
+            actor_name=owner,
+        )
+        logs.append(cause)
+        nested: list[ActionLog] = []
+        actual = self._apply_typed_damage(
+            opponent,
+            raw_damage,
+            _NORMAL_DAMAGE_PROFILE,
+            actor=state,
+            round_no=round_no,
+            logs=nested,
+            cause=cause,
+        )
+        if actual > 0 or any(log is not cause for log in nested):
+            logs.extend(log for log in nested if log is not cause)
+        if omen_count >= 3:
+            self._clear_death_omens(opponent)
+            logs.append(
+                self._effect_log(
+                    round_no,
+                    opponent,
+                    f"{opponent.snapshot.name} 三重死兆散尽，重新叠层。",
+                    actor_name=owner,
+                )
+            )
         return logs
 
     def _effect_log(
