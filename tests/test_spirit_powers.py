@@ -384,6 +384,7 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
         ("qiedao", {"chain_pct": 80}, {"chain_pct": 60}),
         ("shisheng", {"heal_pct": 75}, {"heal_pct": 5}),
         ("shisheng", {"heal_pct": 1}, {"heal_pct": 5}),
+        ("xuekuang", {"per_lost_10_pct": 22, "max_bonus_pct": 180, "frenzy_lifesteal_pct": 28}, {"burn_pct": 5, "loss_step_pct": 10, "stat_pct": 5}),
         ("jueming", {"max_stacks": 6, "damage_pct": 55}, {"omen_cost": 5, "hp_pct": 35, "heal_down_pct": 20}),
         ("jueming", {"omen_cost": 4, "execute_pct": 35, "heal_down_pct": 55}, {"omen_cost": 5, "hp_pct": 35, "heal_down_pct": 25}),
     ],
@@ -519,6 +520,51 @@ def test_shisheng_heals_from_followup_damage(services) -> None:
     assert actual > 0
     assert attacker.hp == 100 + max(1, actual * 5 // 100)
     assert any(log.text and "噬生吞回血气" in log.text for log in logs)
+
+
+def test_xuekuang_burns_hp_and_stats_scale_with_self_loss(services) -> None:
+    combat = services.combat
+    state = _spirit_state(
+        services,
+        "血狂者",
+        atk=100,
+        defense=100,
+        agility=100,
+        spirit_power=SpiritPowerEntry("xuekuang", {"burn_pct": 5, "loss_step_pct": 10, "stat_pct": 5}),
+    )
+    assert state.get_max_hp() == 1000
+    logs = combat._trigger_xuekuang_round_start(1, state)
+    assert state.hp == 950
+    assert state.xuekuang_lost_hp == 50
+    assert combat._xuekuang_stat_pct(state) == 0
+    assert combat._current_atk(state) == 100
+    assert not any(status.name == "血狂" for status in state.statuses)
+    assert any(log.text and "血狂燃精" in log.text for log in logs)
+
+    combat._trigger_xuekuang_round_start(2, state)
+    assert state.hp == 900
+    assert state.xuekuang_lost_hp == 100
+    assert combat._xuekuang_stat_pct(state) == 5
+    assert combat._current_atk(state) == 105
+    assert combat._current_defense(state) == 105
+    assert combat._current_agility(state) == 105
+    assert state.get_max_hp() == 1050
+
+    state.hp = 1000
+    assert combat._xuekuang_stat_pct(state) == 5
+    assert combat._current_atk(state) == 105
+    assert state.get_max_hp() == 1050
+
+    combat._apply_damage(state, 100, respects_resilience=False)
+    assert state.xuekuang_lost_hp == 200
+    assert combat._xuekuang_stat_pct(state) == 5
+    assert combat._current_atk(state) == 105
+    assert state.get_max_hp() == 1050
+
+    combat._apply_damage(state, 5, respects_resilience=False)
+    assert combat._xuekuang_stat_pct(state) == 10
+    assert combat._current_atk(state) == 110
+    assert state.get_max_hp() == 1100
 
 
 def test_fenmai_triggers_extra_damage_on_burning_target(services) -> None:
