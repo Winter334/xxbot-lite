@@ -250,10 +250,7 @@ def test_niepan_revives_after_jueming_at_round_end(services, monkeypatch) -> Non
         logs = original_battle_start(round_no, state, scene)
         if state.snapshot.name == "涅槃者":
             combat._add_status(state, _StatusEffect("生息"))
-            combat._add_status(
-                state,
-                _StatusEffect("死兆", is_debuff=True, source=executioner_state[0], cleanseable=False),
-            )
+            combat._add_curse_seal(state, executioner_state[0], 1)
         return logs
 
     executioner_state = [None]
@@ -273,7 +270,7 @@ def test_niepan_revives_after_jueming_at_round_end(services, monkeypatch) -> Non
         1,
         100,
         100,
-        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 99, "execute_pct": 100, "heal_down_pct": 0}),
+        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 1, "hp_pct": 100, "heal_down_pct": 0}),
     )
     executioner_state[0] = _spirit_state(
         services,
@@ -284,7 +281,7 @@ def test_niepan_revives_after_jueming_at_round_end(services, monkeypatch) -> Non
 
     battle = combat.run_battle(victim, executioner, rng=CombatRoller([0.99] * 10))
 
-    assert any(log.text and "绝命发动" in log.text for log in battle.logs)
+    assert any(log.text and "凝成第 1 层死兆" in log.text for log in battle.logs)
     assert any(log.text and "涅槃再起" in log.text for log in battle.logs)
     assert battle.challenger_hp_after > 0
 
@@ -385,6 +382,8 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
             {"curse_on_hit": 3, "extra_curse_pct": 0, "burst_threshold": 5, "debuff_rolls_per_curse": 6},
         ),
         ("qiedao", {"chain_pct": 80}, {"chain_pct": 60}),
+        ("jueming", {"max_stacks": 6, "damage_pct": 55}, {"omen_cost": 4, "hp_pct": 55, "heal_down_pct": 55}),
+        ("jueming", {"omen_cost": 4, "execute_pct": 35, "heal_down_pct": 55}, {"omen_cost": 4, "hp_pct": 35, "heal_down_pct": 55}),
     ],
 )
 def test_reworked_legacy_spirit_rolls_are_normalized(services, power_id, rolls, expected) -> None:
@@ -779,11 +778,11 @@ async def test_upgrade_tier_success_low_to_mid(session_factory, services) -> Non
 
 
 
-def test_jueming_converts_curse_seals_to_death_omen_and_executes(services) -> None:
+def test_jueming_converts_curse_seals_to_scaled_hp_damage_and_clears_at_three(services) -> None:
     combat = services.combat
     owner_snapshot = combat.create_combatant(
         name="绝命主", atk=100, defense=10, agility=50,
-        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 2, "execute_pct": 50, "heal_down_pct": 40}),
+        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 2, "hp_pct": 10, "heal_down_pct": 40}),
     )
     target_snapshot = combat.create_combatant(name="受印者", atk=10, defense=100, agility=10)
     owner = _CombatState(owner_snapshot, owner_snapshot.max_hp)
@@ -796,12 +795,19 @@ def test_jueming_converts_curse_seals_to_death_omen_and_executes(services) -> No
 
     assert combat._curse_seal_count(target) == 0
     assert combat._death_omen_count(target) == 1
-    assert any(log.text and "死兆" in log.text for log in logs)
+    assert target.hp == target.get_max_hp() - 10
+    assert any(log.text and "凝成第 1 层死兆" in log.text for log in logs)
 
-    target.hp = target.get_max_hp() * 40 // 100
+    combat._add_curse_seal(target, owner, 2)
     combat._settle_jueming_marks(2, owner, target)
+    assert combat._death_omen_count(target) == 2
+    assert target.hp == target.get_max_hp() - 30
 
-    assert target.hp == 0
+    combat._add_curse_seal(target, owner, 2)
+    logs = combat._settle_jueming_marks(3, owner, target)
+    assert combat._death_omen_count(target) == 0
+    assert target.hp == target.get_max_hp() - 60
+    assert any(log.text and "三重死兆散尽" in log.text for log in logs)
 
 
 def test_wanzhou_bursts_curse_seals_into_debuffs(services) -> None:
@@ -909,12 +915,12 @@ def test_xuanjia_full_battle_blocks_attack_and_burn_as_separate_packets(services
     assert result.defender_hp_after == result.defender_max_hp
 
 
-def test_jueming_consumes_curses_before_xuanjia_omen_block(services) -> None:
+def test_jueming_applies_omen_even_when_xuanjia_blocks_damage(services) -> None:
     combat = services.combat
     owner = _spirit_state(
         services,
         "绝命主",
-        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 2, "execute_pct": 20, "heal_down_pct": 40}),
+        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 2, "hp_pct": 20, "heal_down_pct": 40}),
     )
     target = _spirit_state(
         services,
@@ -922,15 +928,21 @@ def test_jueming_consumes_curses_before_xuanjia_omen_block(services) -> None:
         spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 10, "proc_pct": 50}),
     )
     combat._add_curse_seal(target, owner, 2)
+    target.roller = CombatRoller([0.0])
+    hp_before = target.hp
 
-    combat._settle_jueming_marks(1, owner, target, CombatRoller([0.0]))
-    assert combat._curse_seal_count(target) == 0
-    assert combat._death_omen_count(target) == 0
-
-    combat._add_curse_seal(target, owner, 2)
-    combat._settle_jueming_marks(2, owner, target, CombatRoller([0.99]))
+    logs = combat._settle_jueming_marks(1, owner, target)
     assert combat._curse_seal_count(target) == 0
     assert combat._death_omen_count(target) == 1
+    assert target.hp == hp_before
+    assert any(log.text and "完全格挡本次伤害" in log.text for log in logs)
+
+    combat._add_curse_seal(target, owner, 2)
+    target.roller = CombatRoller([0.99])
+    combat._settle_jueming_marks(2, owner, target)
+    assert combat._curse_seal_count(target) == 0
+    assert combat._death_omen_count(target) == 2
+    assert target.hp == hp_before - owner.get_max_hp() * 40 // 100
 
 
 def test_jinmai_probability_seal_and_break_spirit_lifecycle(services) -> None:
