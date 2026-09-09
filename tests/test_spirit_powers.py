@@ -8,7 +8,7 @@ import pytest
 from bot.data.artifact_affixes import ArtifactAffixEntry
 from bot.data.spirits import SPIRIT_POWER_DEFINITIONS, SpiritPowerEntry, get_spirit_power_definition
 from bot.models.proving_ground_run import ProvingGroundRun
-from bot.services.combat_service import _CombatState, _DamageSource, _StatusEffect
+from bot.services.combat_service import _CombatState, _DamageSource, _NORMAL_DAMAGE_PROFILE, _StatusEffect
 from bot.services.proving_ground_service import PGBuild, ProvingGroundService
 
 
@@ -382,6 +382,8 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
             {"curse_on_hit": 3, "extra_curse_pct": 0, "burst_threshold": 5, "debuff_rolls_per_curse": 6},
         ),
         ("qiedao", {"chain_pct": 80}, {"chain_pct": 60}),
+        ("shisheng", {"heal_pct": 75}, {"heal_pct": 5}),
+        ("shisheng", {"heal_pct": 1}, {"heal_pct": 5}),
         ("jueming", {"max_stacks": 6, "damage_pct": 55}, {"omen_cost": 5, "hp_pct": 35, "heal_down_pct": 20}),
         ("jueming", {"omen_cost": 4, "execute_pct": 35, "heal_down_pct": 55}, {"omen_cost": 5, "hp_pct": 35, "heal_down_pct": 25}),
     ],
@@ -483,7 +485,7 @@ def test_shisheng_can_heal_from_zhuohun_burn_damage(services) -> None:
         defense=10,
         agility=50,
         affixes=(burn_affix,),
-        spirit_power=SpiritPowerEntry("shisheng", {"heal_pct": 100}),
+        spirit_power=SpiritPowerEntry("shisheng", {"heal_pct": 5}),
     )
     defender = services.combat.create_combatant(name="枯木", atk=30, defense=400, agility=10)
 
@@ -492,6 +494,31 @@ def test_shisheng_can_heal_from_zhuohun_burn_damage(services) -> None:
 
     assert empowered.challenger_hp_after >= baseline.challenger_hp_after
     assert any(log.text and "噬生吞回血气" in log.text for log in empowered.logs)
+
+
+def test_shisheng_heals_from_followup_damage(services) -> None:
+    combat = services.combat
+    attacker = _spirit_state(
+        services,
+        "噬者",
+        atk=100,
+        defense=50,
+        spirit_power=SpiritPowerEntry("shisheng", {"heal_pct": 5}),
+    )
+    target = _spirit_state(services, "木人", defense=50)
+    attacker.hp = 100
+    logs: list = []
+    actual = combat._apply_typed_damage(
+        target,
+        200,
+        _NORMAL_DAMAGE_PROFILE,
+        actor=attacker,
+        round_no=1,
+        logs=logs,
+    )
+    assert actual > 0
+    assert attacker.hp == 100 + max(1, actual * 5 // 100)
+    assert any(log.text and "噬生吞回血气" in log.text for log in logs)
 
 
 def test_fenmai_triggers_extra_damage_on_burning_target(services) -> None:
