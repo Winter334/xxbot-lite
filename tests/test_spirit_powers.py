@@ -1078,3 +1078,114 @@ def test_wanzhou_uses_leihen_pool_without_action_seal(services) -> None:
     assert combat._status_count(target, "封禁行动") == 0
     assert 0 < combat._target_leihen_count(target) <= 5
     assert any(log.text and "雷殛" in log.text for log in logs)
+
+
+class _StealRoller:
+    def __init__(self, *, chain_rolls: list[int] | None = None) -> None:
+        self._chain = iter(chain_rolls or [])
+
+    def choice(self, items):
+        return items[0]
+
+    def randint(self, start: int, end: int) -> int:
+        return next(self._chain, end)
+
+
+def test_qiedao_steals_one_stack_and_respects_caps(services) -> None:
+    combat = services.combat
+    thief = _spirit_state(services, "窃者", spirit_power=SpiritPowerEntry("qiedao", {"chain_pct": 0}))
+    victim = _spirit_state(services, "失主")
+    combat._add_status(victim, _StatusEffect("灵势", stacks=10, atk_pct=8))
+    combat._add_status(thief, _StatusEffect("灵势", stacks=9, atk_pct=8))
+
+    logs = combat._trigger_spirit_round_start(1, thief, victim, _StealRoller())
+
+    assert combat._status_count(victim, "灵势") == 9
+    assert combat._status_count(thief, "灵势") == 10
+    assert any(log.text and "窃取 1 层「灵势」" in log.text for log in logs)
+
+    logs = combat._trigger_spirit_round_start(2, thief, victim, _StealRoller())
+    assert combat._status_count(victim, "灵势") == 9
+    assert combat._status_count(thief, "灵势") == 10
+    assert logs == []
+
+
+def test_qiedao_keeps_copied_fields_and_transfers_one_debuff_stack(services) -> None:
+    combat = services.combat
+    thief = _spirit_state(services, "窃者", spirit_power=SpiritPowerEntry("qiedao", {"chain_pct": 0}))
+    victim = _spirit_state(services, "失主")
+    combat._add_status(
+        victim,
+        _StatusEffect("狂锋", stacks=2, damage_dealt_pct=70, remaining_hits=1, active_from_round=3),
+    )
+
+    logs = combat._trigger_spirit_round_start(1, thief, victim, _StealRoller())
+    stolen = next(status for status in thief.statuses if status.name == "狂锋")
+    leftover = next(status for status in victim.statuses if status.name == "狂锋")
+    assert leftover.stacks == 1
+    assert stolen.stacks == 1
+    assert stolen.active_from_round == 3
+    assert stolen.remaining_hits == 1
+    assert stolen.damage_dealt_pct == 70
+    assert stolen.source is thief
+    assert any(log.text and "窃取 1 层「狂锋」" in log.text for log in logs)
+
+    thief.statuses = [status for status in thief.statuses if status.name != "狂锋"]
+    victim.statuses = [status for status in victim.statuses if status.name != "狂锋"]
+    combat._add_status(
+        thief,
+        _StatusEffect("创伤", stacks=5, damage_taken_pct=5, heal_received_pct=-8, is_debuff=True, source=victim),
+    )
+    logs = combat._trigger_spirit_round_start(2, thief, victim, _StealRoller())
+    transferred = next(status for status in victim.statuses if status.name == "创伤")
+    remaining = next(status for status in thief.statuses if status.name == "创伤")
+    assert remaining.stacks == 4
+    assert transferred.stacks == 1
+    assert transferred.heal_received_pct == -8
+    assert transferred.source is thief
+    assert any(log.text and "1 层「创伤」" in log.text for log in logs)
+
+
+def test_qiedao_cannot_steal_shield_or_uncleanseable_status(services) -> None:
+    combat = services.combat
+    thief = _spirit_state(services, "窃者", spirit_power=SpiritPowerEntry("qiedao", {"chain_pct": 0}))
+    victim = _spirit_state(services, "失主")
+    combat._add_status(victim, _StatusEffect("固本", shield=200, cleanseable=False))
+    combat._add_status(victim, _StatusEffect("追猎", agility_pct=10, cleanseable=False))
+    combat._add_status(thief, _StatusEffect("死兆", heal_received_pct=-40, is_debuff=True, cleanseable=False, source=victim))
+
+    logs = combat._trigger_spirit_round_start(1, thief, victim, _StealRoller())
+
+    assert combat._status_count(victim, "固本") == 1
+    assert combat._status_count(victim, "追猎") == 1
+    assert combat._status_count(thief, "死兆") == 1
+    assert combat._status_count(victim, "死兆") == 0
+    assert logs == []
+
+
+def test_qiedao_cannot_steal_pending_followup_strike(services) -> None:
+    combat = services.combat
+    thief = _spirit_state(services, "窃者", spirit_power=SpiritPowerEntry("qiedao", {"chain_pct": 0}))
+    victim = _spirit_state(services, "失主")
+    combat._add_status(victim, _StatusEffect("涤世·净化", bonus_damage=300000, remaining_hits=1))
+    combat._add_status(victim, _StatusEffect("春生·追击", bonus_damage=400, remaining_hits=1))
+    combat._add_status(victim, _StatusEffect("风刃", guarantee_crit=True, damage_dealt_pct=50, remaining_hits=1))
+    combat._add_status(victim, _StatusEffect("碎阙", damage_dealt_pct=40, remaining_hits=1))
+    combat._add_status(victim, _StatusEffect("压阵", damage_dealt_pct=50, remaining_hits=1))
+    combat._add_status(victim, _StatusEffect("灵势", atk_pct=8))
+
+    logs = combat._trigger_spirit_round_start(1, thief, victim, _StealRoller())
+
+    assert combat._status_count(victim, "涤世·净化") == 1
+    assert combat._status_count(victim, "春生·追击") == 1
+    assert combat._status_count(victim, "风刃") == 1
+    assert combat._status_count(victim, "碎阙") == 1
+    assert combat._status_count(thief, "涤世·净化") == 0
+    assert combat._status_count(thief, "春生·追击") == 0
+    assert combat._status_count(thief, "风刃") == 0
+    assert combat._status_count(thief, "碎阙") == 0
+    assert combat._status_count(victim, "压阵") == 0
+    assert combat._status_count(thief, "压阵") == 1
+    assert combat._status_count(victim, "灵势") == 1
+    assert combat._status_count(thief, "灵势") == 0
+    assert any(log.text and "窃取 1 层「压阵」" in log.text for log in logs)

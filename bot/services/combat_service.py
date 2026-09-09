@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import random
 
 from bot.data.artifact_affixes import ArtifactAffixEntry, get_artifact_affix_definition
@@ -163,6 +163,26 @@ class CombatService:
             "fenjie", "fengxing", "tianwei", "leiyin", "liekong", "tanshi", "tongming",
         }
     )
+    _PENDING_STRIKE_STATUS_NAMES = frozenset({"涤世·净化", "春生·追击", "风刃", "碎阙"})
+    _STATUS_STACK_CAPS = {
+        "灵势": 10,
+        "掠影·破步": 5,
+        "创伤": 5,
+        "破步": 4,
+        "疾锋": 3,
+        "天威": 6,
+        "风行": 5,
+        "风遁": 8,
+        "登霄": 8,
+        "追猎": 12,
+        "夺锋": 5,
+        "雷殛": 5,
+        "死兆": 3,
+        "破封灵势": 10,
+        "幻步": 3,
+        "咒缚": 7,
+        "蔓咒": 7,
+    }
 
     def __init__(self, rng: random.Random | None = None) -> None:
         self.rng = rng or random.Random()
@@ -2888,6 +2908,31 @@ class CombatService:
 
     # ── 器灵神通 round_start / round_end 钩子 ────────────────────────
 
+    def _is_pending_strike_status(self, status: _StatusEffect) -> bool:
+        return status.bonus_damage > 0 or status.name in self._PENDING_STRIKE_STATUS_NAMES
+
+    def _status_stack_cap(self, name: str) -> int | None:
+        return self._STATUS_STACK_CAPS.get(name)
+
+    def _can_receive_status_stack(self, state: _CombatState, status: _StatusEffect) -> bool:
+        cap = self._status_stack_cap(status.name)
+        if cap is None:
+            return True
+        return self._status_count(state, status.name) < cap
+
+    def _copy_status_layer(self, status: _StatusEffect, *, source: _CombatState | None) -> _StatusEffect:
+        return replace(status, stacks=1, source=source)
+
+    def _peel_one_stack(self, state: _CombatState, status: _StatusEffect) -> _StatusEffect | None:
+        if status not in state.statuses or not status.is_active():
+            return None
+        peeled = self._copy_status_layer(status, source=status.source)
+        if status.stacks > 1:
+            status.stacks -= 1
+        else:
+            state.statuses.remove(status)
+        return peeled
+
     def _trigger_spirit_round_start(self, round_no: int, state: _CombatState, opponent: _CombatState, roller: random.Random) -> list[ActionLog]:
         """Handle spirit powers that trigger at round start (窃道)."""
         power = state.snapshot.spirit_power
@@ -2896,89 +2941,57 @@ class CombatService:
         chain_pct = power.rolls.get("chain_pct", 18)
         logs: list[ActionLog] = []
         while True:
-            # 优先窃取敌方正面效果
-            enemy_positives = [s for s in self._active_statuses(opponent) if not s.is_debuff and s.shield <= 0 and s.cleanseable]
+            enemy_positives = [
+                status
+                for status in self._active_statuses(opponent)
+                if not status.is_debuff
+                and status.shield <= 0
+                and status.cleanseable
+                and not self._is_pending_strike_status(status)
+                and self._can_receive_status_stack(state, status)
+            ]
             if enemy_positives:
                 stolen = roller.choice(enemy_positives)
-                opponent.statuses.remove(stolen)
-                new_effect = _StatusEffect(
-                    name=stolen.name,
-                    stacks=stolen.stacks,
-                    duration=stolen.duration,
-                    atk_pct=stolen.atk_pct,
-                    agility_pct=stolen.agility_pct,
-                    damage_taken_pct=stolen.damage_taken_pct,
-                    damage_reduction_pct=stolen.damage_reduction_pct,
-                    damage_dealt_pct=stolen.damage_dealt_pct,
-                    heal_received_pct=stolen.heal_received_pct,
-                    burn_bonus_pct=stolen.burn_bonus_pct,
-                    burn_pct=stolen.burn_pct,
-                    remaining_hits=stolen.remaining_hits,
-                    is_debuff=False,
-                    source=state,
-                    crit_bonus_pct=stolen.crit_bonus_pct,
-                    crit_damage_pct=stolen.crit_damage_pct,
-                    dodge_bonus_pct=stolen.dodge_bonus_pct,
-                    shield=stolen.shield,
-                    guarantee_crit=stolen.guarantee_crit,
-                    is_relight=stolen.is_relight,
-                    bonus_damage=stolen.bonus_damage,
-                )
-                self._add_status(state, new_effect)
+                peeled = self._peel_one_stack(opponent, stolen)
+                if peeled is None:
+                    break
+                self._add_status(state, self._copy_status_layer(peeled, source=state))
                 logs.append(
                     self._effect_log(
                         round_no,
                         state,
-                        f"{state.snapshot.name} 的窃道从 {opponent.snapshot.name} 窃取「{stolen.name}」。",
+                        f"{state.snapshot.name} 的窃道从 {opponent.snapshot.name} 窃取 1 层「{peeled.name}」。",
                         actor_name=state.snapshot.name,
                     )
                 )
-                # 敌方失去正面效果 → 触发反噬
-                logs.extend(self._trigger_on_effect_lost_to_enemy(round_no, state, opponent, stolen.stacks))
+                logs.extend(self._trigger_on_effect_lost_to_enemy(round_no, state, opponent, 1))
                 if roller.randint(0, 99) >= chain_pct:
                     break
                 continue
-            # 敌方无正面时：转移自身负面给敌方
-            self_negatives = [s for s in self._active_statuses(state) if s.is_debuff and s.cleanseable]
+            self_negatives = [
+                status
+                for status in self._active_statuses(state)
+                if status.is_debuff
+                and status.cleanseable
+                and self._can_receive_status_stack(opponent, status)
+            ]
             if self_negatives:
                 transferred = roller.choice(self_negatives)
-                state.statuses.remove(transferred)
-                new_effect = _StatusEffect(
-                    name=transferred.name,
-                    stacks=transferred.stacks,
-                    duration=transferred.duration,
-                    atk_pct=transferred.atk_pct,
-                    agility_pct=transferred.agility_pct,
-                    damage_taken_pct=transferred.damage_taken_pct,
-                    damage_reduction_pct=transferred.damage_reduction_pct,
-                    damage_dealt_pct=transferred.damage_dealt_pct,
-                    heal_received_pct=transferred.heal_received_pct,
-                    burn_bonus_pct=transferred.burn_bonus_pct,
-                    burn_pct=transferred.burn_pct,
-                    remaining_hits=transferred.remaining_hits,
-                    is_debuff=True,
-                    source=state,
-                    crit_bonus_pct=transferred.crit_bonus_pct,
-                    crit_damage_pct=transferred.crit_damage_pct,
-                    dodge_bonus_pct=transferred.dodge_bonus_pct,
-                    shield=transferred.shield,
-                    guarantee_crit=transferred.guarantee_crit,
-                    is_relight=transferred.is_relight,
-                    bonus_damage=transferred.bonus_damage,
-                )
-                self._add_status(opponent, new_effect)
+                peeled = self._peel_one_stack(state, transferred)
+                if peeled is None:
+                    break
+                self._add_status(opponent, self._copy_status_layer(peeled, source=state))
                 logs.append(
                     self._effect_log(
                         round_no,
                         state,
-                        f"{state.snapshot.name} 的窃道将「{transferred.name}」转移至 {opponent.snapshot.name}。",
+                        f"{state.snapshot.name} 的窃道将 1 层「{peeled.name}」转移至 {opponent.snapshot.name}。",
                         actor_name=state.snapshot.name,
                     )
                 )
                 if roller.randint(0, 99) >= chain_pct:
                     break
                 continue
-            # 双方均无可操作目标
             break
         return logs
 
