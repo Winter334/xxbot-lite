@@ -2938,7 +2938,7 @@ class CombatService:
         power = state.snapshot.spirit_power
         if power is None or power.power_id != "qiedao":
             return []
-        chain_pct = power.rolls.get("chain_pct", 18)
+        chain_pct = power.rolls.get("chain_pct", 5)
         logs: list[ActionLog] = []
         while True:
             enemy_positives = [

@@ -384,6 +384,7 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
             {"curse_on_hit": 3, "extra_curse_pct": 0, "burst_threshold": 5, "debuff_rolls_per_curse": 6, "seal_weight": 12},
             {"curse_on_hit": 3, "extra_curse_pct": 0, "burst_threshold": 5, "debuff_rolls_per_curse": 6},
         ),
+        ("qiedao", {"chain_pct": 80}, {"chain_pct": 60}),
     ],
 )
 def test_reworked_legacy_spirit_rolls_are_normalized(services, power_id, rolls, expected) -> None:
