@@ -1543,11 +1543,6 @@ class CombatService:
         if actual_damage <= 0:
             return logs
 
-        if power.power_id == "shisheng" and source in {_DamageSource.ATTACK, _DamageSource.BURN}:
-            healed = self._heal_by_damage(actor, actual_damage, power.rolls["heal_pct"])
-            if healed > 0:
-                logs.append(self._hp_change_log(round_no, actor, f"{actor.snapshot.name} 借噬生吞回血气，回复了 {format_big_number(healed)} 点生命，余血 {format_big_number(actor.hp)}。"))
-
         if source != _DamageSource.ATTACK:
             return logs
 
@@ -2566,6 +2561,18 @@ class CombatService:
         self._attach_or_log_damage(
             round_no, state, pending_hp_log, logs, actor=actor, cause=cause, replace_cause=not cause_written
         )
+        if actual_damage > 0 and actor is not None and actor is not state:
+            power = actor.snapshot.spirit_power
+            if power is not None and power.power_id == "shisheng":
+                healed = self._heal_by_damage(actor, actual_damage, _roll(power.rolls, "heal_pct", 0))
+                if healed > 0 and logs is not None:
+                    logs.append(
+                        self._hp_change_log(
+                            round_no,
+                            actor,
+                            f"{actor.snapshot.name} 借噬生吞回血气，回复了 {format_big_number(healed)} 点生命，余血 {format_big_number(actor.hp)}。",
+                        )
+                    )
         return actual_damage
 
     def _apply_chenchen(self, state: _CombatState, damage: int) -> int:
