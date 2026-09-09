@@ -1917,6 +1917,8 @@ class CombatService:
         power = state.snapshot.spirit_power
         if power is not None and power.power_id == "chunsheng":
             total += _roll(power.rolls, "heal_received_pct", 0)
+        if power is not None and power.power_id == "xuanjia":
+            total -= _roll(power.rolls, "heal_down_pct", 0)
         return total
 
     def _current_atk(self, state: _CombatState) -> int:
