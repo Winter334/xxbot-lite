@@ -72,6 +72,7 @@ class _StatusEffect:
     stacks: int = 1
     duration: int | None = None
     atk_pct: int = 0
+    defense_pct: int = 0
     agility_pct: int = 0
     damage_taken_pct: int = 0
     damage_reduction_pct: int = 0
@@ -145,6 +146,10 @@ class _CombatState:
     jueming_mark_stacks: int = 0  # 绝命印记层数（被标记者更容易被绝命斩杀，不可净化）
     roller: random.Random | None = None  # 本场战斗 RNG；独立保存以避免服务实例并发串扰
     zhuifeng_first_attack_pending: bool = True
+    xuekuang_lost_hp: int = 0
+    xuekuang_base_max_hp: int = 0
+    xuekuang_layers: int = 0
+    xuekuang_loss_bank: int = 0
 
     def get_max_hp(self) -> int:
         """获取当前最大生命（优先使用 effective_max_hp，未初始化时回落 snapshot）。"""
@@ -365,7 +370,7 @@ class CombatService:
         else:
             critical = roller.random() < crit_rate
         if critical:
-            crit_multiplier = 1.5 + 0.5 * damage / max(damage + target.snapshot.defense, 1) + (self._crit_damage_bonus_pct(actor) + self._target_crit_damage_bonus_pct(actor, target)) / 100
+            crit_multiplier = 1.5 + 0.5 * damage / max(damage + self._current_defense(target), 1) + (self._crit_damage_bonus_pct(actor) + self._target_crit_damage_bonus_pct(actor, target)) / 100
             damage = int(damage * crit_multiplier)
 
         before_attack_bonus = self._before_attack_bonus_pct(
@@ -709,7 +714,7 @@ class CombatService:
         if round_no > 1:
             state.first_round = False
         # 器灵神通 round_start 钩子（窃道等）
-        logs.extend(self._trigger_spirit_round_start(round_no, state, opponent, roller))
+        logs.extend(self._trigger_spirit_round_start(round_no, state, opponent, roller, scene))
         return logs
 
     def _trigger_on_hit(
@@ -1546,11 +1551,6 @@ class CombatService:
         if source != _DamageSource.ATTACK:
             return logs
 
-        if power.power_id == "xuekuang" and actor.hp * 100 <= actor.get_max_hp() * 25:
-            healed = self._heal_by_damage(actor, actual_damage, power.rolls["frenzy_lifesteal_pct"])
-            if healed > 0:
-                logs.append(self._hp_change_log(round_no, actor, f"{actor.snapshot.name} 狂血奔涌，借濒死杀势回复了 {format_big_number(healed)} 点生命，余血 {format_big_number(actor.hp)}。"))
-
         if power.power_id == "fenmai" and target.hp > 0 and self._has_burn(target):
             per_burn_pct = power.rolls.get("per_burn_pct", 1.0)
             stacks = self._burn_stacks(target)
@@ -1831,11 +1831,6 @@ class CombatService:
         if power is None:
             return 0
         match power.power_id:
-            case "xuekuang":
-                missing_pct = max(0, 100 - (actor.hp * 100 // max(1, actor.get_max_hp())))
-                bonus = (missing_pct // 10) * power.rolls["per_lost_10_pct"]
-                bonus = min(bonus, power.rolls["max_bonus_pct"])
-                return bonus
             case "luejie":
                 bonus = self._debuff_count(target) * power.rolls["per_debuff_pct"]
                 return min(bonus, power.rolls["max_bonus_pct"])
@@ -1921,11 +1916,49 @@ class CombatService:
             total -= _roll(power.rolls, "heal_down_pct", 0)
         return total
 
+    def _record_xuekuang_hp_loss(self, state: _CombatState, amount: int) -> None:
+        if amount <= 0:
+            return
+        power = state.snapshot.spirit_power
+        if power is None or power.power_id != "xuekuang":
+            return
+        if state.xuekuang_base_max_hp <= 0:
+            state.xuekuang_base_max_hp = max(1, state.get_max_hp())
+        state.xuekuang_lost_hp += amount
+        state.xuekuang_loss_bank += amount
+        step_pct = max(1, _roll(power.rolls, "loss_step_pct", 10))
+        while True:
+            step_hp = max(1, state.get_max_hp() * step_pct // 100)
+            if state.xuekuang_loss_bank < step_hp:
+                break
+            state.xuekuang_loss_bank -= step_hp
+            state.xuekuang_layers += 1
+            self._sync_xuekuang_max_hp(state)
+
+    def _xuekuang_stat_pct(self, state: _CombatState) -> int:
+        power = state.snapshot.spirit_power
+        if power is None or power.power_id != "xuekuang":
+            return 0
+        return state.xuekuang_layers * _roll(power.rolls, "stat_pct", 0)
+
+    def _sync_xuekuang_max_hp(self, state: _CombatState) -> None:
+        power = state.snapshot.spirit_power
+        if power is None or power.power_id != "xuekuang" or state.xuekuang_base_max_hp <= 0:
+            return
+        bonus = self._xuekuang_stat_pct(state)
+        target = max(1, state.xuekuang_base_max_hp * (100 + bonus) // 100)
+        delta = target - state.get_max_hp()
+        if delta != 0:
+            self._modify_max_hp(state, delta, also_heal=False)
+
     def _current_atk(self, state: _CombatState) -> int:
-        return max(1, int(state.snapshot.atk * (1 + self._stat_bonus_pct(state, "atk_pct") / 100)))
+        return max(1, int(state.snapshot.atk * (1 + (self._stat_bonus_pct(state, "atk_pct") + self._xuekuang_stat_pct(state)) / 100)))
+
+    def _current_defense(self, state: _CombatState) -> int:
+        return max(1, int(state.snapshot.defense * (1 + (self._stat_bonus_pct(state, "defense_pct") + self._xuekuang_stat_pct(state)) / 100)))
 
     def _current_agility(self, state: _CombatState) -> int:
-        return max(1, int(state.snapshot.agility * (1 + self._stat_bonus_pct(state, "agility_pct") / 100)))
+        return max(1, int(state.snapshot.agility * (1 + (self._stat_bonus_pct(state, "agility_pct") + self._xuekuang_stat_pct(state)) / 100)))
 
     def _stat_bonus_pct(self, state: _CombatState, field_name: str) -> int:
         return sum(getattr(status, field_name) * status.stacks for status in self._active_statuses(state))
@@ -2563,6 +2596,8 @@ class CombatService:
         self._attach_or_log_damage(
             round_no, state, pending_hp_log, logs, actor=actor, cause=cause, replace_cause=not cause_written
         )
+        self._record_xuekuang_hp_loss(state, actual_damage)
+        self._sync_xuekuang_max_hp(state)
         if actual_damage > 0 and actor is not None and actor is not state:
             power = actor.snapshot.spirit_power
             if power is not None and power.power_id == "shisheng":
@@ -2942,10 +2977,40 @@ class CombatService:
             state.statuses.remove(status)
         return peeled
 
-    def _trigger_spirit_round_start(self, round_no: int, state: _CombatState, opponent: _CombatState, roller: random.Random) -> list[ActionLog]:
-        """Handle spirit powers that trigger at round start (窃道)."""
+    def _trigger_xuekuang_round_start(self, round_no: int, state: _CombatState, scene: set[str] | None = None) -> list[ActionLog]:
         power = state.snapshot.spirit_power
-        if power is None or power.power_id != "qiedao":
+        if power is None or power.power_id != "xuekuang" or state.hp <= 0:
+            return []
+        logs: list[ActionLog] = []
+        max_hp = state.get_max_hp()
+        burn_pct = max(1, _roll(power.rolls, "burn_pct", 5))
+        cost = max(1, max_hp * burn_pct // 100)
+        before = state.hp
+        actual = min(state.hp, cost)
+        state.hp -= actual
+        self._record_xuekuang_hp_loss(state, actual)
+        if actual > 0:
+            active_scene = scene or set()
+            for threshold in (50, 30, 25):
+                threshold_hp = max_hp * threshold // 100
+                if before > threshold_hp and state.hp <= threshold_hp:
+                    logs.extend(self._trigger_low_hp_threshold(round_no, state, threshold, active_scene))
+        self._sync_xuekuang_max_hp(state)
+        bonus = self._xuekuang_stat_pct(state)
+        text = f"{state.snapshot.name} 血狂燃精，失去 {format_big_number(actual)} 点生命，余血 {format_big_number(state.hp)}。"
+        if bonus > 0:
+            text = text[:-1] + f"，三维提高 {bonus}%。"
+        logs.append(self._hp_change_log(round_no, state, text, damage=actual))
+        return logs
+
+    def _trigger_spirit_round_start(self, round_no: int, state: _CombatState, opponent: _CombatState, roller: random.Random, scene: set[str] | None = None) -> list[ActionLog]:
+        """Handle spirit powers that trigger at round start (血狂 / 窃道)."""
+        power = state.snapshot.spirit_power
+        if power is None:
+            return []
+        if power.power_id == "xuekuang":
+            return self._trigger_xuekuang_round_start(round_no, state, scene)
+        if power.power_id != "qiedao":
             return []
         chain_pct = power.rolls.get("chain_pct", 5)
         logs: list[ActionLog] = []

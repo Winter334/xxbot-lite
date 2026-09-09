@@ -172,7 +172,7 @@ def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int | float])
             for key, low, high in ranges:
                 if key in {"hp_pct", "heal_down_pct"} and key in clamped:
                     clamped[key] = max(low, min(clamped[key], high))
-    elif power_id in {"xuanjia", "jinmai", "zhuifeng", "leifa", "wanzhou", "qiedao", "shisheng"}:
+    elif power_id in {"xuanjia", "jinmai", "zhuifeng", "leifa", "wanzhou", "qiedao", "shisheng", "xuekuang"}:
         definition = get_spirit_power_definition(power_id)
         ranges = definition.roll_ranges_by_tier.get(tier)
         if ranges is not None:

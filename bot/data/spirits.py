@@ -235,13 +235,16 @@ SPIRIT_POWER_DEFINITIONS = (
         "xuekuang",
         "血狂",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_lost_10_pct", 8, 10), ("max_bonus_pct", 80, 80), ("frenzy_lifesteal_pct", 8, 12)),
-            mid=(("per_lost_10_pct", 10, 12), ("max_bonus_pct", 105, 105), ("frenzy_lifesteal_pct", 10, 14)),
-            high=(("per_lost_10_pct", 12, 15), ("max_bonus_pct", 130, 130), ("frenzy_lifesteal_pct", 12, 18)),
-            peak=(("per_lost_10_pct", 15, 18), ("max_bonus_pct", 155, 155), ("frenzy_lifesteal_pct", 16, 22)),
-            supreme=(("per_lost_10_pct", 18, 22), ("max_bonus_pct", 180, 180), ("frenzy_lifesteal_pct", 20, 28)),
+            low=(("burn_pct", 5, 5), ("loss_step_pct", 10, 10), ("stat_pct", 1, 1)),
+            mid=(("burn_pct", 5, 5), ("loss_step_pct", 10, 10), ("stat_pct", 2, 2)),
+            high=(("burn_pct", 5, 5), ("loss_step_pct", 10, 10), ("stat_pct", 3, 3)),
+            peak=(("burn_pct", 5, 5), ("loss_step_pct", 10, 10), ("stat_pct", 4, 4)),
+            supreme=(("burn_pct", 5, 5), ("loss_step_pct", 10, 10), ("stat_pct", 5, 5)),
         ),
-        description_builder=lambda rolls: f"每损失 10% 最大生命，伤害提高 {rolls['per_lost_10_pct']}%，最高 {rolls['max_bonus_pct']}%；生命不高于 25% 时获得 {rolls['frenzy_lifesteal_pct']}% 吸血。",
+        description_builder=lambda rolls: (
+            f"每回合开始失去 {rolls['burn_pct']}% 最大生命；"
+            f"每损失 {rolls['loss_step_pct']}% 当前最大生命，三维提高 {rolls['stat_pct']}%。"
+        ),
     ),
     _define_power(
         "fenmai",
