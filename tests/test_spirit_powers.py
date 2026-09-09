@@ -382,8 +382,8 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
             {"curse_on_hit": 3, "extra_curse_pct": 0, "burst_threshold": 5, "debuff_rolls_per_curse": 6},
         ),
         ("qiedao", {"chain_pct": 80}, {"chain_pct": 60}),
-        ("jueming", {"max_stacks": 6, "damage_pct": 55}, {"omen_cost": 4, "hp_pct": 55, "heal_down_pct": 55}),
-        ("jueming", {"omen_cost": 4, "execute_pct": 35, "heal_down_pct": 55}, {"omen_cost": 4, "hp_pct": 35, "heal_down_pct": 55}),
+        ("jueming", {"max_stacks": 6, "damage_pct": 55}, {"omen_cost": 5, "hp_pct": 35, "heal_down_pct": 20}),
+        ("jueming", {"omen_cost": 4, "execute_pct": 35, "heal_down_pct": 55}, {"omen_cost": 5, "hp_pct": 35, "heal_down_pct": 25}),
     ],
 )
 def test_reworked_legacy_spirit_rolls_are_normalized(services, power_id, rolls, expected) -> None:

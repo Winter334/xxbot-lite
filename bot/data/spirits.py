@@ -148,11 +148,11 @@ SPIRIT_POWER_DEFINITIONS = (
         "jueming",
         "绝命",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("omen_cost", 8, 8), ("hp_pct", 18, 18), ("heal_down_pct", 35, 35)),
-            mid=(("omen_cost", 7, 7), ("hp_pct", 22, 22), ("heal_down_pct", 40, 40)),
-            high=(("omen_cost", 6, 6), ("hp_pct", 26, 26), ("heal_down_pct", 45, 45)),
-            peak=(("omen_cost", 5, 5), ("hp_pct", 30, 30), ("heal_down_pct", 50, 50)),
-            supreme=(("omen_cost", 4, 4), ("hp_pct", 35, 35), ("heal_down_pct", 55, 55)),
+            low=(("omen_cost", 9, 9), ("hp_pct", 1, 5), ("heal_down_pct", 1, 5)),
+            mid=(("omen_cost", 8, 8), ("hp_pct", 5, 10), ("heal_down_pct", 5, 10)),
+            high=(("omen_cost", 7, 7), ("hp_pct", 10, 15), ("heal_down_pct", 10, 15)),
+            peak=(("omen_cost", 6, 6), ("hp_pct", 15, 20), ("heal_down_pct", 15, 20)),
+            supreme=(("omen_cost", 5, 5), ("hp_pct", 25, 35), ("heal_down_pct", 20, 25)),
         ),
         description_builder=lambda rolls: (
             f"回合结束时，若目标咒印≥{rolls['omen_cost']}层，消耗{rolls['omen_cost']}层咒印凝成 1 层死兆；"

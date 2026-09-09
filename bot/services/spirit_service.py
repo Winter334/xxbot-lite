@@ -128,7 +128,7 @@ _DISHI_MAX = {
 
 # 绝命 omen_cost 按品阶固定值（越高品阶越小）
 _JUEMING_OMEN_COST: dict[str, int] = {
-    "low": 8, "mid": 7, "high": 6, "peak": 5, "supreme": 4,
+    "low": 9, "mid": 8, "high": 7, "peak": 6, "supreme": 5,
 }
 
 
@@ -166,6 +166,12 @@ def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int | float])
         fixed = _JUEMING_OMEN_COST.get(tier)
         if fixed is not None:
             clamped["omen_cost"] = fixed
+        definition = get_spirit_power_definition(power_id)
+        ranges = definition.roll_ranges_by_tier.get(tier)
+        if ranges is not None:
+            for key, low, high in ranges:
+                if key in {"hp_pct", "heal_down_pct"} and key in clamped:
+                    clamped[key] = max(low, min(clamped[key], high))
     elif power_id in {"xuanjia", "jinmai", "zhuifeng", "leifa", "wanzhou", "qiedao"}:
         definition = get_spirit_power_definition(power_id)
         ranges = definition.roll_ranges_by_tier.get(tier)
