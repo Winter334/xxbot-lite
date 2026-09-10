@@ -394,22 +394,20 @@ ARTIFACT_AFFIX_DEFINITIONS = (
     _define(
         "leiyin",
         "雷引",
-        "on_crit",
-        ("next_damage_pct", 18, 28),
-        ("burst_pct", 8, 14),
+        "on_hit",
         description_builder=lambda rolls: (
-            f"暴击后蓄雷引，下一次出手伤害提高 {rolls['next_damage_pct']}%；连续暴击额外蓄势。"
-            f"雷引达到 3 层时触发小型雷劫，造成 {rolls['burst_pct']}% 最大生命真伤并附加 1 层雷殛。"
+            "命中后给目标附加 1 层雷殛；暴击时改为附加 3 层。"
         ),
     ),
     _define(
         "liekong",
         "裂空",
         "before_attack",
-        ("pierce_pct", 20, 35),
+        ("per_stacks", 4, 10),
+        ("pierce_pct", 5, 15),
         ("extra_damage_pct", 80, 140),
         description_builder=lambda rolls: (
-            f"攻击带雷殛目标时，每层雷殛额外无视 {rolls['pierce_pct']}% 减伤；"
+            f"攻击带雷殛目标时，每 {rolls['per_stacks']} 层雷殛额外无视 {rolls['pierce_pct']}% 减伤；"
             f"若本次攻击暴击，追加 {rolls['extra_damage_pct']}% 杀伐伤害。"
         ),
     ),
@@ -561,7 +559,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
 
 ARTIFACT_AFFIXES_BY_ID = {definition.affix_id: definition for definition in ARTIFACT_AFFIX_DEFINITIONS}
 
-INVERTED_ROLL_KEYS = frozenset({"threshold_pct"})
+INVERTED_ROLL_KEYS = frozenset({"threshold_pct", "per_stacks"})
 """越低越好的数值；指定满值时取下限。"""
 
 AFFIX_SPECIFY_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
