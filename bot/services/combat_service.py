@@ -181,7 +181,6 @@ class CombatService:
         "登霄": 8,
         "追猎": 12,
         "夺锋": 5,
-        "雷殛": 5,
         "死兆": 3,
         "破封灵势": 10,
         "幻步": 3,
@@ -423,7 +422,6 @@ class CombatService:
             logs.extend(self._trigger_on_crit(round_no, actor, target, actual_damage, roller, scene))
         else:
             actor.consecutive_crits = 0
-            logs.extend(self._trigger_spirit_on_noncrit(round_no, actor, target))
         logs.extend(self._trigger_on_be_hit(round_no, target, scene))
         logs.extend(
             self._trigger_spirit_on_hit(
@@ -927,6 +925,20 @@ class CombatService:
                     else:
                         self._add_curse_seal(target, actor, 1)
                         logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 的噬印刻下第一缕咒印，{target.snapshot.name} 获得 1 层咒印。"))
+                case "leiyin":
+                    if target.hp <= 0:
+                        continue
+                    added = self._add_target_leihen(target, actor, 1)
+                    if added > 0:
+                        layers = self._target_leihen_count(target)
+                        logs.append(
+                            self._effect_log(
+                                round_no,
+                                target,
+                                f"{actor.snapshot.name} 的雷引烙下 1 层雷殛（{layers}）。",
+                                actor_name=actor.snapshot.name,
+                            )
+                        )
         return logs
 
     def _trigger_on_crit(
@@ -967,6 +979,20 @@ class CombatService:
                             self._consume_status_stack(actor, s)
                             logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 暴击之势震荡步法，幻步消散 1 层。"))
                             break
+                case "leiyin":
+                    if target.hp <= 0:
+                        continue
+                    added = self._add_target_leihen(target, actor, 2)
+                    if added > 0:
+                        layers = self._target_leihen_count(target)
+                        logs.append(
+                            self._effect_log(
+                                round_no,
+                                target,
+                                f"{actor.snapshot.name} 暴击引雷，追加 {added} 层雷殛（{layers}）。",
+                                actor_name=actor.snapshot.name,
+                            )
+                        )
                 case "tianwei":
                     if self._status_count(actor, "天威") < 6:
                         self._add_status(
@@ -988,44 +1014,6 @@ class CombatService:
                         self._apply_typed_damage(
                             target, burst_damage, _NORMAL_DAMAGE_PROFILE, actor=actor, round_no=round_no, logs=nested, cause=cause
                         )
-                        logs.extend(nested)
-                case "leiyin":
-                    next_damage_pct = _roll(entry.rolls, "next_damage_pct", 0)
-                    self._add_status(
-                        actor,
-                        _StatusEffect(
-                            "雷引",
-                            damage_dealt_pct=next_damage_pct,
-                            remaining_hits=1,
-                            active_from_round=round_no + 1,
-                        ),
-                    )
-                    gained = 1 + (1 if actor.consecutive_crits >= 2 else 0)
-                    actor.spirit_proc_rounds["leiyin_crit_count"] = actor.spirit_proc_rounds.get("leiyin_crit_count", 0) + gained
-                    logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 雷引蓄势，下一击伤害提高 {next_damage_pct}%。"))
-                    if actor.spirit_proc_rounds["leiyin_crit_count"] >= 3:
-                        actor.spirit_proc_rounds["leiyin_crit_count"] -= 3
-                        burst_pct = _roll(entry.rolls, "burst_pct", 0)
-                        burst_damage = max(1, target.get_max_hp() * burst_pct // 100)
-                        nested: list[ActionLog] = []
-                        cause = self._effect_log(
-                            round_no,
-                            target,
-                            f"{actor.snapshot.name} 雷引三激，唤出小型雷劫并烙下雷殛。",
-                            actor_name=actor.snapshot.name,
-                        )
-                        nested.append(cause)
-                        self._apply_damage(
-                            target,
-                            burst_damage,
-                            respects_resilience=False,
-                            actor=actor,
-                            round_no=round_no,
-                            logs=nested,
-                            scene=scene,
-                            cause=cause,
-                        )
-                        self._add_target_leihen(target, actor)
                         logs.extend(nested)
                 case "pokong":
                     if target.hp <= 0:
@@ -1178,16 +1166,6 @@ class CombatService:
             logs.append(self._effect_log(round_no, dodger, f"{dodger.snapshot.name} 风遁满盈，凝出一缕风刃，下击必中要害。"))
         return logs
 
-    def _trigger_spirit_on_noncrit(self, round_no: int, actor: _CombatState, target: _CombatState) -> list[ActionLog]:
-        power = actor.snapshot.spirit_power
-        if power is None or power.power_id != "leifa" or target.hp <= 0:
-            return []
-        added = self._add_target_leihen(target, actor)
-        if added <= 0:
-            return []
-        layers = self._leihen_count_from_source(target, actor)
-        return [self._effect_log(round_no, target, f"{actor.snapshot.name} 在 {target.snapshot.name} 身上烙下雷殛（{layers}/5）。", actor_name=actor.snapshot.name)]
-
     def _trigger_spirit_on_crit(
         self,
         round_no: int,
@@ -1232,14 +1210,85 @@ class CombatService:
         """目标身上「雷殛」层数（按目标视角统计）。"""
         return sum(s.stacks for s in self._active_statuses(state) if s.name == "雷殛")
 
-    def _leihen_count_from_source(self, state: _CombatState, source: _CombatState) -> int:
-        return sum(s.stacks for s in self._active_statuses(state) if s.name == "雷殛" and s.source is source)
-
-    def _add_target_leihen(self, target: _CombatState, actor: _CombatState) -> int:
-        if self._target_leihen_count(target) >= 5:
+    def _add_target_leihen(self, target: _CombatState, actor: _CombatState, stacks: int = 1) -> int:
+        if stacks <= 0:
             return 0
-        self._add_status(target, _StatusEffect("雷殛", is_debuff=True, source=actor))
-        return 1
+        self._add_status(target, _StatusEffect("雷殛", stacks=stacks, is_debuff=True, source=actor))
+        return stacks
+
+    def _consume_target_leihen(self, state: _CombatState, amount: int) -> int:
+        remaining = amount
+        for status in list(self._active_statuses(state)):
+            if remaining <= 0:
+                break
+            if status.name != "雷殛":
+                continue
+            take = min(status.stacks, remaining)
+            status.stacks -= take
+            remaining -= take
+            if status.stacks <= 0:
+                state.statuses.remove(status)
+        return amount - remaining
+
+    def _trigger_leifa(self, round_no: int, actor: _CombatState, target: _CombatState, roller: random.Random) -> list[ActionLog]:
+        power = actor.snapshot.spirit_power
+        if power is None or power.power_id != "leifa":
+            return []
+        cost = max(1, _roll(power.rolls, "cost_stacks", 3))
+        if self._target_leihen_count(target) < cost:
+            return []
+        rods = [combatant for combatant in (actor, target) if self._target_leihen_count(combatant) > 0]
+        consumed = self._consume_target_leihen(target, cost)
+        lo = max(1, _roll(power.rolls, "strikes_min", 1))
+        hi = max(lo, _roll(power.rolls, "strikes_max", lo))
+        strikes = roller.randint(lo, hi) if hasattr(roller, "randint") else lo + int(roller.random() * (hi - lo + 1))
+        burst_pct = _roll(power.rolls, "burst_pct", 0)
+        logs: list[ActionLog] = [
+            self._effect_log(
+                round_no,
+                target,
+                f"{actor.snapshot.name} 雷罚引动雷殛，消耗 {consumed} 层，唤出 {strikes} 次小型雷劫。",
+                actor_name=actor.snapshot.name,
+            )
+        ]
+        for _ in range(strikes):
+            live_rods = [combatant for combatant in rods if combatant.hp > 0]
+            if not live_rods:
+                break
+            victim = roller.choice(live_rods) if hasattr(roller, "choice") else live_rods[int(roller.random() * len(live_rods))]
+            nested: list[ActionLog] = []
+            cause = self._effect_log(
+                round_no,
+                victim,
+                f"小型雷劫劈向 {victim.snapshot.name}。",
+                actor_name=actor.snapshot.name,
+            )
+            nested.append(cause)
+            burst_damage = max(1, self._current_atk(actor) * burst_pct // 100)
+            self._apply_damage(
+                victim,
+                burst_damage,
+                respects_resilience=False,
+                actor=actor,
+                round_no=round_no,
+                logs=nested,
+                cause=cause,
+            )
+            logs.extend(nested)
+            if actor.hp <= 0 or target.hp <= 0:
+                break
+        if target.hp > 0:
+            self._add_target_leihen(target, actor, 1)
+            layers = self._target_leihen_count(target)
+            logs.append(
+                self._effect_log(
+                    round_no,
+                    target,
+                    f"雷罚余威在 {target.snapshot.name} 身上留下 1 层雷殛（{layers}）。",
+                    actor_name=actor.snapshot.name,
+                )
+            )
+        return logs
 
     def _threshold_will_log(self, target: _CombatState, threshold: int, scene: set[str]) -> bool:
         if threshold in (50, 25):
@@ -1544,6 +1593,8 @@ class CombatService:
                 threshold = _roll(power.rolls, "burst_threshold", 3)
                 if self._curse_seal_count(target) >= threshold:
                     logs.extend(self._trigger_wanzhou_burst(round_no, actor, target, roller))
+            if power.power_id == "leifa" and target.hp > 0:
+                logs.extend(self._trigger_leifa(round_no, actor, target, roller))
 
         if actual_damage <= 0:
             return logs
@@ -1900,7 +1951,8 @@ class CombatService:
         if leihen_layers > 0:
             for entry in actor.snapshot.affixes:
                 if entry.affix_id == "liekong" and self._scene_matches(entry, scene):
-                    total += _roll(entry.rolls, "pierce_pct", 0) * leihen_layers
+                    step = max(1, _roll(entry.rolls, "per_stacks", 4))
+                    total += _roll(entry.rolls, "pierce_pct", 0) * (leihen_layers // step)
         # 透命：通用穿透，无前置条件，多件叠加
         for entry in actor.snapshot.affixes:
             if entry.affix_id == "tongming" and self._scene_matches(entry, scene):
@@ -2169,18 +2221,10 @@ class CombatService:
         return sum(status.crit_damage_pct * status.stacks for status in self._active_statuses(state))
 
     def _target_crit_bonus_pct(self, actor: _CombatState, target: _CombatState) -> int:
-        total = 0
-        power = actor.snapshot.spirit_power
-        if power is not None and power.power_id == "leifa":
-            total += self._leihen_count_from_source(target, actor) * _roll(power.rolls, "mark_crit_pct", 0)
-        return total
+        return 0
 
     def _target_crit_damage_bonus_pct(self, actor: _CombatState, target: _CombatState) -> int:
-        total = 0
-        power = actor.snapshot.spirit_power
-        if power is not None and power.power_id == "leifa":
-            total += self._leihen_count_from_source(target, actor) * _roll(power.rolls, "mark_crit_damage_pct", 0)
-        return total
+        return 0
 
     def _dodge_bonus_pct(self, state: _CombatState) -> int:
         return sum(status.dodge_bonus_pct * status.stacks for status in self._active_statuses(state))

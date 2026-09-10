@@ -375,7 +375,7 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
         ("xuanjia", {"proc_pct": 60, "reduce_pct": 100}, {"def_pct": 100, "proc_pct": 55, "heal_down_pct": 50}),
         ("jinmai", {"proc_pct": 85, "per_disrupt_pct": 10, "seal_stacks": 3}, {"proc_pct": 35, "per_disrupt_pct": 5}),
         ("zhuifeng", {"r1_crit_bonus": 100, "r1_agility_pct": 50, "r1_damage_pct": 480}, {"r1_crit_bonus": 50, "r1_agility_pct": 25}),
-        ("leifa", {"mark_crit_pct": 15, "mark_crit_damage_pct": 20, "thunder_pct": 450}, {"mark_crit_pct": 15, "mark_crit_damage_pct": 20}),
+        ("leifa", {"mark_crit_pct": 15, "mark_crit_damage_pct": 20, "thunder_pct": 450}, {"cost_stacks": 3, "strikes_min": 3, "strikes_max": 6, "burst_pct": 60}),
         (
             "wanzhou",
             {"curse_on_hit": 3, "extra_curse_pct": 0, "burst_threshold": 5, "debuff_rolls_per_curse": 6, "seal_weight": 12},
@@ -1115,26 +1115,40 @@ def test_zhuifeng_first_mover_hunt_and_permanent_chase(services) -> None:
     assert combat._status_count(actor, "追猎") == 12
 
 
-def test_leifa_noncrit_marks_cap_and_source_specific_bonuses(services) -> None:
+class _LeifaRoller:
+    def __init__(self, victims) -> None:
+        self._victims = iter(victims)
+
+    def randint(self, start: int, end: int) -> int:
+        return end
+
+    def choice(self, items):
+        victim = next(self._victims)
+        assert victim in items
+        return victim
+
+
+def test_leifa_consumes_layers_strikes_rods_and_returns_one_mark(services) -> None:
     combat = services.combat
     actor = _spirit_state(
         services,
         "雷罚主",
-        spirit_power=SpiritPowerEntry("leifa", {"mark_crit_pct": 10, "mark_crit_damage_pct": 12}),
+        atk=100,
+        spirit_power=SpiritPowerEntry("leifa", {"cost_stacks": 3, "strikes_min": 2, "strikes_max": 2, "burst_pct": 50}),
     )
-    other = _spirit_state(services, "其他")
-    target = _spirit_state(services, "靶子")
+    target = _spirit_state(services, "靶子", defense=100)
+    combat._add_target_leihen(target, actor, 5)
+    combat._add_target_leihen(actor, actor, 1)
+    hp_before_actor = actor.hp
+    hp_before_target = target.hp
 
-    for _ in range(7):
-        combat._trigger_spirit_on_noncrit(1, actor, target)
-    assert combat._target_leihen_count(target) == 5
-    assert combat._target_crit_bonus_pct(actor, target) == 50
-    assert combat._target_crit_damage_bonus_pct(actor, target) == 60
-    assert combat._target_crit_bonus_pct(other, target) == 0
-    hp = target.hp
-    assert combat._trigger_spirit_on_crit(1, actor, target, 100, CombatRoller([])) == []
-    assert target.hp == hp
-    assert combat._status_count(target, "创伤") == 0
+    logs = combat._trigger_leifa(1, actor, target, _LeifaRoller([target, actor]))
+
+    assert combat._target_leihen_count(target) == 3
+    assert combat._target_leihen_count(actor) == 1
+    assert target.hp < hp_before_target
+    assert actor.hp < hp_before_actor
+    assert any(log.text and "小型雷劫" in log.text for log in logs)
 
 
 def test_wanzhou_extra_curse_uses_strict_probability_boundary(services) -> None:
@@ -1174,7 +1188,7 @@ def test_wanzhou_uses_leihen_pool_without_action_seal(services) -> None:
 
     logs = combat._trigger_wanzhou_burst(1, actor, target, random.Random(2))
     assert combat._status_count(target, "封禁行动") == 0
-    assert 0 < combat._target_leihen_count(target) <= 5
+    assert combat._target_leihen_count(target) > 0
     assert any(log.text and "雷殛" in log.text for log in logs)
 
 

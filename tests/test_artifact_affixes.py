@@ -568,14 +568,11 @@ def _combat_state(services, name: str, *, atk: int = 100, defense: int = 100, ag
     return state
 
 
-def test_kuangfeng_and_leiyin_start_on_next_round_and_survive_triggering_attack(services) -> None:
+def test_kuangfeng_starts_on_next_round_and_survives_triggering_attack(services) -> None:
     actor = _combat_state(
         services,
         "蓄势修士",
-        affixes=(
-            ArtifactAffixEntry(1, "kuangfeng", {"damage_pct": 80}),
-            ArtifactAffixEntry(2, "leiyin", {"next_damage_pct": 20, "burst_pct": 0}),
-        ),
+        affixes=(ArtifactAffixEntry(1, "kuangfeng", {"damage_pct": 80}),),
     )
     target = _combat_state(services, "木人")
     actor.current_round = 1
@@ -583,11 +580,34 @@ def test_kuangfeng_and_leiyin_start_on_next_round_and_survive_triggering_attack(
     services.combat._trigger_on_crit(1, actor, target, 100, SequenceRandom([]), set())
 
     assert services.combat._damage_dealt_pct(actor) == 0
-    assert {status.name for status in actor.statuses} >= {"狂锋", "雷引"}
+    assert any(status.name == "狂锋" for status in actor.statuses)
     actor.current_round = 2
-    assert services.combat._damage_dealt_pct(actor) == 100
+    assert services.combat._damage_dealt_pct(actor) == 80
     services.combat._consume_attack_bonuses(actor, list(actor.statuses))
-    assert not any(status.name in {"狂锋", "雷引"} for status in actor.statuses)
+    assert not any(status.name == "狂锋" for status in actor.statuses)
+
+
+def test_leiyin_marks_one_on_hit_and_three_on_crit(services) -> None:
+    actor = _combat_state(services, "雷引修士", affixes=(ArtifactAffixEntry(1, "leiyin", {}),))
+    target = _combat_state(services, "木人")
+    combat = services.combat
+
+    combat._trigger_on_hit(1, actor, target, 10, SequenceRandom([]), set())
+    assert combat._target_leihen_count(target) == 1
+    combat._trigger_on_crit(1, actor, target, 10, SequenceRandom([]), set())
+    assert combat._target_leihen_count(target) == 3
+
+
+def test_liekong_pierce_uses_full_n_layers_only(services) -> None:
+    actor = _combat_state(
+        services,
+        "裂空修士",
+        affixes=(ArtifactAffixEntry(1, "liekong", {"per_stacks": 5, "pierce_pct": 10, "extra_damage_pct": 80}),),
+    )
+    target = _combat_state(services, "木人")
+    combat = services.combat
+    combat._add_target_leihen(target, actor, 11)
+    assert combat._pierce_pct(actor, set(), target) == 20
 
 
 def test_chenchen_reduces_normal_attack_damage(services) -> None:

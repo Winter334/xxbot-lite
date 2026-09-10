@@ -427,15 +427,16 @@ SPIRIT_POWER_DEFINITIONS = (
         "leifa",
         "雷罚",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("mark_crit_pct", 6, 6), ("mark_crit_damage_pct", 8, 8)),
-            mid=(("mark_crit_pct", 8, 8), ("mark_crit_damage_pct", 10, 10)),
-            high=(("mark_crit_pct", 10, 10), ("mark_crit_damage_pct", 12, 12)),
-            peak=(("mark_crit_pct", 12, 12), ("mark_crit_damage_pct", 15, 15)),
-            supreme=(("mark_crit_pct", 15, 15), ("mark_crit_damage_pct", 20, 20)),
+            low=(("cost_stacks", 8, 10), ("strikes_min", 1, 1), ("strikes_max", 2, 2), ("burst_pct", 20, 30)),
+            mid=(("cost_stacks", 6, 8), ("strikes_min", 1, 1), ("strikes_max", 2, 3), ("burst_pct", 25, 35)),
+            high=(("cost_stacks", 6, 7), ("strikes_min", 1, 2), ("strikes_max", 3, 4), ("burst_pct", 30, 45)),
+            peak=(("cost_stacks", 5, 6), ("strikes_min", 2, 3), ("strikes_max", 4, 5), ("burst_pct", 40, 55)),
+            supreme=(("cost_stacks", 3, 4), ("strikes_min", 3, 6), ("strikes_max", 6, 9), ("burst_pct", 60, 80)),
         ),
         description_builder=lambda rolls: (
-            f"目标每层雷殛使自身攻击该目标时暴击率 +{rolls['mark_crit_pct']}%、暴伤 +{rolls['mark_crit_damage_pct']}%；"
-            f"普通攻击命中但未暴击时，给目标附加 1 层雷殛，最多 5 层。"
+            f"命中后若目标雷殛不少于 {rolls['cost_stacks']} 层，消耗 {rolls['cost_stacks']} 层，"
+            f"随机唤出 {rolls['strikes_min']}~{rolls['strikes_max']} 次小型雷劫；每次造成 {rolls['burst_pct']}% 杀伐真伤，"
+            f"落在场上带有雷殛之人，再给目标附加 1 层雷殛。"
         ),
     ),
     _define_power(
