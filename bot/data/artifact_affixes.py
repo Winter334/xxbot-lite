@@ -133,10 +133,10 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "灼魂",
         "on_hit",
         ("burn_stacks", 2, 4),
-        ("burn_atk_pct", 25, 55),
+        ("burn_atk_pct", 2, 5),
         description_builder=lambda rolls: (
-            f"命中必定附加 {rolls['burn_stacks']} 层灼烧；有灼烧时每回合造成一次 {rolls['burn_atk_pct']}% 杀伐伤害并消耗 1 层；"
-            f"层数供联动与消耗（多次叠加时单层伤害取较高值）"
+            f"命中必定附加 {rolls['burn_stacks']} 层灼烧；每回合按当前层数连续灼烧，每层造成一次 {rolls['burn_atk_pct']}% 杀伐伤害；"
+            f"不消耗层数，无层数上限（多次叠加时单层伤害取较高值）"
         ),
     ),
     _define(
@@ -300,12 +300,12 @@ ARTIFACT_AFFIX_DEFINITIONS = (
     _define(
         "fenxin",
         "焚心",
-        "on_burn_apply",
+        "on_hit",
         ("atk_down_pct", 6, 12),
         ("agi_down_pct", 6, 12),
         ("max_stacks", 6, 8),
         description_builder=lambda rolls: (
-            f"每次给目标附加灼烧时，目标获得 1 层焚心，最多 {rolls['max_stacks']} 层；"
+            f"普攻命中已有灼烧的目标时，目标获得 1 层焚心，最多 {rolls['max_stacks']} 层；"
             f"每层使目标杀伐降低 {rolls['atk_down_pct']}%、身法降低 {rolls['agi_down_pct']}%"
         ),
     ),
@@ -323,12 +323,12 @@ ARTIFACT_AFFIX_DEFINITIONS = (
     _define(
         "fenjie",
         "焚劫",
-        "on_burn_apply",
+        "on_hit",
         ("vuln_pct", 6, 12),
         ("heal_down_pct", 8, 15),
         ("max_stacks", 6, 8),
         description_builder=lambda rolls: (
-            f"每次给目标附加灼烧时，目标获得 1 层焚劫，最多 {rolls['max_stacks']} 层；"
+            f"普攻命中已有灼烧的目标时，目标获得 1 层焚劫，最多 {rolls['max_stacks']} 层；"
             f"每层使目标承伤提高 {rolls['vuln_pct']}%、受疗降低 {rolls['heal_down_pct']}%"
         ),
     ),
@@ -340,7 +340,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("relight_stacks", 2, 4),
         ("relight_burn_pct", 20, 40),
         description_builder=lambda rolls: (
-            f"目标灼烧被消耗（自然烧尽或被引爆）时，{rolls['proc_pct']}% 概率重新点燃 "
+            f"目标灼烧层数归零时，{rolls['proc_pct']}% 概率重新点燃 "
             f"{rolls['relight_stacks']} 层灼烧（每层 {rolls['relight_burn_pct']}% 杀伐）"
         ),
     ),

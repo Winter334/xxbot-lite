@@ -250,14 +250,14 @@ SPIRIT_POWER_DEFINITIONS = (
         "fenmai",
         "焚脉",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_burn_pct", 0.5, 0.8),),
-            mid=(("per_burn_pct", 0.8, 1.2),),
-            high=(("per_burn_pct", 1.2, 1.6),),
-            peak=(("per_burn_pct", 1.5, 1.8),),
-            supreme=(("per_burn_pct", 1.8, 2.0),),
+            low=(("burn_stacks", 1, 2),),
+            mid=(("burn_stacks", 1, 3),),
+            high=(("burn_stacks", 2, 3),),
+            peak=(("burn_stacks", 2, 4),),
+            supreme=(("burn_stacks", 3, 5),)
         ),
         description_builder=lambda rolls: (
-            f"命中灼烧目标时，附加目标最大生命 {rolls['per_burn_pct']}% × 灼烧层数 的伤害（无上限）。"
+            f"命中附加 {rolls['burn_stacks']} 层灼烧；本回合灼烧实际造成多少伤害，便削减等量最大生命上限，最低留 1 点。"
         ),
     ),
     _define_power(
@@ -443,15 +443,15 @@ SPIRIT_POWER_DEFINITIONS = (
         "shiyan",
         "蚀焰",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_burn_pct", 12, 22), ("wound_stacks", 1, 1)),
-            mid=(("per_burn_pct", 18, 30), ("wound_stacks", 2, 2)),
-            high=(("per_burn_pct", 22, 38), ("wound_stacks", 3, 3)),
-            peak=(("per_burn_pct", 28, 42), ("wound_stacks", 4, 4)),
-            supreme=(("per_burn_pct", 32, 44), ("wound_stacks", 5, 5)),
+            low=(("cost_stacks", 8, 12), ("per_burn_pct", 10, 20), ("wound_stacks", 1, 1)),
+            mid=(("cost_stacks", 7, 11), ("per_burn_pct", 20, 40), ("wound_stacks", 2, 2)),
+            high=(("cost_stacks", 6, 10), ("per_burn_pct", 40, 60), ("wound_stacks", 3, 3)),
+            peak=(("cost_stacks", 5, 9), ("per_burn_pct", 60, 80), ("wound_stacks", 4, 4)),
+            supreme=(("cost_stacks", 4, 8), ("per_burn_pct", 80, 100), ("wound_stacks", 5, 5)),
         ),
         description_builder=lambda rolls: (
-            f"命中且目标灼烧 ≥6 层时触发：消耗目标至多 10 层灼烧，每层造成 {rolls['per_burn_pct']}% 杀伐神通伤害（可被护盾抵挡），"
-            f"引爆后给目标附加 {rolls['wound_stacks']} 层创伤；触发后冷却 1 回合。"
+            f"命中后每消耗 {rolls['cost_stacks']} 层灼烧引爆一次，每层造成 {rolls['per_burn_pct']}% 杀伐神通伤害（可被护盾抵挡），"
+            f"每次引爆附加 {rolls['wound_stacks']} 层创伤；层数不足则不引爆。"
         ),
     ),
     _define_power(

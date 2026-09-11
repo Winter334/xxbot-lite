@@ -437,10 +437,11 @@ def test_zhuohun_burn_uses_attacker_atk_per_stack(services) -> None:
         rng=SequenceRandom([0.99, 0.99, 0.0] * 8),
     )
 
-    burn = next(log for log in battle.logs if log.text and "层灼烧侵蚀" in log.text)
-    # 第一回合命中后挂 3 层；层数用于持续与联动，每回合仅造成一次 100 × 10% = 10 伤害
-    assert burn.damage == 10
-    assert "余血" in burn.text
+    burns = [log for log in battle.logs if log.text and "层灼烧侵蚀" in log.text]
+    # 第一回合命中后挂 3 层；回合结束连烧 3 下，每下 100 × 10% = 10，不扣层
+    assert len(burns) >= 3
+    assert all(log.damage == 10 for log in burns[:3])
+    assert "余血" in burns[0].text
 
 
 def test_jinhuo_bonus_only_applies_against_burning_targets(services) -> None:
@@ -751,7 +752,7 @@ def test_cleanse_removes_burn_by_layer(services) -> None:
 
 
 def test_updated_affix_descriptions_match_current_semantics() -> None:
-    assert "每回合造成一次" in get_artifact_affix_definition("zhuohun").describe({"burn_stacks": 3, "burn_atk_pct": 10})
+    assert "连续灼烧" in get_artifact_affix_definition("zhuohun").describe({"burn_stacks": 3, "burn_atk_pct": 10})
     assert "承伤提高" in get_artifact_affix_definition("zhoufu").describe({"reduce_down_pct": 5, "max_stacks": 7})
     assert "同步治疗等量生命" in get_artifact_affix_definition("guiyuan").describe({"max_hp_pct": 40})
 

@@ -63,7 +63,7 @@ def test_statuses_merge_only_when_all_stack_properties_match(services) -> None:
     assert combat._status_count(owner, "一次") == 2
 
 
-def test_burn_uses_stacks_consumes_one_per_round_and_cleanses_one(services) -> None:
+def test_burn_ticks_once_per_stack_without_consuming_and_cleanses_one(services) -> None:
     combat = services.combat
     source = _spirit_state(services, "焚者", atk=100)
     stronger_source = _spirit_state(services, "烈焰者", atk=100)
@@ -80,10 +80,10 @@ def test_burn_uses_stacks_consumes_one_per_round_and_cleanses_one(services) -> N
     assert burns[0].stacks == 7 and burns[0].duration is None
     assert burns[0].burn_pct == 30 and burns[0].source is stronger_source
     round_logs = combat._trigger_round_end(1, source, target, CombatRoller([]))
-    assert len([log for log in round_logs if log.text and "层灼烧侵蚀" in log.text]) == 1
-    assert combat._burn_stacks(target) == 6
+    assert len([log for log in round_logs if log.text and "层灼烧侵蚀" in log.text]) == 7
+    assert combat._burn_stacks(target) == 7
     assert combat._remove_one_debuff(target) is not None
-    assert combat._burn_stacks(target) == 5
+    assert combat._burn_stacks(target) == 6
 
 
 @pytest.mark.parametrize(
@@ -219,7 +219,9 @@ def test_fengdun_evades_non_attack_damage_and_gains_a_stack(services) -> None:
     assert actual == 0
     assert combat._status_count(dodger, "风遁") == 1
     assert dodger.hp == dodger.get_max_hp()
-    assert any(log.text and "以风遁闪开本次伤害" in log.text for log in logs)
+    dodge_logs = [log.text for log in logs if log.text and "以风遁闪开本次伤害" in log.text]
+    assert dodge_logs == ["风遁主 以风遁闪开本次伤害，叠至第 1 层，攻势与身法同涨。"]
+    assert not any(log.text and "风遁叠至第" in log.text for log in logs)
 
 
 def test_fengdun_missed_non_attack_damage_drops_one_stack(services) -> None:
@@ -434,13 +436,13 @@ def test_spirit_power_pool_expands_to_twenty_entries() -> None:
     assert {"leifa", "shiyan", "fengdun", "lingyu", "wanzhou"} <= power_ids
 
 
-def test_fenmai_power_roll_accepts_decimal_ranges() -> None:
+def test_fenmai_power_roll_accepts_integer_burn_stacks() -> None:
     power = get_spirit_power_definition("fenmai")
 
     entry = power.roll("high", random.Random(42))
 
-    assert 1.2 <= entry.rolls["per_burn_pct"] <= 1.6
-    assert isinstance(entry.rolls["per_burn_pct"], float)
+    assert 2 <= entry.rolls["burn_stacks"] <= 3
+    assert isinstance(entry.rolls["burn_stacks"], int)
 
 
 @pytest.mark.asyncio
@@ -670,108 +672,115 @@ def test_xuekuang_burns_hp_and_stats_scale_with_self_loss(services) -> None:
     assert state.get_max_hp() == 1100
 
 
-def test_fenmai_triggers_extra_damage_on_burning_target(services) -> None:
-    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 3, "burn_atk_pct": 30})
-
-    attacker_without_spirit = services.combat.create_combatant(
-        name="烬心",
-        atk=70,
-        defense=10,
-        agility=50,
-        affixes=(burn_affix,),
+def test_fenmai_applies_burn_and_shreds_max_hp_by_burn_damage(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "烬心",
+        atk=100,
+        spirit_power=SpiritPowerEntry("fenmai", {"burn_stacks": 2}),
+        affixes=(ArtifactAffixEntry(1, "zhuohun", {"burn_stacks": 1, "burn_atk_pct": 10}),),
     )
-    attacker_with_spirit = services.combat.create_combatant(
-        name="烬心",
-        atk=70,
-        defense=10,
-        agility=50,
-        affixes=(burn_affix,),
-        spirit_power=SpiritPowerEntry("fenmai", {"cap_pct": 25}),
+    target = _spirit_state(services, "荒甲", defense=100)
+    logs = combat._trigger_spirit_on_hit(1, actor, target, 10, CombatRoller([]), source=_DamageSource.ATTACK, scene=set())
+    assert combat._burn_stacks(target) == 2
+    assert any(log.text and "附 2 层灼烧" in log.text for log in logs)
+
+    before_max = target.get_max_hp()
+    round_logs = combat._trigger_round_end(1, actor, target, CombatRoller([]))
+    burn_logs = [log for log in round_logs if log.text and "层灼烧侵蚀" in log.text]
+    fenmai_logs = [log for log in round_logs if log.text and "焚脉" in log.text and "上限" in log.text]
+    assert len(burn_logs) == 2
+    assert target.get_max_hp() < before_max
+    assert len(fenmai_logs) == 1
+
+
+def test_burn_batch_hides_zero_damage_and_merges_followups(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "焚者",
+        atk=100,
+        spirit_power=SpiritPowerEntry("shisheng", {"heal_pct": 10}),
     )
-    defender = services.combat.create_combatant(name="荒甲", atk=25, defense=400, agility=10)
-
-    baseline = services.combat.run_battle(attacker_without_spirit, defender, rng=CombatRoller([0.99, 0.99, 0.0, 0.99, 0.99]))
-    empowered = services.combat.run_battle(attacker_with_spirit, defender, rng=CombatRoller([0.99, 0.99, 0.0]))
-
-    # 焚脉提供额外伤害但不影响自身血量；以伤害日志/局数为准
-    assert empowered.defender_hp_after <= baseline.defender_hp_after
-    assert any(log.text and "焚脉" in log.text for log in empowered.logs)
-
-
-def test_shiyan_consumes_burn_stacks_when_threshold_reached(services) -> None:
-    """蚀焰：灼烧 ≥6 层时触发，引爆后清空灼烧并给目标挂创伤。"""
-    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 20})
-    attacker = services.combat.create_combatant(
-        name="蚀焰主",
-        atk=80,
-        defense=10,
-        agility=50,
-        affixes=(burn_affix,),
-        spirit_power=SpiritPowerEntry("shiyan", {"per_burn_pct": 50, "wound_stacks": 3}),
+    actor.hp = 100
+    target = _spirit_state(
+        services,
+        "木人",
+        defense=200,
+        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 10, "proc_pct": 50}),
     )
-    defender = services.combat.create_combatant(name="木人", atk=10, defense=800, agility=10)
+    target.roller = CombatRoller([0.0, 0.99, 0.99])
+    combat._apply_burn_to_target(target, actor, stacks=3, per_stack_pct=10, round_no=1, logs=[])
+    round_logs = combat._trigger_round_end(1, actor, target, CombatRoller([]))
+    texts = [log.text for log in round_logs if log.text]
+    burn_logs = [text for text in texts if "层灼烧侵蚀" in text]
+    block_logs = [text for text in texts if "完全格挡" in text]
+    shisheng_logs = [text for text in texts if "噬生吞回血气" in text]
+    assert block_logs == ["木人 的玄甲骤然张开，完全格挡本次伤害。"]
+    assert len(burn_logs) == 2
+    assert all("造成" in text and "余血" in text for text in burn_logs)
+    assert len(shisheng_logs) == 1
 
-    battle = services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 30))
 
-    # 命中后挂 5 层即触发蚀焰
-    assert any(log.text and "蚀焰倾泻而出" in log.text for log in battle.logs)
-    # 引爆后给目标附加创伤
-    assert any(log.text and "创伤" in log.text for log in battle.logs)
-
-
-def test_shiyan_explodes_even_when_attack_deals_zero_damage(services) -> None:
-    """蚀焰：即使本次普攻被高防完全削为 0 伤害，仍应触发引爆并清空灼烧。"""
-    # 两轮命中 → 10 层灼烧（≥6 触发）
-    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 1})
-    attacker = services.combat.create_combatant(
-        name="蚀焰主",
-        atk=10,           # 极低攻击
-        defense=10,
-        agility=50,
-        affixes=(burn_affix,),
-        spirit_power=SpiritPowerEntry("shiyan", {"per_burn_pct": 50, "wound_stacks": 2}),
+def test_shiyan_explodes_once_per_cost_and_keeps_remainder(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "蚀焰主",
+        atk=100,
+        spirit_power=SpiritPowerEntry("shiyan", {"cost_stacks": 10, "per_burn_pct": 50, "wound_stacks": 1}),
     )
-    # 极高防御 → 普攻被削到 0 伤
-    defender = services.combat.create_combatant(name="铁壁", atk=10, defense=10_000_000, agility=10)
+    target = _spirit_state(services, "木人", defense=800)
+    combat._apply_burn_to_target(target, actor, stacks=15, per_stack_pct=20, round_no=1, logs=[])
+    logs = combat._trigger_shiyan_explodes(1, actor, target, CombatRoller([]))
+    explode_logs = [log for log in logs if log.text and "蚀焰倾泻而出" in log.text]
+    assert len(explode_logs) == 1
+    assert combat._burn_stacks(target) == 5
+    assert any(log.text and "创伤" in log.text for log in logs)
 
-    battle = services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 30))
 
-    # 即使普攻 0 伤，蚀焰仍应触发并写入战报
-    assert any(log.text and "蚀焰倾泻而出" in log.text for log in battle.logs)
+def test_shiyan_can_explode_twice_when_stacks_cover_two_costs(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "蚀焰主",
+        atk=100,
+        spirit_power=SpiritPowerEntry("shiyan", {"cost_stacks": 10, "per_burn_pct": 20, "wound_stacks": 1}),
+    )
+    target = _spirit_state(services, "铁壁", defense=10_000)
+    combat._apply_burn_to_target(target, actor, stacks=20, per_stack_pct=1, round_no=1, logs=[])
+    logs = combat._trigger_shiyan_explodes(1, actor, target, CombatRoller([]))
+    explode_logs = [log for log in logs if log.text and "蚀焰倾泻而出" in log.text]
+    assert len(explode_logs) == 2
+    assert combat._burn_stacks(target) == 0
 
 
 def test_shiyan_explosion_respects_damage_reduction(services) -> None:
-    """蚀焰：引爆伤害吃减伤管线（吃承伤/减伤/护盾，不吃增伤）。
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "蚀焰主",
+        atk=80,
+        spirit_power=SpiritPowerEntry("shiyan", {"cost_stacks": 5, "per_burn_pct": 50, "wound_stacks": 1}),
+    )
+    target = _spirit_state(services, "守势", defense=800)
+    combat._apply_burn_to_target(target, actor, stacks=5, per_stack_pct=20, round_no=1, logs=[])
+    logs_no = combat._trigger_shiyan_explodes(1, actor, target, CombatRoller([]))
+    dmg_no = next(log.damage for log in logs_no if log.text and "蚀焰倾泻而出" in log.text)
 
-    2026-05-21 平衡调整：蚀焰 profile can_be_shielded 改为 True，护盾可抵挡引爆伤害。
-    """
-    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 20})
-
-    def run_one(defender_affixes):
-        attacker = services.combat.create_combatant(
-            name="蚀焰主", atk=80, defense=10, agility=50,
-            affixes=(burn_affix,),
-            spirit_power=SpiritPowerEntry("shiyan", {"per_burn_pct": 50, "wound_stacks": 3}),
-        )
-        defender = services.combat.create_combatant(
-            name="守势", atk=10, defense=800, agility=10, affixes=defender_affixes,
-        )
-        return services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 30))
-
-    battle_no = run_one(())
-    battle_red = run_one((ArtifactAffixEntry(slot=1, affix_id="cangbi", rolls={"reduce_pct": 80}),))
-
-    def explode_damage(battle):
-        for log in battle.logs:
-            if log.text and "蚀焰倾泻而出" in log.text:
-                return log.damage
-        return None
-
-    dmg_no = explode_damage(battle_no)
-    dmg_red = explode_damage(battle_red)
-    assert dmg_no is not None and dmg_red is not None, "蚀焰扣血应当即时写入战报"
-    # 蚀焰引爆吃减伤：守势 80% 减伤后伤害应明显降低
-    assert dmg_red < dmg_no, f"无减伤伤害 {dmg_no}, 守势减伤后 {dmg_red}（蚀焰应受减伤影响）"
+    actor_red = _spirit_state(
+        services,
+        "蚀焰主",
+        atk=80,
+        spirit_power=SpiritPowerEntry("shiyan", {"cost_stacks": 5, "per_burn_pct": 50, "wound_stacks": 1}),
+    )
+    target_red = _spirit_state(services, "守势", defense=800)
+    combat._add_status(target_red, _StatusEffect("守势", damage_reduction_pct=80))
+    combat._apply_burn_to_target(target_red, actor_red, stacks=5, per_stack_pct=20, round_no=1, logs=[])
+    logs_red = combat._trigger_shiyan_explodes(1, actor_red, target_red, CombatRoller([]))
+    dmg_red = next(log.damage for log in logs_red if log.text and "蚀焰倾泻而出" in log.text)
+    assert dmg_red < dmg_no
 
 
 def test_lingyong_grants_starting_lingshi_stacks(services) -> None:
@@ -1101,6 +1110,7 @@ def test_xuanjia_full_battle_blocks_attack_and_burn_as_separate_packets(services
     assert any(log.text and "附 1 层灼烧" in log.text for log in result.logs)
     assert len(block_logs) == 2
     assert result.defender_hp_after == result.defender_max_hp
+    assert not any(log.text and "层灼烧侵蚀" in log.text for log in result.logs)
 
 
 def test_jueming_applies_omen_even_when_xuanjia_blocks_damage(services) -> None:
