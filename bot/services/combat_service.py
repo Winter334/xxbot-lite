@@ -177,7 +177,7 @@ class CombatService:
         "疾锋": 3,
         "天威": 6,
         "风行": 5,
-        "风遁": 8,
+        "风遁": 10,
         "登霄": 8,
         "追猎": 12,
         "夺锋": 5,
@@ -345,7 +345,7 @@ class CombatService:
                 or status.dodge_bonus_pct
             )
         ]
-        dodge_rate = clamp(0.10 * (self._current_agility(target) / max(self._current_agility(actor), 1)) + self._dodge_bonus_pct(target) / 100, 0.05, 0.75)
+        dodge_rate = self._dodge_rate(target, actor)
         force_hit = self._zhuifeng_force_hit(actor)
         if force_hit:
             actor.zhuifeng_first_attack_pending = False
@@ -412,6 +412,7 @@ class CombatService:
             scene=scene,
             can_be_shielded=True,
             cause=attack_log,
+            can_fengdun_dodge=False,
         )
         target.hits_taken += 1
         self._consume_hit_reduction_statuses(target)
@@ -553,6 +554,12 @@ class CombatService:
                 if bonus > 0:
                     self._modify_max_hp(state, bonus, also_heal=True)
                     logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 玄甲护体，最大生命提高 {bonus}。"))
+            case "fengdun":
+                if state.spirit_proc_rounds.get("fengdun_battle_start"):
+                    return logs
+                state.spirit_proc_rounds["fengdun_battle_start"] = 1
+                self._add_status(state, _StatusEffect("风遁·起", dodge_bonus_pct=10, cleanseable=False))
+                logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 风遁起势，整场闪避率提高 10%。"))
             case "lingyong":
                 start_stacks = max(0, power.rolls.get("start_stacks", 0))
                 if start_stacks <= 0:
@@ -1151,8 +1158,7 @@ class CombatService:
         power = dodger.snapshot.spirit_power
         if power is None or power.power_id != "fengdun":
             return []
-        # 限制最多 8 层
-        if self._status_count(dodger, "风遁") >= 8:
+        if self._status_count(dodger, "风遁") >= 10:
             return []
         self._add_status(dodger, _StatusEffect("风遁", damage_dealt_pct=power.rolls["per_wind_pct"], agility_pct=power.rolls["agi_boost_pct"]))
         layers = self._status_count(dodger, "风遁")
@@ -2518,6 +2524,35 @@ class CombatService:
             if field_name not in {"stacks", "source"}
         )
 
+    def _dodge_rate(self, defender: _CombatState, attacker: _CombatState | None = None) -> float:
+        attacker_agi = self._current_agility(attacker) if attacker is not None else 1
+        return clamp(
+            0.10 * (self._current_agility(defender) / max(attacker_agi, 1)) + self._dodge_bonus_pct(defender) / 100,
+            0.05,
+            0.80,
+        )
+
+    def _fengdun_try_evade(
+        self,
+        state: _CombatState,
+        actor: _CombatState | None,
+        round_no: int,
+        logs: list[ActionLog] | None,
+    ) -> bool:
+        power = state.snapshot.spirit_power
+        if power is None or power.power_id != "fengdun":
+            return False
+        roller = state.roller or self.rng
+        if roller.random() >= self._dodge_rate(state, actor):
+            self._reduce_wind_stacks(state, 1)
+            return False
+        if logs is not None:
+            logs.append(self._effect_log(round_no, state, f"{state.snapshot.name} 以风遁闪开本次伤害。"))
+            logs.extend(self._trigger_spirit_on_dodge(round_no, state))
+        else:
+            self._trigger_spirit_on_dodge(round_no, state)
+        return True
+
     def _xuanjia_blocks(
         self,
         state: _CombatState,
@@ -2547,14 +2582,21 @@ class CombatService:
         can_be_shielded: bool = False,
         settle_liekai: bool = True,
         cause: ActionLog | None = None,
+        can_fengdun_dodge: bool = True,
     ) -> int:
         """最底层扣血。
         - respects_resilience=True（默认）：扣减 state.snapshot.base_resilience % 后再扣血。
           普攻、反棘、归锋、追击、灼烧 DOT、春生、蚀焰等所有伤害管线最终都汇聚到这里。
         - respects_resilience=False：豁免境界韧性。仅“机制性必杀真伤”使用。
         - 绝命死兆伤害走普通伤害管线，由本函数处理。
+        - can_fengdun_dodge：风遁持有者对此笔伤害独立闪避。普攻已在 _resolve_action 判过，传 False 避免重复判定。
         """
         if damage <= 0 or state.hp <= 0:
+            return 0
+        if can_fengdun_dodge and self._fengdun_try_evade(state, actor, round_no, logs):
+            self._attach_or_log_damage(
+                round_no, state, 0, logs, actor=actor, cause=cause, replace_cause=True, allow_zero=True
+            )
             return 0
         if self._xuanjia_blocks(state, round_no, logs):
             self._attach_or_log_damage(

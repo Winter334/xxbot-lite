@@ -8,7 +8,7 @@ import pytest
 from bot.data.artifact_affixes import ArtifactAffixEntry
 from bot.data.spirits import SPIRIT_POWER_DEFINITIONS, SpiritPowerEntry, get_spirit_power_definition
 from bot.models.proving_ground_run import ProvingGroundRun
-from bot.services.combat_service import _CombatState, _DamageSource, _NORMAL_DAMAGE_PROFILE, _StatusEffect
+from bot.services.combat_service import _BURN_DOT_PROFILE, _CombatState, _DamageSource, _NORMAL_DAMAGE_PROFILE, _StatusEffect
 from bot.services.proving_ground_service import PGBuild, ProvingGroundService
 
 
@@ -169,6 +169,109 @@ def test_fengren_grants_same_attack_guaranteed_crit_and_fifty_pct_damage(service
     assert attack.critical is True
     assert attack.damage == 262
     assert not any(s.name == "风刃" for s in actor.statuses)
+
+
+def test_dodge_rate_caps_at_eighty_percent(services) -> None:
+    combat = services.combat
+    defender = _spirit_state(services, "守方", agility=1000)
+    attacker = _spirit_state(services, "攻方", agility=1)
+
+    assert combat._dodge_rate(defender, attacker) == pytest.approx(0.80)
+
+
+def test_fengdun_starts_with_ten_percent_dodge(services) -> None:
+    combat = services.combat
+    dodger = _spirit_state(
+        services,
+        "风遁主",
+        agility=100,
+        spirit_power=SpiritPowerEntry("fengdun", {"per_wind_pct": 20, "agi_boost_pct": 10}),
+    )
+    attacker = _spirit_state(services, "来犯", agility=100)
+
+    logs = combat._trigger_spirit_battle_start(1, dodger)
+
+    assert combat._dodge_rate(dodger, attacker) == pytest.approx(0.20)
+    assert combat._status_count(dodger, "风遁·起") == 1
+    assert any(log.text and "闪避率提高 10%" in log.text for log in logs)
+
+
+def test_fengdun_evades_non_attack_damage_and_gains_a_stack(services) -> None:
+    combat = services.combat
+    dodger = _spirit_state(
+        services,
+        "风遁主",
+        spirit_power=SpiritPowerEntry("fengdun", {"per_wind_pct": 20, "agi_boost_pct": 10}),
+    )
+    dodger.roller = CombatRoller([0.0])
+    attacker = _spirit_state(services, "来犯")
+    logs: list = []
+
+    actual = combat._apply_typed_damage(
+        dodger,
+        400,
+        _BURN_DOT_PROFILE,
+        actor=attacker,
+        round_no=1,
+        logs=logs,
+    )
+
+    assert actual == 0
+    assert combat._status_count(dodger, "风遁") == 1
+    assert dodger.hp == dodger.get_max_hp()
+    assert any(log.text and "以风遁闪开本次伤害" in log.text for log in logs)
+
+
+def test_fengdun_missed_non_attack_damage_drops_one_stack(services) -> None:
+    combat = services.combat
+    dodger = _spirit_state(
+        services,
+        "风遁主",
+        spirit_power=SpiritPowerEntry("fengdun", {"per_wind_pct": 20, "agi_boost_pct": 10}),
+    )
+    combat._add_status(dodger, _StatusEffect("风遁", stacks=3, damage_dealt_pct=20, agility_pct=10))
+    dodger.roller = CombatRoller([0.99])
+    attacker = _spirit_state(services, "来犯")
+
+    actual = combat._apply_typed_damage(dodger, 50, _NORMAL_DAMAGE_PROFILE, actor=attacker, round_no=1, logs=[])
+
+    assert actual > 0
+    assert combat._status_count(dodger, "风遁") == 2
+
+
+def test_fengdun_normal_attack_does_not_double_dodge(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(services, "攻方", atk=100, agility=100)
+    target = _spirit_state(
+        services,
+        "风遁主",
+        agility=100,
+        spirit_power=SpiritPowerEntry("fengdun", {"per_wind_pct": 20, "agi_boost_pct": 10}),
+    )
+    target.roller = CombatRoller([])
+
+    logs = combat._resolve_action(1, actor, target, CombatRoller([0.99, 0.99]), set())
+    attack = next(log for log in logs if log.text is None)
+
+    assert attack.dodged is False
+    assert attack.damage > 0
+    assert combat._status_count(target, "风遁") == 0
+
+
+def test_fengdun_caps_at_ten_stacks(services) -> None:
+    combat = services.combat
+    dodger = _spirit_state(
+        services,
+        "风遁主",
+        spirit_power=SpiritPowerEntry("fengdun", {"per_wind_pct": 20, "agi_boost_pct": 10}),
+    )
+    combat._add_status(dodger, _StatusEffect("风遁", stacks=10, damage_dealt_pct=20, agility_pct=10))
+
+    logs = combat._trigger_spirit_on_dodge(1, dodger)
+
+    assert logs == []
+    assert combat._status_count(dodger, "风遁") == 10
+    assert combat._status_stack_cap("风遁") == 10
 
 
 def test_cleaning_one_zhoufu_stack_does_not_add_curse_seal(services) -> None:

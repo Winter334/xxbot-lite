@@ -465,8 +465,8 @@ SPIRIT_POWER_DEFINITIONS = (
             supreme=(("per_wind_pct", 40, 52), ("agi_boost_pct", 26, 34)),
         ),
         description_builder=lambda rolls: (
-            f"闪避后叠加 1 层风遁（上限 8）；每层提高伤害 {rolls['per_wind_pct']}% 并提升身法 {rolls['agi_boost_pct']}%；"
-            f"受击命中时仅消散 1 层；满 5 层时下次攻击必定暴击且伤害额外 +50%。"
+            f"所有攻击都能闪，战斗开始时闪避率提高 10%；闪避后叠加 1 层风遁（上限 10）；每层提高伤害 {rolls['per_wind_pct']}% 并提升身法 {rolls['agi_boost_pct']}%；"
+            f"每次受击命中时仅消散 1 层；满 5 层时下次攻击必定暴击且伤害额外 +50%。"
         ),
     ),
     _define_power(
