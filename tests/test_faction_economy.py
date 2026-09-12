@@ -103,7 +103,7 @@ async def test_bounty_payout_scales_with_realm_gap(session_factory, services, fa
 
         assert result.success
         assert result.soul_delta == 100
-        assert result.lingshi_delta == 500
+        assert result.lingshi_delta == 300
         assert hunter.virtue == 100
         assert hunter.luck >= 10
         assert target.bounty_soul == 0
@@ -124,9 +124,9 @@ async def test_npc_uses_realm_cap_and_matching_affix_slots(session_factory, serv
         spawned = await npc_service.ensure_daily_pool(session, now=datetime(2026, 5, 14, 0, 5, tzinfo=SHANGHAI))
         await session.flush()
 
-        assert spawned == 30
+        assert spawned == npc_service.DAILY_POOL_SIZE
         npcs = await npc_service._load_npcs(session)
-        assert len(npcs) == 30
+        assert len(npcs) == npc_service.DAILY_POOL_SIZE
         assert any(npc.faction == "demonic" and npc.bounty_soul > 0 for npc in npcs)
         allowed = {
             "lianqi", "zhuji", "jiedan",

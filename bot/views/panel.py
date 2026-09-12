@@ -3076,6 +3076,39 @@ class FactionTargetSelect(discord.ui.Select):
             await bot.broadcast_service.broadcast_embed(bot, report_embed, view=report_view)
 
 
+class RobberyPageSelect(discord.ui.Select):
+    def __init__(self, owner_user_id: int, *, page: int, page_count: int) -> None:
+        self.owner_user_id = owner_user_id
+        start = 0
+        if page_count > 25:
+            start = min(max(0, page - 12), page_count - 25)
+        options = [
+            discord.SelectOption(label=f"第 {i + 1} 页", value=str(i), default=i == page)
+            for i in range(start, min(start + 25, page_count))
+        ]
+        super().__init__(
+            placeholder=f"跳转到页（当前 {page + 1}/{page_count}）",
+            options=options,
+            row=2,
+            min_values=1,
+            max_values=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_user_id:
+            await interaction.response.send_message("这张面板并非为你而开。", ephemeral=True)
+            return
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        embed, view, broadcasts = await build_faction_message(
+            bot,
+            interaction.user.id,
+            interaction.user.display_name,
+            robbery_page=int(self.values[0]),
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+        await _send_broadcasts(bot, broadcasts)
+
+
 class FactionView(OwnerLockedView):
     def __init__(
         self,
@@ -3136,33 +3169,7 @@ class FactionView(OwnerLockedView):
 
     def _add_robbery_pagination_controls(self) -> None:
         page_count = _page_count(len(self.targets), ROBBERY_TARGETS_PER_PAGE)
-        self._add_robbery_page_button("上一页", self.robbery_page - 1, disabled=self.robbery_page <= 0, row=2)
-        self.add_item(
-            discord.ui.Button(
-                label=f"{self.robbery_page + 1}/{page_count}",
-                row=2,
-                style=discord.ButtonStyle.secondary,
-                disabled=True,
-            )
-        )
-        self._add_robbery_page_button("下一页", self.robbery_page + 1, disabled=self.robbery_page >= page_count - 1, row=2)
-
-    def _add_robbery_page_button(self, label: str, page: int, *, disabled: bool, row: int) -> None:
-        button = discord.ui.Button(label=label, row=row, style=discord.ButtonStyle.secondary, disabled=disabled)
-
-        async def callback(interaction: discord.Interaction, target_page: int = page) -> None:
-            bot: XianBot = interaction.client  # type: ignore[assignment]
-            embed, view, broadcasts = await build_faction_message(
-                bot,
-                interaction.user.id,
-                interaction.user.display_name,
-                robbery_page=target_page,
-            )
-            await interaction.response.edit_message(embed=embed, view=view)
-            await _send_broadcasts(bot, broadcasts)
-
-        button.callback = callback
-        self.add_item(button)
+        self.add_item(RobberyPageSelect(self.owner_user_id, page=self.robbery_page, page_count=page_count))
 
     def _add_report_pagination_controls(self, *, row: int) -> None:
         if self.result is None or getattr(self.result, "battle", None) is None or self.defender_snapshot is None:

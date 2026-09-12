@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 class NpcService:
     """NPC 池管理：每日刷新 + 8 维随机 + caps 防捡漏。"""
 
-    DAILY_POOL_SIZE = 30
+    DAILY_POOL_SIZE = 50
     """每日 NPC 池规模（正魔比例由 faction_demonic_ratio 控制）"""
 
     DEMONIC_RATIO = 0.5
