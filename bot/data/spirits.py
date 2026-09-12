@@ -136,40 +136,44 @@ SPIRIT_POWER_DEFINITIONS = (
         "shisheng",
         "噬生",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("heal_pct", 20, 28),),
-            mid=(("heal_pct", 28, 38),),
-            high=(("heal_pct", 38, 50),),
-            peak=(("heal_pct", 50, 62),),
-            supreme=(("heal_pct", 60, 75),),
+            low=(("heal_pct", 5, 10),),
+            mid=(("heal_pct", 10, 20),),
+            high=(("heal_pct", 20, 30),),
+            peak=(("heal_pct", 30, 40),),
+            supreme=(("heal_pct", 50, 60),),
         ),
-        description_builder=lambda rolls: f"普通攻击与自身造成的灼烧造成实际伤害后，按伤害的 {rolls['heal_pct']}% 回复生命。",
+        description_builder=lambda rolls: f"造成任何实际伤害后，按伤害的 {rolls['heal_pct']}% 回复生命。",
     ),
     _define_power(
         "jueming",
         "绝命",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("omen_cost", 8, 8), ("execute_pct", 18, 18), ("heal_down_pct", 35, 35)),
-            mid=(("omen_cost", 7, 7), ("execute_pct", 22, 22), ("heal_down_pct", 40, 40)),
-            high=(("omen_cost", 6, 6), ("execute_pct", 26, 26), ("heal_down_pct", 45, 45)),
-            peak=(("omen_cost", 5, 5), ("execute_pct", 30, 30), ("heal_down_pct", 50, 50)),
-            supreme=(("omen_cost", 4, 4), ("execute_pct", 35, 35), ("heal_down_pct", 55, 55)),
+            low=(("omen_cost", 9, 9), ("hp_pct", 1, 5), ("heal_down_pct", 1, 5)),
+            mid=(("omen_cost", 8, 8), ("hp_pct", 5, 10), ("heal_down_pct", 5, 10)),
+            high=(("omen_cost", 7, 7), ("hp_pct", 10, 15), ("heal_down_pct", 10, 15)),
+            peak=(("omen_cost", 6, 6), ("hp_pct", 15, 20), ("heal_down_pct", 15, 20)),
+            supreme=(("omen_cost", 5, 5), ("hp_pct", 25, 35), ("heal_down_pct", 20, 25)),
         ),
         description_builder=lambda rolls: (
             f"回合结束时，若目标咒印≥{rolls['omen_cost']}层，消耗{rolls['omen_cost']}层咒印凝成 1 层死兆；"
-            f"每层死兆使目标受疗降低 {rolls['heal_down_pct']}%，并提高 {rolls['execute_pct']}% 斩杀线；死兆 3 层时直接斩杀。"
+            f"每层死兆使目标受疗降低 {rolls['heal_down_pct']}%，并立刻造成自身最大生命 {rolls['hp_pct']}%×当前层数 的伤害。"
+            f"叠满 3 层后伤害结算完毕，死兆清空并重新叠层。"
         ),
     ),
     _define_power(
         "xuanjia",
         "玄甲",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("def_pct", 10, 10), ("proc_pct", 25, 32)),
-            mid=(("def_pct", 30, 30), ("proc_pct", 30, 38)),
-            high=(("def_pct", 50, 50), ("proc_pct", 36, 45)),
-            peak=(("def_pct", 80, 80), ("proc_pct", 42, 60)),
-            supreme=(("def_pct", 100, 100), ("proc_pct", 60, 80)),
+            low=(("def_pct", 10, 10), ("proc_pct", 1, 10), ("heal_down_pct", 10, 20)),
+            mid=(("def_pct", 30, 30), ("proc_pct", 10, 20), ("heal_down_pct", 20, 30)),
+            high=(("def_pct", 50, 50), ("proc_pct", 20, 30), ("heal_down_pct", 30, 40)),
+            peak=(("def_pct", 80, 80), ("proc_pct", 30, 40), ("heal_down_pct", 40, 50)),
+            supreme=(("def_pct", 100, 100), ("proc_pct", 45, 55), ("heal_down_pct", 50, 60)),
         ),
-        description_builder=lambda rolls: f"战斗开始时护体提高 {rolls['def_pct']}%；每次受击时，有 {rolls['proc_pct']}% 概率格挡本次伤害。",
+        description_builder=lambda rolls: (
+            f"战斗开始时最大生命提高 {rolls['def_pct']}%；每次受到伤害时，有 {rolls['proc_pct']}% 概率完全格挡；"
+            f"自身受疗降低 {rolls['heal_down_pct']}%"
+        ),
     ),
     _define_power(
         "fanji",
@@ -231,26 +235,29 @@ SPIRIT_POWER_DEFINITIONS = (
         "xuekuang",
         "血狂",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_lost_10_pct", 8, 10), ("max_bonus_pct", 80, 80), ("frenzy_lifesteal_pct", 8, 12)),
-            mid=(("per_lost_10_pct", 10, 12), ("max_bonus_pct", 105, 105), ("frenzy_lifesteal_pct", 10, 14)),
-            high=(("per_lost_10_pct", 12, 15), ("max_bonus_pct", 130, 130), ("frenzy_lifesteal_pct", 12, 18)),
-            peak=(("per_lost_10_pct", 15, 18), ("max_bonus_pct", 155, 155), ("frenzy_lifesteal_pct", 16, 22)),
-            supreme=(("per_lost_10_pct", 18, 22), ("max_bonus_pct", 180, 180), ("frenzy_lifesteal_pct", 20, 28)),
+            low=(("burn_pct", 5, 5), ("loss_step_pct", 10, 10), ("stat_pct", 1, 1)),
+            mid=(("burn_pct", 5, 5), ("loss_step_pct", 10, 10), ("stat_pct", 2, 2)),
+            high=(("burn_pct", 5, 5), ("loss_step_pct", 10, 10), ("stat_pct", 3, 3)),
+            peak=(("burn_pct", 5, 5), ("loss_step_pct", 10, 10), ("stat_pct", 4, 4)),
+            supreme=(("burn_pct", 5, 5), ("loss_step_pct", 10, 10), ("stat_pct", 5, 5)),
         ),
-        description_builder=lambda rolls: f"每损失 10% 最大生命，伤害提高 {rolls['per_lost_10_pct']}%，最高 {rolls['max_bonus_pct']}%；生命不高于 25% 时获得 {rolls['frenzy_lifesteal_pct']}% 吸血。",
+        description_builder=lambda rolls: (
+            f"每回合开始失去 {rolls['burn_pct']}% 最大生命；"
+            f"每损失 {rolls['loss_step_pct']}% 当前最大生命，三维提高 {rolls['stat_pct']}%。"
+        ),
     ),
     _define_power(
         "fenmai",
         "焚脉",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_burn_pct", 0.5, 0.8),),
-            mid=(("per_burn_pct", 0.8, 1.2),),
-            high=(("per_burn_pct", 1.2, 1.6),),
-            peak=(("per_burn_pct", 1.5, 1.8),),
-            supreme=(("per_burn_pct", 1.8, 2.0),),
+            low=(("burn_stacks", 1, 2),),
+            mid=(("burn_stacks", 1, 3),),
+            high=(("burn_stacks", 2, 3),),
+            peak=(("burn_stacks", 2, 4),),
+            supreme=(("burn_stacks", 3, 5),)
         ),
         description_builder=lambda rolls: (
-            f"命中灼烧目标时，附加目标最大生命 {rolls['per_burn_pct']}% × 灼烧层数 的伤害（无上限）。"
+            f"命中附加 {rolls['burn_stacks']} 层灼烧；本回合灼烧实际造成多少伤害，便削减等量最大生命上限，最低留 1 点。"
         ),
     ),
     _define_power(
@@ -392,13 +399,13 @@ SPIRIT_POWER_DEFINITIONS = (
         "qiedao",
         "窃道",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("chain_pct", 18, 28),),
-            mid=(("chain_pct", 26, 40),),
-            high=(("chain_pct", 38, 54),),
-            peak=(("chain_pct", 50, 68),),
-            supreme=(("chain_pct", 62, 80),),
+            low=(("chain_pct", 5, 10),),
+            mid=(("chain_pct", 10, 15),),
+            high=(("chain_pct", 15, 25),),
+            peak=(("chain_pct", 30, 40),),
+            supreme=(("chain_pct", 45, 60),),
         ),
-        description_builder=lambda rolls: f"回合开始自动执行：优先窃取敌方 1 个正面效果（转移至自身）；敌方无正面时改为转移自身 1 个负面给敌方。成功后 {rolls['chain_pct']}% 概率再次触发（无限链式，无上限）。",
+        description_builder=lambda rolls: f"回合开始自动执行：优先窃取敌方 1 层可净化正面效果（转移至自身）；敌方无正面时改为转移自身 1 层可净化负面给敌方。成功后 {rolls['chain_pct']}% 概率再次触发。护盾、待发追打与不可净化标记不可窃取。",
     ),
     _define_power(
         "zhuifeng",
@@ -420,30 +427,31 @@ SPIRIT_POWER_DEFINITIONS = (
         "leifa",
         "雷罚",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("mark_crit_pct", 6, 6), ("mark_crit_damage_pct", 8, 8)),
-            mid=(("mark_crit_pct", 8, 8), ("mark_crit_damage_pct", 10, 10)),
-            high=(("mark_crit_pct", 10, 10), ("mark_crit_damage_pct", 12, 12)),
-            peak=(("mark_crit_pct", 12, 12), ("mark_crit_damage_pct", 15, 15)),
-            supreme=(("mark_crit_pct", 15, 15), ("mark_crit_damage_pct", 20, 20)),
+            low=(("cost_stacks", 8, 10), ("strikes_min", 1, 1), ("strikes_max", 2, 2), ("burst_pct", 20, 30)),
+            mid=(("cost_stacks", 6, 8), ("strikes_min", 1, 1), ("strikes_max", 2, 3), ("burst_pct", 25, 35)),
+            high=(("cost_stacks", 6, 7), ("strikes_min", 1, 2), ("strikes_max", 3, 4), ("burst_pct", 30, 45)),
+            peak=(("cost_stacks", 5, 6), ("strikes_min", 2, 3), ("strikes_max", 4, 5), ("burst_pct", 40, 55)),
+            supreme=(("cost_stacks", 3, 4), ("strikes_min", 3, 6), ("strikes_max", 6, 9), ("burst_pct", 60, 80)),
         ),
         description_builder=lambda rolls: (
-            f"目标每层雷殛使自身攻击该目标时暴击率 +{rolls['mark_crit_pct']}%、暴伤 +{rolls['mark_crit_damage_pct']}%；"
-            f"普通攻击命中但未暴击时，给目标附加 1 层雷殛，最多 5 层。"
+            f"命中后若目标雷殛不少于 {rolls['cost_stacks']} 层，消耗 {rolls['cost_stacks']} 层，"
+            f"随机唤出 {rolls['strikes_min']}~{rolls['strikes_max']} 次小型雷劫；每次造成 {rolls['burst_pct']}% 杀伐真伤，"
+            f"落在场上带有雷殛之人，再给目标附加 1 层雷殛。"
         ),
     ),
     _define_power(
         "shiyan",
         "蚀焰",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("per_burn_pct", 12, 22), ("wound_stacks", 1, 1)),
-            mid=(("per_burn_pct", 18, 30), ("wound_stacks", 2, 2)),
-            high=(("per_burn_pct", 22, 38), ("wound_stacks", 3, 3)),
-            peak=(("per_burn_pct", 28, 42), ("wound_stacks", 4, 4)),
-            supreme=(("per_burn_pct", 32, 44), ("wound_stacks", 5, 5)),
+            low=(("cost_stacks", 8, 12), ("per_burn_pct", 10, 20), ("wound_stacks", 1, 1)),
+            mid=(("cost_stacks", 7, 11), ("per_burn_pct", 20, 40), ("wound_stacks", 2, 2)),
+            high=(("cost_stacks", 6, 10), ("per_burn_pct", 40, 60), ("wound_stacks", 3, 3)),
+            peak=(("cost_stacks", 5, 9), ("per_burn_pct", 60, 80), ("wound_stacks", 4, 4)),
+            supreme=(("cost_stacks", 4, 8), ("per_burn_pct", 80, 100), ("wound_stacks", 5, 5)),
         ),
         description_builder=lambda rolls: (
-            f"命中且目标灼烧 ≥6 层时触发：消耗目标至多 10 层灼烧，每层造成 {rolls['per_burn_pct']}% 杀伐神通伤害（可被护盾抵挡），"
-            f"引爆后给目标附加 {rolls['wound_stacks']} 层创伤；触发后冷却 1 回合。"
+            f"命中后每消耗 {rolls['cost_stacks']} 层灼烧引爆一次，每层造成 {rolls['per_burn_pct']}% 杀伐神通伤害（可被护盾抵挡），"
+            f"每次引爆附加 {rolls['wound_stacks']} 层创伤；层数不足则不引爆。"
         ),
     ),
     _define_power(
@@ -457,8 +465,8 @@ SPIRIT_POWER_DEFINITIONS = (
             supreme=(("per_wind_pct", 40, 52), ("agi_boost_pct", 26, 34)),
         ),
         description_builder=lambda rolls: (
-            f"闪避后叠加 1 层风遁（上限 8）；每层提高伤害 {rolls['per_wind_pct']}% 并提升身法 {rolls['agi_boost_pct']}%；"
-            f"受击命中时仅消散 1 层；满 5 层时下次攻击必定暴击且伤害额外 +50%。"
+            f"所有攻击都能闪，战斗开始时闪避率提高 10%；闪避后叠加 1 层风遁（上限 10）；每层提高伤害 {rolls['per_wind_pct']}% 并提升身法 {rolls['agi_boost_pct']}%；"
+            f"每次受击命中时仅消散 1 层；满 5 层时下次攻击必定暴击且伤害额外 +50%。"
         ),
     ),
     _define_power(

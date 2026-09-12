@@ -51,7 +51,7 @@ ROBBERY_BONUS_LINGSHI_BY_REALM: dict[str, int] = {
 }
 """劫掠成功时系统额外注入的灵石 bonus（按目标境界）。"""
 
-BOUNTY_LINGSHI_MULTIPLIER = 5
+BOUNTY_LINGSHI_MULTIPLIER = 3
 """悬赏讨伐成功后每点 bounty_soul 兑换灵石的倍率。"""
 
 REALM_LOOT_STEP_PCT = 30
@@ -119,7 +119,7 @@ class FactionService:
         """统一的恶名增加入口，同步刷新历史最大值。
 
         返回实际增加的恶名值（始终等于入参 gain，便于链式赋值）。
-        历史最大值用于劫掠时计算"快速回升"的 5% 阶梯加成，
+        历史最大值用于劫掠时计算"快速回升"的 1% 阶梯加成，
         在讨伐清空 infamy 时不会被清零（这是设计意图）。
         """
         if gain <= 0:
@@ -396,10 +396,10 @@ class FactionService:
             robber.luck += take_luck
             stolen_luck = take_luck
 
-        # 恶名增量 = 基础（按目标境界） + 历史最大恶名 × 5%（快速回升机制）
+        # 恶名增量 = 基础（按目标境界） + 历史最大恶名 × 1%（快速回升机制）
         # 讨伐清空当前 infamy 但 historical_max_infamy 保留，再次作恶时阶梯式回升
         base_infamy_gain = INFAMY_BY_REALM.get(target.realm_key, 50)
-        escalation = int((robber.historical_max_infamy or 0) * 0.05)
+        escalation = int((robber.historical_max_infamy or 0) * 0.01)
         infamy_gain = base_infamy_gain + escalation
         # 系统额外注入器魂和灵石 bonus
         bonus_soul = self._scale_loot(
