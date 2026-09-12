@@ -277,4 +277,4 @@ class RankingService:
         for tag in honor_tags:
             if tag != title and tag not in deduped:
                 deduped.append(tag)
-        return title, tuple(deduped[:5]), faction_title
+        return title, tuple(deduped[:10]), faction_title
