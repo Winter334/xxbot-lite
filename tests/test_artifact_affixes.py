@@ -437,10 +437,11 @@ def test_zhuohun_burn_uses_attacker_atk_per_stack(services) -> None:
         rng=SequenceRandom([0.99, 0.99, 0.0] * 8),
     )
 
-    burn = next(log for log in battle.logs if log.text and "层灼烧侵蚀" in log.text)
-    # 第一回合命中后挂 3 层；层数用于持续与联动，每回合仅造成一次 100 × 10% = 10 伤害
-    assert burn.damage == 10
-    assert "余血" in burn.text
+    burns = [log for log in battle.logs if log.text and "层灼烧侵蚀" in log.text]
+    # 第一回合命中后挂 3 层；回合结束连烧 3 下，每下 100 × 10% = 10，不扣层
+    assert len(burns) >= 3
+    assert all(log.damage == 10 for log in burns[:3])
+    assert "余血" in burns[0].text
 
 
 def test_jinhuo_bonus_only_applies_against_burning_targets(services) -> None:
@@ -568,14 +569,11 @@ def _combat_state(services, name: str, *, atk: int = 100, defense: int = 100, ag
     return state
 
 
-def test_kuangfeng_and_leiyin_start_on_next_round_and_survive_triggering_attack(services) -> None:
+def test_kuangfeng_starts_on_next_round_and_survives_triggering_attack(services) -> None:
     actor = _combat_state(
         services,
         "蓄势修士",
-        affixes=(
-            ArtifactAffixEntry(1, "kuangfeng", {"damage_pct": 80}),
-            ArtifactAffixEntry(2, "leiyin", {"next_damage_pct": 20, "burst_pct": 0}),
-        ),
+        affixes=(ArtifactAffixEntry(1, "kuangfeng", {"damage_pct": 80}),),
     )
     target = _combat_state(services, "木人")
     actor.current_round = 1
@@ -583,11 +581,34 @@ def test_kuangfeng_and_leiyin_start_on_next_round_and_survive_triggering_attack(
     services.combat._trigger_on_crit(1, actor, target, 100, SequenceRandom([]), set())
 
     assert services.combat._damage_dealt_pct(actor) == 0
-    assert {status.name for status in actor.statuses} >= {"狂锋", "雷引"}
+    assert any(status.name == "狂锋" for status in actor.statuses)
     actor.current_round = 2
-    assert services.combat._damage_dealt_pct(actor) == 100
+    assert services.combat._damage_dealt_pct(actor) == 80
     services.combat._consume_attack_bonuses(actor, list(actor.statuses))
-    assert not any(status.name in {"狂锋", "雷引"} for status in actor.statuses)
+    assert not any(status.name == "狂锋" for status in actor.statuses)
+
+
+def test_leiyin_marks_one_on_hit_and_three_on_crit(services) -> None:
+    actor = _combat_state(services, "雷引修士", affixes=(ArtifactAffixEntry(1, "leiyin", {}),))
+    target = _combat_state(services, "木人")
+    combat = services.combat
+
+    combat._trigger_on_hit(1, actor, target, 10, SequenceRandom([]), set())
+    assert combat._target_leihen_count(target) == 1
+    combat._trigger_on_crit(1, actor, target, 10, SequenceRandom([]), set())
+    assert combat._target_leihen_count(target) == 3
+
+
+def test_liekong_pierce_uses_full_n_layers_only(services) -> None:
+    actor = _combat_state(
+        services,
+        "裂空修士",
+        affixes=(ArtifactAffixEntry(1, "liekong", {"per_stacks": 5, "pierce_pct": 10, "extra_damage_pct": 80}),),
+    )
+    target = _combat_state(services, "木人")
+    combat = services.combat
+    combat._add_target_leihen(target, actor, 11)
+    assert combat._pierce_pct(actor, set(), target) == 20
 
 
 def test_chenchen_reduces_normal_attack_damage(services) -> None:
@@ -731,7 +752,7 @@ def test_cleanse_removes_burn_by_layer(services) -> None:
 
 
 def test_updated_affix_descriptions_match_current_semantics() -> None:
-    assert "每回合造成一次" in get_artifact_affix_definition("zhuohun").describe({"burn_stacks": 3, "burn_atk_pct": 10})
+    assert "连续灼烧" in get_artifact_affix_definition("zhuohun").describe({"burn_stacks": 3, "burn_atk_pct": 10})
     assert "承伤提高" in get_artifact_affix_definition("zhoufu").describe({"reduce_down_pct": 5, "max_stacks": 7})
     assert "同步治疗等量生命" in get_artifact_affix_definition("guiyuan").describe({"max_hp_pct": 40})
 
@@ -843,3 +864,36 @@ def test_attack_log_appears_before_liekai_threshold(services) -> None:
     liekai_i = next(i for i, log in enumerate(logs) if log.text and "裂铠" in log.text)
 
     assert attack_i < liekai_i
+
+
+def test_qingxin_does_nothing_without_cleanseable_debuff(services) -> None:
+    actor = _combat_state(
+        services,
+        "清心修士",
+        affixes=(ArtifactAffixEntry(1, "qingxin", {"stacks": 2, "heal_pct": 10}),),
+    )
+    opponent = _combat_state(services, "对手")
+    actor.hp = 100
+
+    logs = services.combat._trigger_round_start(1, actor, opponent, SequenceRandom([]), set())
+
+    assert actor.hp == 100
+    assert logs == []
+
+    services.combat._add_status(
+        actor,
+        _StatusEffect("死兆", heal_received_pct=-40, is_debuff=True, cleanseable=False, source=opponent),
+    )
+    logs = services.combat._trigger_round_start(1, actor, opponent, SequenceRandom([]), set())
+    assert actor.hp == 100
+    assert services.combat._status_count(actor, "死兆") == 1
+    assert logs == []
+
+    services.combat._add_status(
+        actor,
+        _StatusEffect("创伤", stacks=2, damage_taken_pct=5, is_debuff=True, source=opponent),
+    )
+    logs = services.combat._trigger_round_start(1, actor, opponent, SequenceRandom([]), set())
+    assert services.combat._status_count(actor, "创伤") == 0
+    assert actor.hp > 100
+    assert any(log.text and "清心净念" in log.text for log in logs)

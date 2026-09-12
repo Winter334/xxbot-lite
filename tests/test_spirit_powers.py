@@ -8,7 +8,7 @@ import pytest
 from bot.data.artifact_affixes import ArtifactAffixEntry
 from bot.data.spirits import SPIRIT_POWER_DEFINITIONS, SpiritPowerEntry, get_spirit_power_definition
 from bot.models.proving_ground_run import ProvingGroundRun
-from bot.services.combat_service import _CombatState, _DamageSource, _StatusEffect
+from bot.services.combat_service import _BURN_DOT_PROFILE, _CombatState, _DamageSource, _NORMAL_DAMAGE_PROFILE, _StatusEffect
 from bot.services.proving_ground_service import PGBuild, ProvingGroundService
 
 
@@ -63,7 +63,7 @@ def test_statuses_merge_only_when_all_stack_properties_match(services) -> None:
     assert combat._status_count(owner, "一次") == 2
 
 
-def test_burn_uses_stacks_consumes_one_per_round_and_cleanses_one(services) -> None:
+def test_burn_ticks_once_per_stack_without_consuming_and_cleanses_one(services) -> None:
     combat = services.combat
     source = _spirit_state(services, "焚者", atk=100)
     stronger_source = _spirit_state(services, "烈焰者", atk=100)
@@ -80,10 +80,10 @@ def test_burn_uses_stacks_consumes_one_per_round_and_cleanses_one(services) -> N
     assert burns[0].stacks == 7 and burns[0].duration is None
     assert burns[0].burn_pct == 30 and burns[0].source is stronger_source
     round_logs = combat._trigger_round_end(1, source, target, CombatRoller([]))
-    assert len([log for log in round_logs if log.text and "层灼烧侵蚀" in log.text]) == 1
-    assert combat._burn_stacks(target) == 6
+    assert len([log for log in round_logs if log.text and "层灼烧侵蚀" in log.text]) == 7
+    assert combat._burn_stacks(target) == 7
     assert combat._remove_one_debuff(target) is not None
-    assert combat._burn_stacks(target) == 5
+    assert combat._burn_stacks(target) == 6
 
 
 @pytest.mark.parametrize(
@@ -171,6 +171,111 @@ def test_fengren_grants_same_attack_guaranteed_crit_and_fifty_pct_damage(service
     assert not any(s.name == "风刃" for s in actor.statuses)
 
 
+def test_dodge_rate_caps_at_eighty_percent(services) -> None:
+    combat = services.combat
+    defender = _spirit_state(services, "守方", agility=1000)
+    attacker = _spirit_state(services, "攻方", agility=1)
+
+    assert combat._dodge_rate(defender, attacker) == pytest.approx(0.80)
+
+
+def test_fengdun_starts_with_ten_percent_dodge(services) -> None:
+    combat = services.combat
+    dodger = _spirit_state(
+        services,
+        "风遁主",
+        agility=100,
+        spirit_power=SpiritPowerEntry("fengdun", {"per_wind_pct": 20, "agi_boost_pct": 10}),
+    )
+    attacker = _spirit_state(services, "来犯", agility=100)
+
+    logs = combat._trigger_spirit_battle_start(1, dodger)
+
+    assert combat._dodge_rate(dodger, attacker) == pytest.approx(0.20)
+    assert combat._status_count(dodger, "风遁·起") == 1
+    assert any(log.text and "闪避率提高 10%" in log.text for log in logs)
+
+
+def test_fengdun_evades_non_attack_damage_and_gains_a_stack(services) -> None:
+    combat = services.combat
+    dodger = _spirit_state(
+        services,
+        "风遁主",
+        spirit_power=SpiritPowerEntry("fengdun", {"per_wind_pct": 20, "agi_boost_pct": 10}),
+    )
+    dodger.roller = CombatRoller([0.0])
+    attacker = _spirit_state(services, "来犯")
+    logs: list = []
+
+    actual = combat._apply_typed_damage(
+        dodger,
+        400,
+        _BURN_DOT_PROFILE,
+        actor=attacker,
+        round_no=1,
+        logs=logs,
+    )
+
+    assert actual == 0
+    assert combat._status_count(dodger, "风遁") == 1
+    assert dodger.hp == dodger.get_max_hp()
+    dodge_logs = [log.text for log in logs if log.text and "以风遁闪开本次伤害" in log.text]
+    assert dodge_logs == ["风遁主 以风遁闪开本次伤害，叠至第 1 层，攻势与身法同涨。"]
+    assert not any(log.text and "风遁叠至第" in log.text for log in logs)
+
+
+def test_fengdun_missed_non_attack_damage_drops_one_stack(services) -> None:
+    combat = services.combat
+    dodger = _spirit_state(
+        services,
+        "风遁主",
+        spirit_power=SpiritPowerEntry("fengdun", {"per_wind_pct": 20, "agi_boost_pct": 10}),
+    )
+    combat._add_status(dodger, _StatusEffect("风遁", stacks=3, damage_dealt_pct=20, agility_pct=10))
+    dodger.roller = CombatRoller([0.99])
+    attacker = _spirit_state(services, "来犯")
+
+    actual = combat._apply_typed_damage(dodger, 50, _NORMAL_DAMAGE_PROFILE, actor=attacker, round_no=1, logs=[])
+
+    assert actual > 0
+    assert combat._status_count(dodger, "风遁") == 2
+
+
+def test_fengdun_normal_attack_does_not_double_dodge(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(services, "攻方", atk=100, agility=100)
+    target = _spirit_state(
+        services,
+        "风遁主",
+        agility=100,
+        spirit_power=SpiritPowerEntry("fengdun", {"per_wind_pct": 20, "agi_boost_pct": 10}),
+    )
+    target.roller = CombatRoller([])
+
+    logs = combat._resolve_action(1, actor, target, CombatRoller([0.99, 0.99]), set())
+    attack = next(log for log in logs if log.text is None)
+
+    assert attack.dodged is False
+    assert attack.damage > 0
+    assert combat._status_count(target, "风遁") == 0
+
+
+def test_fengdun_caps_at_ten_stacks(services) -> None:
+    combat = services.combat
+    dodger = _spirit_state(
+        services,
+        "风遁主",
+        spirit_power=SpiritPowerEntry("fengdun", {"per_wind_pct": 20, "agi_boost_pct": 10}),
+    )
+    combat._add_status(dodger, _StatusEffect("风遁", stacks=10, damage_dealt_pct=20, agility_pct=10))
+
+    logs = combat._trigger_spirit_on_dodge(1, dodger)
+
+    assert logs == []
+    assert combat._status_count(dodger, "风遁") == 10
+    assert combat._status_stack_cap("风遁") == 10
+
+
 def test_cleaning_one_zhoufu_stack_does_not_add_curse_seal(services) -> None:
     combat = services.combat
     owner = _spirit_state(services, "咒缚主")
@@ -250,10 +355,7 @@ def test_niepan_revives_after_jueming_at_round_end(services, monkeypatch) -> Non
         logs = original_battle_start(round_no, state, scene)
         if state.snapshot.name == "涅槃者":
             combat._add_status(state, _StatusEffect("生息"))
-            combat._add_status(
-                state,
-                _StatusEffect("死兆", is_debuff=True, source=executioner_state[0], cleanseable=False),
-            )
+            combat._add_curse_seal(state, executioner_state[0], 1)
         return logs
 
     executioner_state = [None]
@@ -273,7 +375,7 @@ def test_niepan_revives_after_jueming_at_round_end(services, monkeypatch) -> Non
         1,
         100,
         100,
-        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 99, "execute_pct": 100, "heal_down_pct": 0}),
+        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 1, "hp_pct": 100, "heal_down_pct": 0}),
     )
     executioner_state[0] = _spirit_state(
         services,
@@ -284,7 +386,7 @@ def test_niepan_revives_after_jueming_at_round_end(services, monkeypatch) -> Non
 
     battle = combat.run_battle(victim, executioner, rng=CombatRoller([0.99] * 10))
 
-    assert any(log.text and "绝命发动" in log.text for log in battle.logs)
+    assert any(log.text and "凝成第 1 层死兆" in log.text for log in battle.logs)
     assert any(log.text and "涅槃再起" in log.text for log in battle.logs)
     assert battle.challenger_hp_after > 0
 
@@ -334,13 +436,13 @@ def test_spirit_power_pool_expands_to_twenty_entries() -> None:
     assert {"leifa", "shiyan", "fengdun", "lingyu", "wanzhou"} <= power_ids
 
 
-def test_fenmai_power_roll_accepts_decimal_ranges() -> None:
+def test_fenmai_power_roll_accepts_integer_burn_stacks() -> None:
     power = get_spirit_power_definition("fenmai")
 
     entry = power.roll("high", random.Random(42))
 
-    assert 1.2 <= entry.rolls["per_burn_pct"] <= 1.6
-    assert isinstance(entry.rolls["per_burn_pct"], float)
+    assert 2 <= entry.rolls["burn_stacks"] <= 3
+    assert isinstance(entry.rolls["burn_stacks"], int)
 
 
 @pytest.mark.asyncio
@@ -375,15 +477,21 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
 @pytest.mark.parametrize(
     ("power_id", "rolls", "expected"),
     [
-        ("xuanjia", {"proc_pct": 60, "reduce_pct": 100}, {"def_pct": 100, "proc_pct": 60}),
+        ("xuanjia", {"proc_pct": 60, "reduce_pct": 100}, {"def_pct": 100, "proc_pct": 55, "heal_down_pct": 50}),
         ("jinmai", {"proc_pct": 85, "per_disrupt_pct": 10, "seal_stacks": 3}, {"proc_pct": 35, "per_disrupt_pct": 5}),
         ("zhuifeng", {"r1_crit_bonus": 100, "r1_agility_pct": 50, "r1_damage_pct": 480}, {"r1_crit_bonus": 50, "r1_agility_pct": 25}),
-        ("leifa", {"mark_crit_pct": 15, "mark_crit_damage_pct": 20, "thunder_pct": 450}, {"mark_crit_pct": 15, "mark_crit_damage_pct": 20}),
+        ("leifa", {"mark_crit_pct": 15, "mark_crit_damage_pct": 20, "thunder_pct": 450}, {"cost_stacks": 3, "strikes_min": 3, "strikes_max": 6, "burst_pct": 60}),
         (
             "wanzhou",
             {"curse_on_hit": 3, "extra_curse_pct": 0, "burst_threshold": 5, "debuff_rolls_per_curse": 6, "seal_weight": 12},
             {"curse_on_hit": 3, "extra_curse_pct": 0, "burst_threshold": 5, "debuff_rolls_per_curse": 6},
         ),
+        ("qiedao", {"chain_pct": 80}, {"chain_pct": 60}),
+        ("shisheng", {"heal_pct": 75}, {"heal_pct": 60}),
+        ("shisheng", {"heal_pct": 1}, {"heal_pct": 50}),
+        ("xuekuang", {"per_lost_10_pct": 22, "max_bonus_pct": 180, "frenzy_lifesteal_pct": 28}, {"burn_pct": 5, "loss_step_pct": 10, "stat_pct": 5}),
+        ("jueming", {"max_stacks": 6, "damage_pct": 55}, {"omen_cost": 5, "hp_pct": 35, "heal_down_pct": 20}),
+        ("jueming", {"omen_cost": 4, "execute_pct": 35, "heal_down_pct": 55}, {"omen_cost": 5, "hp_pct": 35, "heal_down_pct": 25}),
     ],
 )
 def test_reworked_legacy_spirit_rolls_are_normalized(services, power_id, rolls, expected) -> None:
@@ -423,7 +531,7 @@ def test_legacy_proving_ground_spirits_use_current_rolls() -> None:
     )
 
     assert xuanjia.spirit_power is not None
-    assert xuanjia.spirit_power.rolls == {"def_pct": 100, "proc_pct": 60}
+    assert xuanjia.spirit_power.rolls == {"def_pct": 100, "proc_pct": 55, "heal_down_pct": 50}
     assert jinmai.spirit_power is not None
     assert jinmai.spirit_power.rolls == {"proc_pct": 35, "per_disrupt_pct": 5}
 
@@ -449,13 +557,13 @@ def test_proving_ground_spirit_tier_changes_normalize_immediately(services) -> N
 
     xuanjia = PGBuild(
         spirit_tier="supreme",
-        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 100, "proc_pct": 80}),
+        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 100, "proc_pct": 80, "heal_down_pct": 60}),
     )
     run = ProvingGroundRun(character_id=1, pending_affix_ops=0)
     proving_ground._apply_lingshi("accept", xuanjia, run, None)
     assert xuanjia.spirit_tier == "peak"
     assert xuanjia.spirit_power is not None
-    assert xuanjia.spirit_power.rolls == {"def_pct": 80, "proc_pct": 60}
+    assert xuanjia.spirit_power.rolls == {"def_pct": 80, "proc_pct": 40, "heal_down_pct": 50}
 
 
 def test_spirit_power_description_accepts_legacy_rolls() -> None:
@@ -483,7 +591,7 @@ def test_shisheng_can_heal_from_zhuohun_burn_damage(services) -> None:
         defense=10,
         agility=50,
         affixes=(burn_affix,),
-        spirit_power=SpiritPowerEntry("shisheng", {"heal_pct": 100}),
+        spirit_power=SpiritPowerEntry("shisheng", {"heal_pct": 5}),
     )
     defender = services.combat.create_combatant(name="枯木", atk=30, defense=400, agility=10)
 
@@ -494,108 +602,185 @@ def test_shisheng_can_heal_from_zhuohun_burn_damage(services) -> None:
     assert any(log.text and "噬生吞回血气" in log.text for log in empowered.logs)
 
 
-def test_fenmai_triggers_extra_damage_on_burning_target(services) -> None:
-    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 3, "burn_atk_pct": 30})
-
-    attacker_without_spirit = services.combat.create_combatant(
-        name="烬心",
-        atk=70,
-        defense=10,
-        agility=50,
-        affixes=(burn_affix,),
+def test_shisheng_heals_from_followup_damage(services) -> None:
+    combat = services.combat
+    attacker = _spirit_state(
+        services,
+        "噬者",
+        atk=100,
+        defense=50,
+        spirit_power=SpiritPowerEntry("shisheng", {"heal_pct": 5}),
     )
-    attacker_with_spirit = services.combat.create_combatant(
-        name="烬心",
-        atk=70,
-        defense=10,
-        agility=50,
-        affixes=(burn_affix,),
-        spirit_power=SpiritPowerEntry("fenmai", {"cap_pct": 25}),
+    target = _spirit_state(services, "木人", defense=50)
+    attacker.hp = 100
+    logs: list = []
+    actual = combat._apply_typed_damage(
+        target,
+        200,
+        _NORMAL_DAMAGE_PROFILE,
+        actor=attacker,
+        round_no=1,
+        logs=logs,
     )
-    defender = services.combat.create_combatant(name="荒甲", atk=25, defense=400, agility=10)
-
-    baseline = services.combat.run_battle(attacker_without_spirit, defender, rng=CombatRoller([0.99, 0.99, 0.0, 0.99, 0.99]))
-    empowered = services.combat.run_battle(attacker_with_spirit, defender, rng=CombatRoller([0.99, 0.99, 0.0]))
-
-    # 焚脉提供额外伤害但不影响自身血量；以伤害日志/局数为准
-    assert empowered.defender_hp_after <= baseline.defender_hp_after
-    assert any(log.text and "焚脉" in log.text for log in empowered.logs)
+    assert actual > 0
+    assert attacker.hp == 100 + max(1, actual * 5 // 100)
+    assert any(log.text and "噬生吞回血气" in log.text for log in logs)
 
 
-def test_shiyan_consumes_burn_stacks_when_threshold_reached(services) -> None:
-    """蚀焰：灼烧 ≥6 层时触发，引爆后清空灼烧并给目标挂创伤。"""
-    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 20})
-    attacker = services.combat.create_combatant(
-        name="蚀焰主",
-        atk=80,
-        defense=10,
-        agility=50,
-        affixes=(burn_affix,),
-        spirit_power=SpiritPowerEntry("shiyan", {"per_burn_pct": 50, "wound_stacks": 3}),
+def test_xuekuang_burns_hp_and_stats_scale_with_self_loss(services) -> None:
+    combat = services.combat
+    state = _spirit_state(
+        services,
+        "血狂者",
+        atk=100,
+        defense=100,
+        agility=100,
+        spirit_power=SpiritPowerEntry("xuekuang", {"burn_pct": 5, "loss_step_pct": 10, "stat_pct": 5}),
     )
-    defender = services.combat.create_combatant(name="木人", atk=10, defense=800, agility=10)
+    assert state.get_max_hp() == 1000
+    logs = combat._trigger_xuekuang_round_start(1, state)
+    assert state.hp == 950
+    assert state.xuekuang_lost_hp == 50
+    assert combat._xuekuang_stat_pct(state) == 0
+    assert combat._current_atk(state) == 100
+    assert not any(status.name == "血狂" for status in state.statuses)
+    assert any(log.text and "血狂燃精" in log.text for log in logs)
 
-    battle = services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 30))
+    combat._trigger_xuekuang_round_start(2, state)
+    assert state.hp == 900
+    assert state.xuekuang_lost_hp == 100
+    assert combat._xuekuang_stat_pct(state) == 5
+    assert combat._current_atk(state) == 105
+    assert combat._current_defense(state) == 105
+    assert combat._current_agility(state) == 105
+    assert state.get_max_hp() == 1050
 
-    # 命中后挂 5 层即触发蚀焰
-    assert any(log.text and "蚀焰倾泻而出" in log.text for log in battle.logs)
-    # 引爆后给目标附加创伤
-    assert any(log.text and "创伤" in log.text for log in battle.logs)
+    state.hp = 1000
+    assert combat._xuekuang_stat_pct(state) == 5
+    assert combat._current_atk(state) == 105
+    assert state.get_max_hp() == 1050
+
+    combat._apply_damage(state, 100, respects_resilience=False)
+    assert state.xuekuang_lost_hp == 200
+    assert combat._xuekuang_stat_pct(state) == 5
+    assert combat._current_atk(state) == 105
+    assert state.get_max_hp() == 1050
+
+    combat._apply_damage(state, 5, respects_resilience=False)
+    assert combat._xuekuang_stat_pct(state) == 10
+    assert combat._current_atk(state) == 110
+    assert state.get_max_hp() == 1100
 
 
-def test_shiyan_explodes_even_when_attack_deals_zero_damage(services) -> None:
-    """蚀焰：即使本次普攻被高防完全削为 0 伤害，仍应触发引爆并清空灼烧。"""
-    # 两轮命中 → 10 层灼烧（≥6 触发）
-    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 1})
-    attacker = services.combat.create_combatant(
-        name="蚀焰主",
-        atk=10,           # 极低攻击
-        defense=10,
-        agility=50,
-        affixes=(burn_affix,),
-        spirit_power=SpiritPowerEntry("shiyan", {"per_burn_pct": 50, "wound_stacks": 2}),
+def test_fenmai_applies_burn_and_shreds_max_hp_by_burn_damage(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "烬心",
+        atk=100,
+        spirit_power=SpiritPowerEntry("fenmai", {"burn_stacks": 2}),
+        affixes=(ArtifactAffixEntry(1, "zhuohun", {"burn_stacks": 1, "burn_atk_pct": 10}),),
     )
-    # 极高防御 → 普攻被削到 0 伤
-    defender = services.combat.create_combatant(name="铁壁", atk=10, defense=10_000_000, agility=10)
+    target = _spirit_state(services, "荒甲", defense=100)
+    logs = combat._trigger_spirit_on_hit(1, actor, target, 10, CombatRoller([]), source=_DamageSource.ATTACK, scene=set())
+    assert combat._burn_stacks(target) == 2
+    assert any(log.text and "附 2 层灼烧" in log.text for log in logs)
 
-    battle = services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 30))
+    before_max = target.get_max_hp()
+    round_logs = combat._trigger_round_end(1, actor, target, CombatRoller([]))
+    burn_logs = [log for log in round_logs if log.text and "层灼烧侵蚀" in log.text]
+    fenmai_logs = [log for log in round_logs if log.text and "焚脉" in log.text and "上限" in log.text]
+    assert len(burn_logs) == 2
+    assert target.get_max_hp() < before_max
+    assert len(fenmai_logs) == 1
 
-    # 即使普攻 0 伤，蚀焰仍应触发并写入战报
-    assert any(log.text and "蚀焰倾泻而出" in log.text for log in battle.logs)
+
+def test_burn_batch_hides_zero_damage_and_merges_followups(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "焚者",
+        atk=100,
+        spirit_power=SpiritPowerEntry("shisheng", {"heal_pct": 10}),
+    )
+    actor.hp = 100
+    target = _spirit_state(
+        services,
+        "木人",
+        defense=200,
+        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 10, "proc_pct": 50}),
+    )
+    target.roller = CombatRoller([0.0, 0.99, 0.99])
+    combat._apply_burn_to_target(target, actor, stacks=3, per_stack_pct=10, round_no=1, logs=[])
+    round_logs = combat._trigger_round_end(1, actor, target, CombatRoller([]))
+    texts = [log.text for log in round_logs if log.text]
+    burn_logs = [text for text in texts if "层灼烧侵蚀" in text]
+    block_logs = [text for text in texts if "完全格挡" in text]
+    shisheng_logs = [text for text in texts if "噬生吞回血气" in text]
+    assert block_logs == ["木人 的玄甲骤然张开，完全格挡本次伤害。"]
+    assert len(burn_logs) == 2
+    assert all("造成" in text and "余血" in text for text in burn_logs)
+    assert len(shisheng_logs) == 1
+
+
+def test_shiyan_explodes_once_per_cost_and_keeps_remainder(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "蚀焰主",
+        atk=100,
+        spirit_power=SpiritPowerEntry("shiyan", {"cost_stacks": 10, "per_burn_pct": 50, "wound_stacks": 1}),
+    )
+    target = _spirit_state(services, "木人", defense=800)
+    combat._apply_burn_to_target(target, actor, stacks=15, per_stack_pct=20, round_no=1, logs=[])
+    logs = combat._trigger_shiyan_explodes(1, actor, target, CombatRoller([]))
+    explode_logs = [log for log in logs if log.text and "蚀焰倾泻而出" in log.text]
+    assert len(explode_logs) == 1
+    assert combat._burn_stacks(target) == 5
+    assert any(log.text and "创伤" in log.text for log in logs)
+
+
+def test_shiyan_can_explode_twice_when_stacks_cover_two_costs(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "蚀焰主",
+        atk=100,
+        spirit_power=SpiritPowerEntry("shiyan", {"cost_stacks": 10, "per_burn_pct": 20, "wound_stacks": 1}),
+    )
+    target = _spirit_state(services, "铁壁", defense=10_000)
+    combat._apply_burn_to_target(target, actor, stacks=20, per_stack_pct=1, round_no=1, logs=[])
+    logs = combat._trigger_shiyan_explodes(1, actor, target, CombatRoller([]))
+    explode_logs = [log for log in logs if log.text and "蚀焰倾泻而出" in log.text]
+    assert len(explode_logs) == 2
+    assert combat._burn_stacks(target) == 0
 
 
 def test_shiyan_explosion_respects_damage_reduction(services) -> None:
-    """蚀焰：引爆伤害吃减伤管线（吃承伤/减伤/护盾，不吃增伤）。
+    combat = services.combat
+    actor = _spirit_state(
+        services,
+        "蚀焰主",
+        atk=80,
+        spirit_power=SpiritPowerEntry("shiyan", {"cost_stacks": 5, "per_burn_pct": 50, "wound_stacks": 1}),
+    )
+    target = _spirit_state(services, "守势", defense=800)
+    combat._apply_burn_to_target(target, actor, stacks=5, per_stack_pct=20, round_no=1, logs=[])
+    logs_no = combat._trigger_shiyan_explodes(1, actor, target, CombatRoller([]))
+    dmg_no = next(log.damage for log in logs_no if log.text and "蚀焰倾泻而出" in log.text)
 
-    2026-05-21 平衡调整：蚀焰 profile can_be_shielded 改为 True，护盾可抵挡引爆伤害。
-    """
-    burn_affix = ArtifactAffixEntry(slot=1, affix_id="zhuohun", rolls={"burn_stacks": 5, "burn_atk_pct": 20})
-
-    def run_one(defender_affixes):
-        attacker = services.combat.create_combatant(
-            name="蚀焰主", atk=80, defense=10, agility=50,
-            affixes=(burn_affix,),
-            spirit_power=SpiritPowerEntry("shiyan", {"per_burn_pct": 50, "wound_stacks": 3}),
-        )
-        defender = services.combat.create_combatant(
-            name="守势", atk=10, defense=800, agility=10, affixes=defender_affixes,
-        )
-        return services.combat.run_battle(attacker, defender, rng=CombatRoller([0.99] * 30))
-
-    battle_no = run_one(())
-    battle_red = run_one((ArtifactAffixEntry(slot=1, affix_id="cangbi", rolls={"reduce_pct": 80}),))
-
-    def explode_damage(battle):
-        for log in battle.logs:
-            if log.text and "蚀焰倾泻而出" in log.text:
-                return log.damage
-        return None
-
-    dmg_no = explode_damage(battle_no)
-    dmg_red = explode_damage(battle_red)
-    assert dmg_no is not None and dmg_red is not None, "蚀焰扣血应当即时写入战报"
-    # 蚀焰引爆吃减伤：守势 80% 减伤后伤害应明显降低
-    assert dmg_red < dmg_no, f"无减伤伤害 {dmg_no}, 守势减伤后 {dmg_red}（蚀焰应受减伤影响）"
+    actor_red = _spirit_state(
+        services,
+        "蚀焰主",
+        atk=80,
+        spirit_power=SpiritPowerEntry("shiyan", {"cost_stacks": 5, "per_burn_pct": 50, "wound_stacks": 1}),
+    )
+    target_red = _spirit_state(services, "守势", defense=800)
+    combat._add_status(target_red, _StatusEffect("守势", damage_reduction_pct=80))
+    combat._apply_burn_to_target(target_red, actor_red, stacks=5, per_stack_pct=20, round_no=1, logs=[])
+    logs_red = combat._trigger_shiyan_explodes(1, actor_red, target_red, CombatRoller([]))
+    dmg_red = next(log.damage for log in logs_red if log.text and "蚀焰倾泻而出" in log.text)
+    assert dmg_red < dmg_no
 
 
 def test_lingyong_grants_starting_lingshi_stacks(services) -> None:
@@ -778,11 +963,11 @@ async def test_upgrade_tier_success_low_to_mid(session_factory, services) -> Non
 
 
 
-def test_jueming_converts_curse_seals_to_death_omen_and_executes(services) -> None:
+def test_jueming_converts_curse_seals_to_scaled_hp_damage_and_clears_at_three(services) -> None:
     combat = services.combat
     owner_snapshot = combat.create_combatant(
         name="绝命主", atk=100, defense=10, agility=50,
-        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 2, "execute_pct": 50, "heal_down_pct": 40}),
+        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 2, "hp_pct": 10, "heal_down_pct": 40}),
     )
     target_snapshot = combat.create_combatant(name="受印者", atk=10, defense=100, agility=10)
     owner = _CombatState(owner_snapshot, owner_snapshot.max_hp)
@@ -795,12 +980,19 @@ def test_jueming_converts_curse_seals_to_death_omen_and_executes(services) -> No
 
     assert combat._curse_seal_count(target) == 0
     assert combat._death_omen_count(target) == 1
-    assert any(log.text and "死兆" in log.text for log in logs)
+    assert target.hp == target.get_max_hp() - 10
+    assert any(log.text and "凝成第 1 层死兆" in log.text for log in logs)
 
-    target.hp = target.get_max_hp() * 40 // 100
+    combat._add_curse_seal(target, owner, 2)
     combat._settle_jueming_marks(2, owner, target)
+    assert combat._death_omen_count(target) == 2
+    assert target.hp == target.get_max_hp() - 30
 
-    assert target.hp == 0
+    combat._add_curse_seal(target, owner, 2)
+    logs = combat._settle_jueming_marks(3, owner, target)
+    assert combat._death_omen_count(target) == 0
+    assert target.hp == target.get_max_hp() - 60
+    assert any(log.text and "三重死兆散尽" in log.text for log in logs)
 
 
 def test_wanzhou_bursts_curse_seals_into_debuffs(services) -> None:
@@ -826,19 +1018,19 @@ def test_wanzhou_bursts_curse_seals_into_debuffs(services) -> None:
 
 
 @pytest.mark.parametrize(
-    ("tier", "def_pct", "proc_range"),
+    ("tier", "def_pct", "proc_range", "heal_down_range"),
     [
-        ("low", 10, (25, 32)),
-        ("mid", 30, (30, 38)),
-        ("high", 50, (36, 45)),
-        ("peak", 80, (42, 60)),
-        ("supreme", 100, (60, 80)),
+        ("low", 10, (1, 10), (10, 20)),
+        ("mid", 30, (10, 20), (20, 30)),
+        ("high", 50, (20, 30), (30, 40)),
+        ("peak", 80, (30, 40), (40, 50)),
+        ("supreme", 100, (45, 55), (50, 60)),
     ],
 )
-def test_xuanjia_tier_values_and_battle_start_hp(services, tier, def_pct, proc_range) -> None:
+def test_xuanjia_tier_values_and_battle_start_hp(services, tier, def_pct, proc_range, heal_down_range) -> None:
     definition = get_spirit_power_definition("xuanjia")
     ranges = {key: (low, high) for key, low, high in definition.roll_ranges_by_tier[tier]}
-    assert ranges == {"def_pct": (def_pct, def_pct), "proc_pct": proc_range}
+    assert ranges == {"def_pct": (def_pct, def_pct), "proc_pct": proc_range, "heal_down_pct": heal_down_range}
 
     state = _spirit_state(
         services,
@@ -851,6 +1043,18 @@ def test_xuanjia_tier_values_and_battle_start_hp(services, tier, def_pct, proc_r
     assert state.hp == state.get_max_hp()
     services.combat._trigger_battle_start(1, state, set())
     assert state.get_max_hp() == 1000 + 1000 * def_pct // 100
+
+
+def test_xuanjia_reduces_healing_received(services) -> None:
+    combat = services.combat
+    state = _spirit_state(
+        services,
+        "玄甲主",
+        defense=100,
+        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 10, "proc_pct": 0, "heal_down_pct": 50}),
+    )
+    state.hp = 500
+    assert combat._heal_by_damage(state, 200, 100) == 100
 
 
 def test_xuanjia_blocks_each_damage_packet_before_shield(services) -> None:
@@ -906,14 +1110,15 @@ def test_xuanjia_full_battle_blocks_attack_and_burn_as_separate_packets(services
     assert any(log.text and "附 1 层灼烧" in log.text for log in result.logs)
     assert len(block_logs) == 2
     assert result.defender_hp_after == result.defender_max_hp
+    assert not any(log.text and "层灼烧侵蚀" in log.text for log in result.logs)
 
 
-def test_jueming_consumes_curses_before_xuanjia_omen_block(services) -> None:
+def test_jueming_applies_omen_even_when_xuanjia_blocks_damage(services) -> None:
     combat = services.combat
     owner = _spirit_state(
         services,
         "绝命主",
-        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 2, "execute_pct": 20, "heal_down_pct": 40}),
+        spirit_power=SpiritPowerEntry("jueming", {"omen_cost": 2, "hp_pct": 20, "heal_down_pct": 40}),
     )
     target = _spirit_state(
         services,
@@ -921,15 +1126,21 @@ def test_jueming_consumes_curses_before_xuanjia_omen_block(services) -> None:
         spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 10, "proc_pct": 50}),
     )
     combat._add_curse_seal(target, owner, 2)
+    target.roller = CombatRoller([0.0])
+    hp_before = target.hp
 
-    combat._settle_jueming_marks(1, owner, target, CombatRoller([0.0]))
-    assert combat._curse_seal_count(target) == 0
-    assert combat._death_omen_count(target) == 0
-
-    combat._add_curse_seal(target, owner, 2)
-    combat._settle_jueming_marks(2, owner, target, CombatRoller([0.99]))
+    logs = combat._settle_jueming_marks(1, owner, target)
     assert combat._curse_seal_count(target) == 0
     assert combat._death_omen_count(target) == 1
+    assert target.hp == hp_before
+    assert any(log.text and "完全格挡本次伤害" in log.text for log in logs)
+
+    combat._add_curse_seal(target, owner, 2)
+    target.roller = CombatRoller([0.99])
+    combat._settle_jueming_marks(2, owner, target)
+    assert combat._curse_seal_count(target) == 0
+    assert combat._death_omen_count(target) == 2
+    assert target.hp == hp_before - owner.get_max_hp() * 40 // 100
 
 
 def test_jinmai_probability_seal_and_break_spirit_lifecycle(services) -> None:
@@ -1017,26 +1228,40 @@ def test_zhuifeng_first_mover_hunt_and_permanent_chase(services) -> None:
     assert combat._status_count(actor, "追猎") == 12
 
 
-def test_leifa_noncrit_marks_cap_and_source_specific_bonuses(services) -> None:
+class _LeifaRoller:
+    def __init__(self, victims) -> None:
+        self._victims = iter(victims)
+
+    def randint(self, start: int, end: int) -> int:
+        return end
+
+    def choice(self, items):
+        victim = next(self._victims)
+        assert victim in items
+        return victim
+
+
+def test_leifa_consumes_layers_strikes_rods_and_returns_one_mark(services) -> None:
     combat = services.combat
     actor = _spirit_state(
         services,
         "雷罚主",
-        spirit_power=SpiritPowerEntry("leifa", {"mark_crit_pct": 10, "mark_crit_damage_pct": 12}),
+        atk=100,
+        spirit_power=SpiritPowerEntry("leifa", {"cost_stacks": 3, "strikes_min": 2, "strikes_max": 2, "burst_pct": 50}),
     )
-    other = _spirit_state(services, "其他")
-    target = _spirit_state(services, "靶子")
+    target = _spirit_state(services, "靶子", defense=100)
+    combat._add_target_leihen(target, actor, 5)
+    combat._add_target_leihen(actor, actor, 1)
+    hp_before_actor = actor.hp
+    hp_before_target = target.hp
 
-    for _ in range(7):
-        combat._trigger_spirit_on_noncrit(1, actor, target)
-    assert combat._target_leihen_count(target) == 5
-    assert combat._target_crit_bonus_pct(actor, target) == 50
-    assert combat._target_crit_damage_bonus_pct(actor, target) == 60
-    assert combat._target_crit_bonus_pct(other, target) == 0
-    hp = target.hp
-    assert combat._trigger_spirit_on_crit(1, actor, target, 100, CombatRoller([])) == []
-    assert target.hp == hp
-    assert combat._status_count(target, "创伤") == 0
+    logs = combat._trigger_leifa(1, actor, target, _LeifaRoller([target, actor]))
+
+    assert combat._target_leihen_count(target) == 3
+    assert combat._target_leihen_count(actor) == 1
+    assert target.hp < hp_before_target
+    assert actor.hp < hp_before_actor
+    assert any(log.text and "小型雷劫" in log.text for log in logs)
 
 
 def test_wanzhou_extra_curse_uses_strict_probability_boundary(services) -> None:
@@ -1076,5 +1301,116 @@ def test_wanzhou_uses_leihen_pool_without_action_seal(services) -> None:
 
     logs = combat._trigger_wanzhou_burst(1, actor, target, random.Random(2))
     assert combat._status_count(target, "封禁行动") == 0
-    assert 0 < combat._target_leihen_count(target) <= 5
+    assert combat._target_leihen_count(target) > 0
     assert any(log.text and "雷殛" in log.text for log in logs)
+
+
+class _StealRoller:
+    def __init__(self, *, chain_rolls: list[int] | None = None) -> None:
+        self._chain = iter(chain_rolls or [])
+
+    def choice(self, items):
+        return items[0]
+
+    def randint(self, start: int, end: int) -> int:
+        return next(self._chain, end)
+
+
+def test_qiedao_steals_one_stack_and_respects_caps(services) -> None:
+    combat = services.combat
+    thief = _spirit_state(services, "窃者", spirit_power=SpiritPowerEntry("qiedao", {"chain_pct": 0}))
+    victim = _spirit_state(services, "失主")
+    combat._add_status(victim, _StatusEffect("灵势", stacks=10, atk_pct=8))
+    combat._add_status(thief, _StatusEffect("灵势", stacks=9, atk_pct=8))
+
+    logs = combat._trigger_spirit_round_start(1, thief, victim, _StealRoller())
+
+    assert combat._status_count(victim, "灵势") == 9
+    assert combat._status_count(thief, "灵势") == 10
+    assert any(log.text and "窃取 1 层「灵势」" in log.text for log in logs)
+
+    logs = combat._trigger_spirit_round_start(2, thief, victim, _StealRoller())
+    assert combat._status_count(victim, "灵势") == 9
+    assert combat._status_count(thief, "灵势") == 10
+    assert logs == []
+
+
+def test_qiedao_keeps_copied_fields_and_transfers_one_debuff_stack(services) -> None:
+    combat = services.combat
+    thief = _spirit_state(services, "窃者", spirit_power=SpiritPowerEntry("qiedao", {"chain_pct": 0}))
+    victim = _spirit_state(services, "失主")
+    combat._add_status(
+        victim,
+        _StatusEffect("狂锋", stacks=2, damage_dealt_pct=70, remaining_hits=1, active_from_round=3),
+    )
+
+    logs = combat._trigger_spirit_round_start(1, thief, victim, _StealRoller())
+    stolen = next(status for status in thief.statuses if status.name == "狂锋")
+    leftover = next(status for status in victim.statuses if status.name == "狂锋")
+    assert leftover.stacks == 1
+    assert stolen.stacks == 1
+    assert stolen.active_from_round == 3
+    assert stolen.remaining_hits == 1
+    assert stolen.damage_dealt_pct == 70
+    assert stolen.source is thief
+    assert any(log.text and "窃取 1 层「狂锋」" in log.text for log in logs)
+
+    thief.statuses = [status for status in thief.statuses if status.name != "狂锋"]
+    victim.statuses = [status for status in victim.statuses if status.name != "狂锋"]
+    combat._add_status(
+        thief,
+        _StatusEffect("创伤", stacks=5, damage_taken_pct=5, heal_received_pct=-8, is_debuff=True, source=victim),
+    )
+    logs = combat._trigger_spirit_round_start(2, thief, victim, _StealRoller())
+    transferred = next(status for status in victim.statuses if status.name == "创伤")
+    remaining = next(status for status in thief.statuses if status.name == "创伤")
+    assert remaining.stacks == 4
+    assert transferred.stacks == 1
+    assert transferred.heal_received_pct == -8
+    assert transferred.source is thief
+    assert any(log.text and "1 层「创伤」" in log.text for log in logs)
+
+
+def test_qiedao_cannot_steal_shield_or_uncleanseable_status(services) -> None:
+    combat = services.combat
+    thief = _spirit_state(services, "窃者", spirit_power=SpiritPowerEntry("qiedao", {"chain_pct": 0}))
+    victim = _spirit_state(services, "失主")
+    combat._add_status(victim, _StatusEffect("固本", shield=200, cleanseable=False))
+    combat._add_status(victim, _StatusEffect("追猎", agility_pct=10, cleanseable=False))
+    combat._add_status(thief, _StatusEffect("死兆", heal_received_pct=-40, is_debuff=True, cleanseable=False, source=victim))
+
+    logs = combat._trigger_spirit_round_start(1, thief, victim, _StealRoller())
+
+    assert combat._status_count(victim, "固本") == 1
+    assert combat._status_count(victim, "追猎") == 1
+    assert combat._status_count(thief, "死兆") == 1
+    assert combat._status_count(victim, "死兆") == 0
+    assert logs == []
+
+
+def test_qiedao_cannot_steal_pending_followup_strike(services) -> None:
+    combat = services.combat
+    thief = _spirit_state(services, "窃者", spirit_power=SpiritPowerEntry("qiedao", {"chain_pct": 0}))
+    victim = _spirit_state(services, "失主")
+    combat._add_status(victim, _StatusEffect("涤世·净化", bonus_damage=300000, remaining_hits=1))
+    combat._add_status(victim, _StatusEffect("春生·追击", bonus_damage=400, remaining_hits=1))
+    combat._add_status(victim, _StatusEffect("风刃", guarantee_crit=True, damage_dealt_pct=50, remaining_hits=1))
+    combat._add_status(victim, _StatusEffect("碎阙", damage_dealt_pct=40, remaining_hits=1))
+    combat._add_status(victim, _StatusEffect("压阵", damage_dealt_pct=50, remaining_hits=1))
+    combat._add_status(victim, _StatusEffect("灵势", atk_pct=8))
+
+    logs = combat._trigger_spirit_round_start(1, thief, victim, _StealRoller())
+
+    assert combat._status_count(victim, "涤世·净化") == 1
+    assert combat._status_count(victim, "春生·追击") == 1
+    assert combat._status_count(victim, "风刃") == 1
+    assert combat._status_count(victim, "碎阙") == 1
+    assert combat._status_count(thief, "涤世·净化") == 0
+    assert combat._status_count(thief, "春生·追击") == 0
+    assert combat._status_count(thief, "风刃") == 0
+    assert combat._status_count(thief, "碎阙") == 0
+    assert combat._status_count(victim, "压阵") == 0
+    assert combat._status_count(thief, "压阵") == 1
+    assert combat._status_count(victim, "灵势") == 1
+    assert combat._status_count(thief, "灵势") == 0
+    assert any(log.text and "窃取 1 层「压阵」" in log.text for log in logs)

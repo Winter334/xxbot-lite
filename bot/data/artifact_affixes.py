@@ -133,10 +133,10 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         "灼魂",
         "on_hit",
         ("burn_stacks", 2, 4),
-        ("burn_atk_pct", 25, 55),
+        ("burn_atk_pct", 2, 5),
         description_builder=lambda rolls: (
-            f"命中必定附加 {rolls['burn_stacks']} 层灼烧；有灼烧时每回合造成一次 {rolls['burn_atk_pct']}% 杀伐伤害并消耗 1 层；"
-            f"层数供联动与消耗（多次叠加时单层伤害取较高值）"
+            f"命中必定附加 {rolls['burn_stacks']} 层灼烧；每回合按当前层数连续灼烧，每层造成一次 {rolls['burn_atk_pct']}% 杀伐伤害；"
+            f"不消耗层数，无层数上限（多次叠加时单层伤害取较高值）"
         ),
     ),
     _define(
@@ -300,12 +300,12 @@ ARTIFACT_AFFIX_DEFINITIONS = (
     _define(
         "fenxin",
         "焚心",
-        "on_burn_apply",
+        "on_hit",
         ("atk_down_pct", 6, 12),
         ("agi_down_pct", 6, 12),
         ("max_stacks", 6, 8),
         description_builder=lambda rolls: (
-            f"每次给目标附加灼烧时，目标获得 1 层焚心，最多 {rolls['max_stacks']} 层；"
+            f"普攻命中已有灼烧的目标时，目标获得 1 层焚心，最多 {rolls['max_stacks']} 层；"
             f"每层使目标杀伐降低 {rolls['atk_down_pct']}%、身法降低 {rolls['agi_down_pct']}%"
         ),
     ),
@@ -323,12 +323,12 @@ ARTIFACT_AFFIX_DEFINITIONS = (
     _define(
         "fenjie",
         "焚劫",
-        "on_burn_apply",
+        "on_hit",
         ("vuln_pct", 6, 12),
         ("heal_down_pct", 8, 15),
         ("max_stacks", 6, 8),
         description_builder=lambda rolls: (
-            f"每次给目标附加灼烧时，目标获得 1 层焚劫，最多 {rolls['max_stacks']} 层；"
+            f"普攻命中已有灼烧的目标时，目标获得 1 层焚劫，最多 {rolls['max_stacks']} 层；"
             f"每层使目标承伤提高 {rolls['vuln_pct']}%、受疗降低 {rolls['heal_down_pct']}%"
         ),
     ),
@@ -340,7 +340,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("relight_stacks", 2, 4),
         ("relight_burn_pct", 20, 40),
         description_builder=lambda rolls: (
-            f"目标灼烧被消耗（自然烧尽或被引爆）时，{rolls['proc_pct']}% 概率重新点燃 "
+            f"目标灼烧层数归零时，{rolls['proc_pct']}% 概率重新点燃 "
             f"{rolls['relight_stacks']} 层灼烧（每层 {rolls['relight_burn_pct']}% 杀伐）"
         ),
     ),
@@ -394,22 +394,20 @@ ARTIFACT_AFFIX_DEFINITIONS = (
     _define(
         "leiyin",
         "雷引",
-        "on_crit",
-        ("next_damage_pct", 18, 28),
-        ("burst_pct", 8, 14),
+        "on_hit",
         description_builder=lambda rolls: (
-            f"暴击后蓄雷引，下一次出手伤害提高 {rolls['next_damage_pct']}%；连续暴击额外蓄势。"
-            f"雷引达到 3 层时触发小型雷劫，造成 {rolls['burst_pct']}% 最大生命真伤并附加 1 层雷殛。"
+            "命中后给目标附加 1 层雷殛；暴击时改为附加 3 层。"
         ),
     ),
     _define(
         "liekong",
         "裂空",
         "before_attack",
-        ("pierce_pct", 20, 35),
+        ("per_stacks", 4, 10),
+        ("pierce_pct", 5, 15),
         ("extra_damage_pct", 80, 140),
         description_builder=lambda rolls: (
-            f"攻击带雷殛目标时，每层雷殛额外无视 {rolls['pierce_pct']}% 减伤；"
+            f"攻击带雷殛目标时，每 {rolls['per_stacks']} 层雷殛额外无视 {rolls['pierce_pct']}% 减伤；"
             f"若本次攻击暴击，追加 {rolls['extra_damage_pct']}% 杀伐伤害。"
         ),
     ),
@@ -561,7 +559,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
 
 ARTIFACT_AFFIXES_BY_ID = {definition.affix_id: definition for definition in ARTIFACT_AFFIX_DEFINITIONS}
 
-INVERTED_ROLL_KEYS = frozenset({"threshold_pct"})
+INVERTED_ROLL_KEYS = frozenset({"threshold_pct", "per_stacks"})
 """越低越好的数值；指定满值时取下限。"""
 
 AFFIX_SPECIFY_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
