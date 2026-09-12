@@ -1438,6 +1438,32 @@ class CombatService:
                 shisheng = status.source is not None and status.source.snapshot.spirit_power is not None and status.source.snapshot.spirit_power.power_id == "shisheng"
                 source_hp_before = status.source.hp if shisheng else 0
                 fenmai_shred = 0
+                pending_cause: ActionLog | None = None
+                pending_damage = 0
+                pending_avoid: ActionLog | None = None
+                pending_avoid_kind: str | None = None
+                pending_avoid_count = 0
+
+                def flush_avoid() -> None:
+                    nonlocal pending_avoid, pending_avoid_kind, pending_avoid_count
+                    if pending_avoid is None:
+                        return
+                    if pending_avoid_count > 1:
+                        name = state.snapshot.name
+                        if pending_avoid_kind == "xuanjia":
+                            pending_avoid.text = f"{name} 的玄甲连挡 {pending_avoid_count} 次灼烧。"
+                        elif pending_avoid_kind == "fengdun":
+                            text = pending_avoid.text or ""
+                            if "叠至第" in text:
+                                suffix = text.split("叠至第", 1)[1]
+                                pending_avoid.text = f"{name} 以风遁连闪 {pending_avoid_count} 次灼烧，叠至第{suffix}"
+                            else:
+                                pending_avoid.text = f"{name} 以风遁连闪 {pending_avoid_count} 次灼烧。"
+                    logs.append(pending_avoid)
+                    pending_avoid = None
+                    pending_avoid_kind = None
+                    pending_avoid_count = 0
+
                 for _ in range(stacks):
                     if state.hp <= 0:
                         break
@@ -1447,7 +1473,6 @@ class CombatService:
                         f"{state.snapshot.name} 受 {stacks} 层灼烧侵蚀。",
                         actor_name=status.source.snapshot.name if status.source is not None else None,
                     )
-                    logs.append(cause)
                     nested: list[ActionLog] = []
                     actual_damage = self._apply_typed_damage(
                         state,
@@ -1458,17 +1483,57 @@ class CombatService:
                         round_no=round_no,
                         logs=nested,
                     )
+                    extra = [log for log in nested if not (log.text and "噬生吞回血气" in log.text)]
                     if actual_damage <= 0:
-                        logs.remove(cause)
-                        logs.extend(nested)
+                        pending_cause = None
+                        pending_damage = 0
+                        kind = None
+                        primary = extra[0] if extra else None
+                        rest = extra[1:] if extra else []
+                        text = primary.text if primary is not None else ""
+                        if text and "以风遁闪开本次伤害" in text:
+                            kind = "fengdun"
+                        elif text and "完全格挡本次伤害" in text:
+                            kind = "xuanjia"
+                        if kind is None or primary is None:
+                            flush_avoid()
+                            logs.extend(extra)
+                            continue
+                        if pending_avoid is not None and pending_avoid_kind != kind:
+                            flush_avoid()
+                        pending_avoid = primary
+                        pending_avoid_kind = kind
+                        pending_avoid_count = pending_avoid_count + 1 if pending_avoid_kind == kind else 1
+                        if rest:
+                            flush_avoid()
+                            logs.extend(rest)
                         continue
-                    logs.extend(
-                        log for log in nested if not (log.text and "噬生吞回血气" in log.text)
-                    )
+                    flush_avoid()
+                    if pending_cause is None:
+                        pending_cause = cause
+                        pending_damage = cause.damage
+                        logs.append(cause)
+                    else:
+                        pending_damage += cause.damage
+                        pending_cause.damage = pending_damage
+                        pending_cause.target_hp_after = cause.target_hp_after
+                        pending_cause.shield_after = cause.shield_after
+                        if pending_cause.text:
+                            pending_cause.text = self._append_hp_suffix(
+                                self._strip_hp_suffix(pending_cause.text),
+                                pending_damage,
+                                pending_cause.target_hp_after,
+                                pending_cause.shield_after,
+                            )
+                    if extra:
+                        pending_cause = None
+                        pending_damage = 0
+                        logs.extend(extra)
                     if fenmai:
                         before_max = state.get_max_hp()
                         self._modify_max_hp(state, -actual_damage, also_heal=False)
                         fenmai_shred += before_max - state.get_max_hp()
+                flush_avoid()
                 if shisheng and status.source is not None:
                     healed = status.source.hp - source_hp_before
                     if healed > 0:

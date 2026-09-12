@@ -438,9 +438,9 @@ def test_zhuohun_burn_uses_attacker_atk_per_stack(services) -> None:
     )
 
     burns = [log for log in battle.logs if log.text and "层灼烧侵蚀" in log.text]
-    # 第一回合命中后挂 3 层；回合结束连烧 3 下，每下 100 × 10% = 10，不扣层
-    assert len(burns) >= 3
-    assert all(log.damage == 10 for log in burns[:3])
+    # 第一回合命中后挂 3 层；回合结束连烧 3 下，每下 100 × 10% = 10，不扣层，战报收成一行
+    assert burns
+    assert burns[0].damage == 30
     assert "余血" in burns[0].text
 
 

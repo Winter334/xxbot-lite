@@ -80,7 +80,9 @@ def test_burn_ticks_once_per_stack_without_consuming_and_cleanses_one(services) 
     assert burns[0].stacks == 7 and burns[0].duration is None
     assert burns[0].burn_pct == 30 and burns[0].source is stronger_source
     round_logs = combat._trigger_round_end(1, source, target, CombatRoller([]))
-    assert len([log for log in round_logs if log.text and "层灼烧侵蚀" in log.text]) == 7
+    burn_logs = [log for log in round_logs if log.text and "层灼烧侵蚀" in log.text]
+    assert len(burn_logs) == 1
+    assert burn_logs[0].damage == 210
     assert combat._burn_stacks(target) == 7
     assert combat._remove_one_debuff(target) is not None
     assert combat._burn_stacks(target) == 6
@@ -690,7 +692,8 @@ def test_fenmai_applies_burn_and_shreds_max_hp_by_burn_damage(services) -> None:
     round_logs = combat._trigger_round_end(1, actor, target, CombatRoller([]))
     burn_logs = [log for log in round_logs if log.text and "层灼烧侵蚀" in log.text]
     fenmai_logs = [log for log in round_logs if log.text and "焚脉" in log.text and "上限" in log.text]
-    assert len(burn_logs) == 2
+    assert len(burn_logs) == 1
+    assert burn_logs[0].damage == 20
     assert target.get_max_hp() < before_max
     assert len(fenmai_logs) == 1
 
@@ -714,13 +717,71 @@ def test_burn_batch_hides_zero_damage_and_merges_followups(services) -> None:
     combat._apply_burn_to_target(target, actor, stacks=3, per_stack_pct=10, round_no=1, logs=[])
     round_logs = combat._trigger_round_end(1, actor, target, CombatRoller([]))
     texts = [log.text for log in round_logs if log.text]
-    burn_logs = [text for text in texts if "层灼烧侵蚀" in text]
+    burn_logs = [log for log in round_logs if log.text and "层灼烧侵蚀" in log.text]
     block_logs = [text for text in texts if "完全格挡" in text]
     shisheng_logs = [text for text in texts if "噬生吞回血气" in text]
     assert block_logs == ["木人 的玄甲骤然张开，完全格挡本次伤害。"]
-    assert len(burn_logs) == 2
-    assert all("造成" in text and "余血" in text for text in burn_logs)
+    assert len(burn_logs) == 1
+    assert burn_logs[0].damage == 20
+    assert all(log.text and "造成" in log.text and "余血" in log.text for log in burn_logs)
     assert len(shisheng_logs) == 1
+
+
+def test_burn_batch_merges_consecutive_xuanjia_blocks(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(services, "焚者", atk=100)
+    target = _spirit_state(
+        services,
+        "木人",
+        defense=200,
+        spirit_power=SpiritPowerEntry("xuanjia", {"def_pct": 10, "proc_pct": 100}),
+    )
+    combat._apply_burn_to_target(target, actor, stacks=3, per_stack_pct=10, round_no=1, logs=[])
+    round_logs = combat._trigger_round_end(1, actor, target, CombatRoller([]))
+    texts = [log.text for log in round_logs if log.text]
+    assert texts.count("木人 的玄甲连挡 3 次灼烧。") == 1
+    assert not any("完全格挡本次伤害" in text for text in texts)
+    assert not any("层灼烧侵蚀" in text for text in texts)
+
+
+def test_burn_batch_merges_consecutive_fengdun_dodges(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(services, "焚者", atk=100, agility=1)
+    target = _spirit_state(
+        services,
+        "木人",
+        defense=200,
+        agility=1000,
+        spirit_power=SpiritPowerEntry("fengdun", {"per_wind_pct": 10, "agi_boost_pct": 10}),
+    )
+    target.roller = CombatRoller([0.0, 0.0, 0.0])
+    combat._apply_burn_to_target(target, actor, stacks=3, per_stack_pct=10, round_no=1, logs=[])
+    round_logs = combat._trigger_round_end(1, actor, target, CombatRoller([]))
+    texts = [log.text for log in round_logs if log.text]
+    dodge_logs = [text for text in texts if "风遁连闪" in text or "风遁闪开本次伤害" in text]
+    assert dodge_logs == ["木人 以风遁连闪 3 次灼烧，叠至第 3 层，攻势与身法同涨。"]
+    assert not any("层灼烧侵蚀" in text for text in texts)
+
+
+def test_burn_batch_splits_when_huichun_interrupts(services) -> None:
+    combat = services.combat
+    actor = _spirit_state(services, "焚者", atk=100)
+    target = _spirit_state(
+        services,
+        "青山",
+        defense=100,
+        affixes=(ArtifactAffixEntry(1, "huichun", {"heal_pct": 50, "shengxi_stacks": 3}),),
+    )
+    target.hp = 530
+    combat._apply_burn_to_target(target, actor, stacks=4, per_stack_pct=20, round_no=1, logs=[])
+    round_logs = combat._trigger_round_end(1, actor, target, CombatRoller([]))
+    texts = [log.text or "" for log in round_logs]
+    burn_logs = [log for log in round_logs if log.text and "层灼烧侵蚀" in log.text]
+    assert any("回春发动" in text for text in texts)
+    assert any("余势未尽" in text for text in texts)
+    assert len(burn_logs) == 2
+    assert burn_logs[0].damage == 30
+    assert burn_logs[1].damage == 40
 
 
 def test_shiyan_explodes_once_per_cost_and_keeps_remainder(services) -> None:
