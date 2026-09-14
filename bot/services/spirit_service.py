@@ -172,7 +172,8 @@ def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int | float])
             for key, low, high in ranges:
                 if key in {"hp_pct", "heal_down_pct"} and key in clamped:
                     clamped[key] = max(low, min(clamped[key], high))
-    elif power_id in {"xuanjia", "jinmai", "zhuifeng", "leifa", "wanzhou", "qiedao", "shisheng", "xuekuang"}:
+    elif power_id in {"xuanjia", "jinmai", "zhuifeng", "leifa", "wanzhou", "qiedao", "shisheng", "xuekuang", "niepan", "chunsheng"}:
+        # 涅槃/春生效果调整后加入：按当前区间重建，缺失 key 补下限、废弃 key（revive_shield_pct / heal_shengxi_bonus）自动移除
         definition = get_spirit_power_definition(power_id)
         ranges = definition.roll_ranges_by_tier.get(tier)
         if ranges is not None:
