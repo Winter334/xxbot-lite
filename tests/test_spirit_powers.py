@@ -113,11 +113,61 @@ def test_chunsheng_increases_healing_received(services) -> None:
     state = _spirit_state(
         services,
         "春生主",
-        spirit_power=SpiritPowerEntry("chunsheng", {"heal_received_pct": 50, "convert_pct": 0, "heal_shengxi_bonus": 0}),
+        spirit_power=SpiritPowerEntry("chunsheng", {"heal_received_pct": 50, "convert_pct": 0}),
     )
     state.hp = 500
 
     assert services.combat._heal(state, 20) == 300
+
+
+def test_niepan_stacks_shengxi_on_heal(services) -> None:
+    combat = services.combat
+    state = _spirit_state(
+        services,
+        "涅槃主",
+        spirit_power=SpiritPowerEntry(
+            "niepan", {"cost_stacks": 6, "revive_hp_pct": 50, "heal_shengxi_bonus": 2}
+        ),
+    )
+    state.hp = 500
+
+    assert combat._heal(state, 20) == 200
+    assert combat._status_count(state, "生息") == 2
+
+
+def test_chunsheng_heal_no_longer_stacks_shengxi(services) -> None:
+    combat = services.combat
+    state = _spirit_state(
+        services,
+        "春生主",
+        spirit_power=SpiritPowerEntry("chunsheng", {"heal_received_pct": 0, "convert_pct": 0}),
+    )
+    state.hp = 500
+
+    assert combat._heal(state, 20) == 200
+    assert combat._status_count(state, "生息") == 0
+
+
+def test_niepan_revive_no_longer_grants_shield(services) -> None:
+    combat = services.combat
+    state = _spirit_state(
+        services,
+        "涅槃主",
+        spirit_power=SpiritPowerEntry(
+            "niepan",
+            {"cost_stacks": 2, "revive_hp_pct": 50, "per_revive_atk_pct": 10, "per_revive_speed_pct": 5, "heal_shengxi_bonus": 1},
+        ),
+    )
+    state.hp = 0
+    combat._add_status(state, _StatusEffect("生息"))
+    combat._add_status(state, _StatusEffect("生息"))
+
+    logs = combat._trigger_spirit_revive(1, state)
+
+    assert state.hp > 0
+    assert combat._status_count(state, "生息") == 0
+    assert combat._status_count(state, "涅槃·余烬护盾") == 0
+    assert not any(log.text and "护盾" in log.text for log in logs)
 
 
 def test_luejie_uses_debuff_stacks_for_bonus_and_followup(services) -> None:
@@ -324,7 +374,7 @@ def test_dishi_counts_only_explicit_stacks_and_keeps_uncleanseable(services) -> 
 def test_niepan_revives_after_huanbu_dodge_counter_in_run_battle(services) -> None:
     niepan = SpiritPowerEntry(
         "niepan",
-        {"cost_stacks": 1, "revive_hp_pct": 50, "per_revive_atk_pct": 0, "per_revive_speed_pct": 0, "revive_shield_pct": 0},
+        {"cost_stacks": 1, "revive_hp_pct": 50, "per_revive_atk_pct": 0, "per_revive_speed_pct": 0},
     )
     attacker = services.combat.create_combatant(
         "涅槃者",
@@ -369,7 +419,7 @@ def test_niepan_revives_after_jueming_at_round_end(services, monkeypatch) -> Non
         1,
         spirit_power=SpiritPowerEntry(
             "niepan",
-            {"cost_stacks": 1, "revive_hp_pct": 50, "per_revive_atk_pct": 0, "per_revive_speed_pct": 0, "revive_shield_pct": 0},
+            {"cost_stacks": 1, "revive_hp_pct": 50, "per_revive_atk_pct": 0, "per_revive_speed_pct": 0},
         ),
     )
     executioner = combat.create_combatant(
@@ -414,7 +464,7 @@ def test_niepan_revives_after_chunsheng_followup_before_battle_result(services, 
         1,
         spirit_power=SpiritPowerEntry(
             "niepan",
-            {"cost_stacks": 1, "revive_hp_pct": 50, "per_revive_atk_pct": 0, "per_revive_speed_pct": 0, "revive_shield_pct": 0},
+            {"cost_stacks": 1, "revive_hp_pct": 50, "per_revive_atk_pct": 0, "per_revive_speed_pct": 0},
         ),
     )
     combat.max_rounds = 1

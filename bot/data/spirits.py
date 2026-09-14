@@ -203,17 +203,17 @@ SPIRIT_POWER_DEFINITIONS = (
         "niepan",
         "涅槃",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("revive_hp_pct", 28, 36), ("cost_stacks", 12, 12), ("per_revive_atk_pct", 6, 10), ("per_revive_speed_pct", 5, 9), ("revive_shield_pct", 15, 20)),
-            mid=(("revive_hp_pct", 35, 44), ("cost_stacks", 10, 10), ("per_revive_atk_pct", 8, 13), ("per_revive_speed_pct", 7, 11), ("revive_shield_pct", 20, 26)),
-            high=(("revive_hp_pct", 44, 55), ("cost_stacks", 8, 8), ("per_revive_atk_pct", 12, 17), ("per_revive_speed_pct", 10, 15), ("revive_shield_pct", 26, 32)),
-            peak=(("revive_hp_pct", 55, 66), ("cost_stacks", 7, 7), ("per_revive_atk_pct", 15, 21), ("per_revive_speed_pct", 12, 18), ("revive_shield_pct", 32, 40)),
-            supreme=(("revive_hp_pct", 66, 80), ("cost_stacks", 6, 6), ("per_revive_atk_pct", 19, 26), ("per_revive_speed_pct", 16, 22), ("revive_shield_pct", 40, 50)),
+            low=(("revive_hp_pct", 25, 30), ("cost_stacks", 12, 12), ("per_revive_atk_pct", 6, 10), ("per_revive_speed_pct", 5, 9), ("heal_shengxi_bonus", 1, 1)),
+            mid=(("revive_hp_pct", 30, 35), ("cost_stacks", 10, 10), ("per_revive_atk_pct", 8, 13), ("per_revive_speed_pct", 7, 11), ("heal_shengxi_bonus", 1, 1)),
+            high=(("revive_hp_pct", 35, 40), ("cost_stacks", 8, 8), ("per_revive_atk_pct", 12, 17), ("per_revive_speed_pct", 10, 15), ("heal_shengxi_bonus", 1, 2)),
+            peak=(("revive_hp_pct", 40, 45), ("cost_stacks", 7, 7), ("per_revive_atk_pct", 15, 21), ("per_revive_speed_pct", 12, 18), ("heal_shengxi_bonus", 2, 3)),
+            supreme=(("revive_hp_pct", 45, 50), ("cost_stacks", 6, 6), ("per_revive_atk_pct", 19, 26), ("per_revive_speed_pct", 16, 22), ("heal_shengxi_bonus", 2, 3)),
         ),
         description_builder=lambda rolls: (
             f"濒死时若生息层数 ≥ {rolls.get('cost_stacks', 12)}，消耗 {rolls.get('cost_stacks', 12)} 层生息复活，"
             f"回复 {rolls.get('revive_hp_pct', rolls.get('heal_pct', 20))}% 最大生命；每次复活后永久提高 "
             f"{rolls.get('per_revive_atk_pct', 5)}% 杀伐与 {rolls.get('per_revive_speed_pct', 4)}% 身法（可叠加）；"
-            f"并获得最大生命 {rolls.get('revive_shield_pct', 0)}% 的余烬护盾。"
+            f"每次受到治疗时额外叠加 {rolls.get('heal_shengxi_bonus', 1)} 层生息（不计入护元上限）。"
         ),
     ),
     _define_power(
@@ -369,15 +369,14 @@ SPIRIT_POWER_DEFINITIONS = (
         "chunsheng",
         "春生",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("heal_received_pct", 25, 40), ("convert_pct", 30, 45), ("heal_shengxi_bonus", 1, 1)),
-            mid=(("heal_received_pct", 38, 55), ("convert_pct", 42, 58), ("heal_shengxi_bonus", 1, 1)),
-            high=(("heal_received_pct", 52, 70), ("convert_pct", 55, 72), ("heal_shengxi_bonus", 1, 2)),
-            peak=(("heal_received_pct", 65, 85), ("convert_pct", 68, 88), ("heal_shengxi_bonus", 1, 2)),
-            supreme=(("heal_received_pct", 80, 100), ("convert_pct", 80, 105), ("heal_shengxi_bonus", 2, 2)),
+            low=(("heal_received_pct", 25, 40), ("convert_pct", 30, 45)),
+            mid=(("heal_received_pct", 38, 55), ("convert_pct", 42, 58)),
+            high=(("heal_received_pct", 52, 70), ("convert_pct", 55, 72)),
+            peak=(("heal_received_pct", 65, 85), ("convert_pct", 68, 88)),
+            supreme=(("heal_received_pct", 80, 100), ("convert_pct", 80, 105)),
         ),
         description_builder=lambda rolls: (
-            f"自身受到的治疗提高 {rolls['heal_received_pct']}%；治疗后按治疗量的 {rolls['convert_pct']}% 转化为下次攻击的固定追击伤害；"
-            f"每次受到治疗时额外叠加 {rolls['heal_shengxi_bonus']} 层生息（不计入护元上限）。"
+            f"自身受到的治疗提高 {rolls['heal_received_pct']}%；治疗后按治疗量的 {rolls['convert_pct']}% 转化为下次攻击的固定追击伤害。"
         ),
     ),
     _define_power(

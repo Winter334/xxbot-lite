@@ -1894,14 +1894,7 @@ class CombatService:
         speed_bonus = max(0, int(power.rolls.get("per_revive_speed_pct", 0)))
         if atk_bonus > 0 or speed_bonus > 0:
             self._add_status(state, _StatusEffect("涅槃·余烬", atk_pct=atk_bonus, agility_pct=speed_bonus))
-        shield_pct = max(0, int(power.rolls.get("revive_shield_pct", 0)))
-        shield_amount = 0
-        if shield_pct > 0:
-            shield_amount = max(1, state.get_max_hp() * shield_pct // 100)
-            self._add_status(state, _StatusEffect("涅槃·余烬护盾", shield=shield_amount))
         base_msg = f"{state.snapshot.name} 涅槃再起（第 {state.niepan_revive_count} 次），消耗 {cost} 层生息回复 {format_big_number(heal_amount)} 点生命，余血 {format_big_number(state.hp)}；杀伐 +{atk_bonus}%、身法 +{speed_bonus}%（持续生效）。"
-        if shield_amount > 0:
-            base_msg += f"凝起余烬护盾 {format_big_number(shield_amount)}。"
         return [
             self._hp_change_log(
                 round_no,
@@ -2900,16 +2893,17 @@ class CombatService:
         if healed <= 0:
             return
         power = state.snapshot.spirit_power
-        # 春生：固定追打 + 治疗时额外叠生息
+        # 春生：固定追打
         if power is not None and power.power_id == "chunsheng":
             convert_pct = power.rolls.get("convert_pct", 0)
             if convert_pct > 0:
                 bonus = max(1, int(healed * convert_pct / 100))
                 # 用 _StatusEffect.bonus_damage 携带固定追打值（下次攻击命中后以 _CHUNSHENG_BONUS_PROFILE 结算）
                 self._add_status(state, _StatusEffect("春生·追击", bonus_damage=bonus, remaining_hits=1))
+        # 涅槃：受到治疗时额外叠生息（不计入护元上限）
+        if power is not None and power.power_id == "niepan":
             shengxi_bonus = power.rolls.get("heal_shengxi_bonus", 0)
             for _ in range(shengxi_bonus):
-                # 春生自带的额外生息层数（不计入护元上限）
                 self._add_status(state, _StatusEffect("生息"))
         # 护元（huyuan）：自身受到治疗时按 affix index 独立叠层（不超过 per_battle_cap）
         for index, entry in enumerate(state.snapshot.affixes):
