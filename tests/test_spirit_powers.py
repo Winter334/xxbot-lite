@@ -530,7 +530,7 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
     ("power_id", "rolls", "expected"),
     [
         ("xuanjia", {"proc_pct": 60, "reduce_pct": 100}, {"def_pct": 100, "proc_pct": 55, "heal_down_pct": 50}),
-        ("jinmai", {"proc_pct": 85, "per_disrupt_pct": 10, "seal_stacks": 3}, {"proc_pct": 35, "per_disrupt_pct": 5}),
+        ("jinmai", {"proc_pct": 85, "per_disrupt_pct": 10, "seal_stacks": 3}, {"proc_pct": 45, "per_disrupt_pct": 5}),
         ("zhuifeng", {"r1_crit_bonus": 100, "r1_agility_pct": 50, "r1_damage_pct": 480}, {"r1_crit_bonus": 50, "r1_agility_pct": 25}),
         ("leifa", {"mark_crit_pct": 15, "mark_crit_damage_pct": 20, "thunder_pct": 450}, {"cost_stacks": 3, "strikes_min": 3, "strikes_max": 6, "burst_pct": 60}),
         (
@@ -585,7 +585,7 @@ def test_legacy_proving_ground_spirits_use_current_rolls() -> None:
     assert xuanjia.spirit_power is not None
     assert xuanjia.spirit_power.rolls == {"def_pct": 100, "proc_pct": 55, "heal_down_pct": 50}
     assert jinmai.spirit_power is not None
-    assert jinmai.spirit_power.rolls == {"proc_pct": 35, "per_disrupt_pct": 5}
+    assert jinmai.spirit_power.rolls == {"proc_pct": 45, "per_disrupt_pct": 5}
 
 
 def test_proving_ground_spirit_tier_changes_normalize_immediately(services) -> None:

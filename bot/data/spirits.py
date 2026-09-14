@@ -222,9 +222,9 @@ SPIRIT_POWER_DEFINITIONS = (
         roll_ranges_by_tier=_tier_rolls(
             low=(("proc_pct", 0, 5), ("per_disrupt_pct", 1, 1)),
             mid=(("proc_pct", 5, 10), ("per_disrupt_pct", 2, 2)),
-            high=(("proc_pct", 10, 15), ("per_disrupt_pct", 3, 3)),
-            peak=(("proc_pct", 15, 25), ("per_disrupt_pct", 4, 4)),
-            supreme=(("proc_pct", 25, 35), ("per_disrupt_pct", 5, 5)),
+            high=(("proc_pct", 10, 25), ("per_disrupt_pct", 3, 3)),
+            peak=(("proc_pct", 25, 35), ("per_disrupt_pct", 4, 4)),
+            supreme=(("proc_pct", 35, 45), ("per_disrupt_pct", 5, 5)),
         ),
         description_builder=lambda rolls: (
             f"命中时扰乱经络：以 {rolls['proc_pct']}% 基础概率封禁下一次行动，成功时令对方获得 1 层破封灵势"
