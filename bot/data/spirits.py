@@ -185,7 +185,7 @@ SPIRIT_POWER_DEFINITIONS = (
             peak=(("reflect_pct", 55, 70),),
             supreme=(("reflect_pct", 70, 90),),
         ),
-        description_builder=lambda rolls: f"受击后，按本次实际承伤的 {rolls['reflect_pct']}% 反弹伤害；有守势或减伤时反伤比例额外 +20 个百分点。",
+        description_builder=lambda rolls: f"受击后，按敌方本次出手全部普攻类伤害（含破空、天威等追击）合计的 {rolls['reflect_pct']}% 反弹一击。",
     ),
     _define_power(
         "guifeng",
