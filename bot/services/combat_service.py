@@ -150,6 +150,7 @@ class _CombatState:
     xuekuang_base_max_hp: int = 0
     xuekuang_layers: int = 0
     xuekuang_loss_bank: int = 0
+    action_attack_damage_dealt: int = 0  # 本次行动普攻类伤害合计（主手 + 破空/天威/裂空/戮厄/碎阙等追击），反棘反弹基数
 
     def get_max_hp(self) -> int:
         """获取当前最大生命（优先使用 effective_max_hp，未初始化时回落 snapshot）。"""
@@ -332,6 +333,7 @@ class CombatService:
         scene: set[str],
     ) -> list[ActionLog]:
         logs: list[ActionLog] = []
+        actor.action_attack_damage_dealt = 0
         used_attack_bonuses = [
             status
             for status in actor.statuses
@@ -415,6 +417,7 @@ class CombatService:
             can_fengdun_dodge=False,
         )
         target.hits_taken += 1
+        actor.action_attack_damage_dealt += actual_damage
         self._consume_hit_reduction_statuses(target)
         logs.extend(nested_hit_logs)
         logs.extend(self._trigger_on_hit(round_no, actor, target, actual_damage, roller, scene))
@@ -469,8 +472,37 @@ class CombatService:
                 scene=scene,
                 cause=cause,
             )
+            actor.action_attack_damage_dealt += followup_actual
             if followup_actual > 0 or any(log is not cause for log in nested):
                 logs.extend(nested)
+
+        # 反棘：行动收尾时按本次普攻类伤害合计反弹一次（元素/特殊/反制伤害不参与）
+        target_power = target.snapshot.spirit_power
+        if (
+            target_power is not None
+            and target_power.power_id == "fanji"
+            and actor.hp > 0
+            and actor.action_attack_damage_dealt > 0
+        ):
+            reflect_damage = max(1, actor.action_attack_damage_dealt * target_power.rolls["reflect_pct"] // 100)
+            reflect_damage = min(actor.hp, reflect_damage)
+            reflect_nested: list[ActionLog] = []
+            reflect_cause = self._effect_log(
+                round_no,
+                actor,
+                f"{target.snapshot.name} 的反棘回卷而出。",
+                actor_name=target.snapshot.name,
+            )
+            reflect_nested.append(reflect_cause)
+            self._apply_damage(
+                actor,
+                reflect_damage,
+                actor=target,
+                round_no=round_no,
+                logs=reflect_nested,
+                cause=reflect_cause,
+            )
+            logs.extend(reflect_nested)
 
         # 春生·追击 + 涤世·净化：命中后按 bonus_damage 走 _CHUNSHENG_BONUS_PROFILE 施加固定追打伤害（不吃增伤、吃承伤+减伤+护盾）
         bonus_followups = [s for s in actor.statuses if s.name in ("春生·追击", "涤世·净化") and s.is_active() and s.bonus_damage > 0]
@@ -1073,9 +1105,10 @@ class CombatService:
                         wounds = self._add_wound(target, actor, _roll(entry.rolls, "wound_stacks", 2))
                         cause = self._effect_log(round_no, target, f"{actor.snapshot.name} 天威压顶，并刻下 {wounds} 层创伤。", actor_name=actor.snapshot.name)
                         nested.append(cause)
-                        self._apply_typed_damage(
+                        burst_actual = self._apply_typed_damage(
                             target, burst_damage, _NORMAL_DAMAGE_PROFILE, actor=actor, round_no=round_no, logs=nested, cause=cause
                         )
+                        actor.action_attack_damage_dealt += burst_actual
                         logs.extend(nested)
                 case "pokong":
                     if target.hp <= 0:
@@ -1095,6 +1128,7 @@ class CombatService:
                     extra_actual = self._apply_typed_damage(
                         target, extra_damage, _NORMAL_DAMAGE_PROFILE, actor=actor, round_no=round_no, logs=nested, cause=cause
                     )
+                    actor.action_attack_damage_dealt += extra_actual
                     stripped = 0
                     if _roll(entry.rolls, "guard_bonus_pct", 0) > 0:
                         removed = self._remove_one_positive_status(target)
@@ -1127,6 +1161,7 @@ class CombatService:
                         logs=nested,
                         cause=cause,
                     )
+                    actor.action_attack_damage_dealt += extra_actual
                     if extra_actual > 0 or any(log is not cause for log in nested):
                         logs.extend(nested)
         # 器灵普通攻击暴击钩子（追风等）
@@ -1769,6 +1804,7 @@ class CombatService:
                 scene=scene,
                 cause=cause,
             )
+            actor.action_attack_damage_dealt += extra_damage
             stripped = 0
             for _ in range(stacks):
                 if self._remove_one_positive_status(target) is not None:
@@ -1806,28 +1842,6 @@ class CombatService:
             return []
 
         logs: list[ActionLog] = []
-        if power.power_id == "fanji" and source == _DamageSource.ATTACK and actor.hp > 0:
-            reflect_pct = power.rolls["reflect_pct"] + (20 if had_damage_reduction else 0)
-            reflect_damage = max(1, actual_damage * reflect_pct // 100)
-            reflect_damage = min(actor.hp, reflect_damage)
-            nested: list[ActionLog] = []
-            cause = self._effect_log(
-                round_no,
-                actor,
-                f"{target.snapshot.name} 的反棘回卷而出。",
-                actor_name=target.snapshot.name,
-            )
-            nested.append(cause)
-            reflect_damage = self._apply_damage(
-                actor,
-                reflect_damage,
-                actor=target,
-                round_no=round_no,
-                logs=nested,
-                cause=cause,
-            )
-            logs.extend(nested)
-
         if power.power_id == "guifeng" and source == _DamageSource.ATTACK and target.hp > 0 and actor.hp > 0 and target.counter_used_round != round_no:
             proc_pct = power.rolls["proc_pct"] + (15 if target.hp * actor.get_max_hp() < actor.hp * target.get_max_hp() else 0)
             if roller.random() <= (proc_pct / 100):

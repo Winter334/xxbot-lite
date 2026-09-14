@@ -1475,3 +1475,77 @@ def test_qiedao_cannot_steal_pending_followup_strike(services) -> None:
     assert combat._status_count(victim, "灵势") == 1
     assert combat._status_count(thief, "灵势") == 0
     assert any(log.text and "窃取 1 层「压阵」" in log.text for log in logs)
+
+
+def test_fanji_reflects_attack_pipeline_total(services) -> None:
+    """反棘：主手 + 破空追击（普攻类）合计后按比例一次反弹。"""
+    combat = services.combat
+    fanji = SpiritPowerEntry("fanji", {"reflect_pct": 50})
+    actor = _spirit_state(
+        services,
+        "来犯者",
+        atk=1000,
+        defense=10000,
+        agility=100,
+        affixes=(ArtifactAffixEntry(1, "pokong", {"damage_ratio_pct": 100, "guard_bonus_pct": 0}),),
+    )
+    target = _spirit_state(services, "棘主", atk=100, defense=100000, agility=100, spirit_power=fanji)
+
+    logs = combat._resolve_action(1, actor, target, CombatRoller([0.99, 0.0]), set())
+
+    # 主手：暴击 1000 × (1.5 + 0.5×1000/101000) = 1504；破空追击：1000×100% = 1000
+    assert actor.action_attack_damage_dealt == 1504 + 1000
+    assert target.hp == target.get_max_hp() - 2504
+    # 反弹一次，50%：2504 // 2 = 1252
+    assert actor.hp == actor.get_max_hp() - 1252
+    assert sum(1 for log in logs if log.text and "反棘回卷而出" in log.text) == 1
+
+
+def test_fanji_ignores_elemental_burst_damage(services) -> None:
+    """反棘：蚀焰引爆（元素·火）不进入反弹基数。"""
+    combat = services.combat
+    shiyan = SpiritPowerEntry("shiyan", {"cost_stacks": 2, "per_burn_pct": 50, "wound_stacks": 0})
+    fanji = SpiritPowerEntry("fanji", {"reflect_pct": 50})
+    actor = _spirit_state(services, "焚者", atk=1000, defense=10000, agility=100, spirit_power=shiyan)
+    target = _spirit_state(services, "棘主", atk=100, defense=100000, agility=100, spirit_power=fanji)
+    combat._apply_burn_to_target(target, actor, stacks=2, per_stack_pct=20, round_no=1, logs=[])
+
+    logs = combat._resolve_action(1, actor, target, CombatRoller([0.99, 0.0]), set())
+
+    # 主手暴击 1504；蚀焰引爆 2 层 × 50% 杀伐 = 1000，属元素伤害不计入反弹基数
+    assert actor.action_attack_damage_dealt == 1504
+    assert target.hp == target.get_max_hp() - 1504 - 1000
+    assert actor.hp == actor.get_max_hp() - (1504 * 50 // 100)
+    assert sum(1 for log in logs if log.text and "反棘回卷而出" in log.text) == 1
+
+
+def test_fanji_reflect_does_not_retrigger_and_fires_posthumously(services) -> None:
+    """双方都持反棘时反弹不再触发反弹；棘主被击杀后仍完成死亡反弹。"""
+    combat = services.combat
+    actor_fanji = SpiritPowerEntry("fanji", {"reflect_pct": 50})
+    target_fanji = SpiritPowerEntry("fanji", {"reflect_pct": 50})
+    actor = _spirit_state(services, "来犯者", atk=10000, defense=100, agility=100, spirit_power=actor_fanji)
+    target = _spirit_state(services, "棘主", atk=100, defense=100, agility=100, spirit_power=target_fanji)
+
+    combat._resolve_action(1, actor, target, CombatRoller([0.99, 0.0]), set())
+
+    # 主手暴击远超棘主生命，棘主阵亡：实际伤害以剩余生命为限
+    assert target.hp == 0
+    main_actual = 1000
+    # 死者仍反弹，且反弹 packet 不进入任何基数、不再被再次反弹
+    assert actor.hp == actor.get_max_hp() - (main_actual * 50 // 100)
+    assert target.hp == 0
+
+
+def test_fanji_no_reflect_on_dodge(services) -> None:
+    """攻击被闪避时无普攻类伤害，不反弹。"""
+    combat = services.combat
+    fanji = SpiritPowerEntry("fanji", {"reflect_pct": 90})
+    actor = _spirit_state(services, "来犯者", atk=1000, defense=10000, agility=100)
+    target = _spirit_state(services, "棘主", atk=100, defense=100000, agility=100, spirit_power=fanji)
+
+    combat._resolve_action(1, actor, target, CombatRoller([0.0]), set())
+
+    assert actor.action_attack_damage_dealt == 0
+    assert actor.hp == actor.get_max_hp()
+    assert target.hp == target.get_max_hp()
