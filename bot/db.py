@@ -128,6 +128,9 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
                 "spirit_pending_json" not in artifact_columns,
                 "spirit_refining_until" not in artifact_columns,
                 "spirit_refining_mode" not in artifact_columns,
+                "spirit_furnace_started_at" not in artifact_columns,
+                "spirit_ops" not in artifact_columns,
+                "spirit_choices_json" not in artifact_columns,
                 # 证道战场
                 "pg_boss_kills_json" not in character_columns,
                 "pg_total_score" not in character_columns,
@@ -195,6 +198,9 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             needs_spirit_pending,
             needs_spirit_refining_until,
             needs_spirit_refining_mode,
+            needs_spirit_furnace_started_at,
+            needs_spirit_ops,
+            needs_spirit_choices_json,
             # 证道战场
             needs_pg_boss_kills_json,
             needs_pg_total_score,
@@ -307,6 +313,12 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_refining_until DATETIME"))
         if needs_spirit_refining_mode:
             await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_refining_mode VARCHAR(16)"))
+        if needs_spirit_furnace_started_at:
+            await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_furnace_started_at DATETIME"))
+        if needs_spirit_ops:
+            await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_ops INTEGER NOT NULL DEFAULT 0"))
+        if needs_spirit_choices_json:
+            await connection.execute(text("ALTER TABLE artifacts ADD COLUMN spirit_choices_json TEXT NOT NULL DEFAULT '[]'"))
         # 证道战场
         if needs_pg_boss_kills_json:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN pg_boss_kills_json TEXT NOT NULL DEFAULT '[]'"))

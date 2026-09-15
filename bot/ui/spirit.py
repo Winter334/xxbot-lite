@@ -3,7 +3,17 @@ from __future__ import annotations
 import discord
 
 from bot.services.character_service import CharacterSnapshot
-from bot.services.spirit_service import SpiritPanelState, SpiritView
+from bot.services.spirit_service import (
+    SPIRIT_DRAW_MAX_CHOICES,
+    SPIRIT_DRAW_SOUL_COST,
+    SPIRIT_FURNACE_MINUTES,
+    SPIRIT_FURNACE_OPS_CAP,
+    SPIRIT_SPECIFY_LINGSHI_COST,
+    SPIRIT_SPECIFY_LUCK_COST,
+    SPIRIT_SPECIFY_SOUL_COST,
+    SpiritPanelState,
+    SpiritView,
+)
 from bot.utils.formatters import format_big_number
 
 
@@ -30,13 +40,29 @@ def build_spirit_panel_embed(
         return embed
 
     embed.add_field(name="灵炉动静", value=panel_state.action_text, inline=False)
-    embed.add_field(name="当前器灵", value=_render_spirit(panel_state.current_spirit), inline=True)
+    embed.add_field(name="当前器灵", value=_render_spirit(panel_state.current_spirit), inline=False)
     if panel_state.pending_spirit is not None:
-        embed.add_field(name="待选新灵相", value=_render_spirit(panel_state.pending_spirit), inline=True)
+        embed.add_field(name="待选新灵相", value=_render_spirit(panel_state.pending_spirit), inline=False)
+    for index, choice in enumerate(panel_state.spirit_choices):
+        embed.add_field(name=f"待选新灵相 · {index + 1}", value=_render_spirit(choice), inline=False)
+    embed.add_field(name="灵炉机缘", value=_render_furnace_ops(panel_state), inline=False)
     embed.add_field(name="品阶淬炼", value=_render_tier_upgrade(panel_state), inline=False)
     if action_title and action_lines:
         embed.add_field(name=action_title, value="\n".join(action_lines), inline=False)
     return embed
+
+
+def _render_furnace_ops(panel_state: SpiritPanelState) -> str:
+    lines = [f"已蓄机缘：`{panel_state.spirit_ops}` 道（上限 {SPIRIT_FURNACE_OPS_CAP}，每满 {SPIRIT_FURNACE_MINUTES} 分钟自凝一道）"]
+    lines.append(f"开炉抽取：1 机缘 = 1 候选，单次至多 {SPIRIT_DRAW_MAX_CHOICES} 道，每道耗器魂 `{SPIRIT_DRAW_SOUL_COST}`（器魂不足自动少引）")
+    lines.append(
+        "指定神通：另付一批一次的定神费 器魂`{}` + 灵石`{}` + 气运`{}`，候选皆为指定神通（品阶数值仍随机）".format(
+            format_big_number(SPIRIT_SPECIFY_SOUL_COST),
+            format_big_number(SPIRIT_SPECIFY_LINGSHI_COST),
+            SPIRIT_SPECIFY_LUCK_COST,
+        )
+    )
+    return "\n".join(lines)
 
 
 def _render_tier_upgrade(panel_state: SpiritPanelState) -> str:

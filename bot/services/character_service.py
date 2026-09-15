@@ -314,6 +314,9 @@ class CharacterService:
             spirit_pending_json="",
             spirit_refining_until=None,
             spirit_refining_mode=None,
+            spirit_furnace_started_at=None,
+            spirit_ops=0,
+            spirit_choices_json="[]",
         )
         character.ladder_record = LadderRecord(rank=initial_rank, wins=0, losses=0, streak=0)
         self.refresh_combat_power(character)
@@ -590,6 +593,9 @@ class CharacterService:
             character.artifact.spirit_pending_json = ""
             character.artifact.spirit_refining_until = None
             character.artifact.spirit_refining_mode = None
+            character.artifact.spirit_furnace_started_at = None
+            character.artifact.spirit_ops = 0
+            character.artifact.spirit_choices_json = "[]"
         self.refresh_combat_power(character)
 
         broadcast_text = None

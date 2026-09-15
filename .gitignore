@@ -8,3 +8,4 @@ __pycache__/
 data/*.sqlite3
 data/*.sqlite3-*
 .ace-tool/
+discord-artifact-refine.user.js

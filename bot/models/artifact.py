@@ -27,5 +27,8 @@ class Artifact(Base, IdentityMixin, TimestampMixin):
     spirit_pending_json: Mapped[str] = mapped_column(Text, default="")
     spirit_refining_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     spirit_refining_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    spirit_furnace_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    spirit_ops: Mapped[int] = mapped_column(Integer, default=0)
+    spirit_choices_json: Mapped[str] = mapped_column(Text, default="[]")
 
     character = relationship("Character", back_populates="artifact")

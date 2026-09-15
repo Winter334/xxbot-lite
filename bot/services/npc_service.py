@@ -370,6 +370,9 @@ class NpcService:
             spirit_pending_json="",
             spirit_refining_until=None,
             spirit_refining_mode=None,
+            spirit_furnace_started_at=None,
+            spirit_ops=0,
+            spirit_choices_json="[]",
         )
 
         # ---- 11. LadderRecord ----

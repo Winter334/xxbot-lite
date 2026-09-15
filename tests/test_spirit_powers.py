@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import random
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -1656,3 +1658,210 @@ def test_fanji_no_reflect_on_dodge(services) -> None:
     assert actor.action_attack_damage_dealt == 0
     assert actor.hp == actor.get_max_hp()
     assert target.hp == target.get_max_hp()
+
+
+# ---------------------------------------------------------------------------
+# 器灵长时炉火（机缘蓄炼）+ 开炉抽取（单次 / 指定）
+# ---------------------------------------------------------------------------
+
+_T0 = datetime(2026, 5, 27, 12, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+
+def _prepare_owned_artifact(artifact, *, soul: int = 0):
+    artifact.reinforce_level = 30
+    artifact.spirit_name = "灵主"
+    artifact.spirit_json = _dump_spirit(_BASE_LOW_SPIRIT)
+    artifact.soul_shards = soul
+
+
+@pytest.mark.asyncio
+async def test_furnace_burns_free_and_banks_ops(session_factory, services) -> None:
+    """长时炉火燃烧不扣器魂：5 小时 = 10 道机缘。"""
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7101, "炉一")
+        artifact = creation.character.artifact
+        _prepare_owned_artifact(artifact, soul=1000)
+
+        result = services.spirit.start_furnace(artifact, now=_T0)
+        assert result.success is True
+        assert artifact.soul_shards == 1000  # 点火不扣费
+        assert services.spirit.settle_furnace(artifact, now=_T0 + timedelta(hours=5)) == 10
+        assert artifact.spirit_ops == 10
+        assert artifact.soul_shards == 1000  # 蓄炼全程不扣费
+
+
+@pytest.mark.asyncio
+async def test_furnace_cap_100_extinguishes(session_factory, services) -> None:
+    """机缘蓄满 100 道自熄，不再累积。"""
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7102, "炉二")
+        artifact = creation.character.artifact
+        _prepare_owned_artifact(artifact, soul=1000)
+
+        services.spirit.start_furnace(artifact, now=_T0)
+        services.spirit.settle_furnace(artifact, now=_T0 + timedelta(hours=60))
+        assert artifact.spirit_ops == 100
+        assert artifact.spirit_furnace_started_at is None  # 蓄满自熄
+        # 花掉后再点火可继续蓄
+        artifact.spirit_ops = 95
+        assert services.spirit.start_furnace(artifact, now=_T0 + timedelta(hours=60)).success is True
+        assert artifact.spirit_furnace_started_at is not None
+
+
+@pytest.mark.asyncio
+async def test_stop_furnace_settles_and_discards_remainder(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7103, "炉三")
+        artifact = creation.character.artifact
+        _prepare_owned_artifact(artifact, soul=1000)
+
+        services.spirit.start_furnace(artifact, now=_T0)
+        result = services.spirit.stop_furnace(artifact, now=_T0 + timedelta(minutes=45))
+        assert result.success is True
+        assert artifact.spirit_ops == 1  # 完成 1 轮，15 分钟零头舍弃
+        assert artifact.spirit_furnace_started_at is None
+        assert services.spirit.stop_furnace(artifact, now=_T0).success is False
+
+
+@pytest.mark.asyncio
+async def test_draw_costs_soul_per_choice_and_caps_at_five(session_factory, services) -> None:
+    """10 次机缘开炉：至多 5 候选，扣 5 机缘 + 300 器魂；剩余机缘保留。"""
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7104, "炉四")
+        artifact = creation.character.artifact
+        _prepare_owned_artifact(artifact, soul=1000)
+        artifact.spirit_ops = 10
+
+        result = services.spirit.draw_furnace_candidates(artifact, now=_T0)
+
+        assert result.success is True
+        assert result.count == 5
+        assert artifact.spirit_ops == 5
+        assert artifact.soul_shards == 1000 - 5 * 60
+        assert len(services.spirit.get_spirit_choices(artifact)) == 5
+
+
+@pytest.mark.asyncio
+async def test_draw_shrinks_when_soul_insufficient(session_factory, services) -> None:
+    """器魂不够就少引几道，绝不破产。"""
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7105, "炉五")
+        artifact = creation.character.artifact
+        _prepare_owned_artifact(artifact, soul=240)
+        artifact.spirit_ops = 10
+
+        result = services.spirit.draw_furnace_candidates(artifact, now=_T0)
+
+        assert result.success is True
+        assert result.count == 4
+        assert artifact.soul_shards == 0
+        assert artifact.spirit_ops == 6
+
+        # 器魂连一道都付不起 → 开不了炉
+        broke = services.spirit.draw_furnace_candidates(artifact, now=_T0)
+        assert broke.success is False
+
+
+@pytest.mark.asyncio
+async def test_specified_draw_charges_fee_once_per_batch(session_factory, services) -> None:
+    """指定神通：定神费一批一次，候选皆为指定神通，品阶数值仍随机。"""
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7106, "炉六")
+        character = creation.character
+        artifact = character.artifact
+        _prepare_owned_artifact(artifact, soul=20000)
+        character.lingshi = 20000
+        character.luck = 500
+        artifact.spirit_ops = 4
+
+        result = services.spirit.draw_furnace_candidates(
+            artifact, now=_T0, power_id="jueming", character=character,
+        )
+
+        assert result.success is True
+        assert result.count == 4
+        # 10000 定神费 + 4 × 60
+        assert artifact.soul_shards == 20000 - 10000 - 4 * 60
+        assert character.lingshi == 10000
+        assert character.luck == 400
+        choices = services.spirit.get_spirit_choices(artifact)
+        assert all(choice.power.power_id == "jueming" for choice in choices)
+
+        # 灵石不足时挡下，分文不扣
+        artifact.spirit_ops = 2
+        blocked = services.spirit.draw_furnace_candidates(
+            artifact, now=_T0, power_id="niepan", character=character,
+        )
+        assert blocked.success is False
+        assert artifact.spirit_ops == 2
+
+
+@pytest.mark.asyncio
+async def test_pick_choice_to_pending_then_accept(session_factory, services) -> None:
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7107, "炉七")
+        artifact = creation.character.artifact
+        _prepare_owned_artifact(artifact, soul=1000)
+        artifact.spirit_ops = 3
+
+        assert services.spirit.draw_furnace_candidates(artifact, now=_T0).success is True
+        choices = services.spirit.get_spirit_choices(artifact)
+        assert len(choices) == 3
+
+        # 候选未决时不可再开炉
+        assert services.spirit.draw_furnace_candidates(artifact, now=_T0).success is False
+
+        picked = services.spirit.pick_spirit_choice(artifact, 2)
+        assert picked.success is True
+        assert services.spirit.get_spirit_choices(artifact) == []
+        pending = services.spirit.get_pending_spirit(artifact)
+        assert pending == choices[2]
+
+        # 待选未决时不可改选
+        assert services.spirit.pick_spirit_choice(artifact, 0).success is False
+        assert services.spirit.accept_pending_spirit(artifact).success is True
+        assert services.spirit.get_current_spirit(artifact) == choices[2]
+
+
+@pytest.mark.asyncio
+async def test_discard_choices_costs_nothing_extra(session_factory, services) -> None:
+    """弃选：本批已花的机缘与器魂不返还，也不再多扣。"""
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7108, "炉八")
+        artifact = creation.character.artifact
+        _prepare_owned_artifact(artifact, soul=1000)
+        artifact.spirit_ops = 2
+
+        services.spirit.draw_furnace_candidates(artifact, now=_T0)
+        soul_after_draw = artifact.soul_shards
+        result = services.spirit.discard_spirit_choices(artifact)
+        assert result.success is True
+        assert artifact.soul_shards == soul_after_draw
+        assert artifact.spirit_ops == 0
+        assert services.spirit.get_pending_spirit(artifact) is None
+
+
+@pytest.mark.asyncio
+async def test_single_reforge_unchanged_and_blocks_furnace(session_factory, services) -> None:
+    """单次淬炼维持原行为（60 器魂 / 30 分定炉）；与长时炉火互斥；不回溯、不补发。"""
+    async with session_factory() as session:
+        creation = await services.character.get_or_create_character(session, 7109, "炉九")
+        artifact = creation.character.artifact
+        _prepare_owned_artifact(artifact, soul=500)
+
+        # 旧式单次淬炼进行中：长时炉火点不着、开不了炉，也不转换不补发
+        assert services.spirit.start_reforge(artifact, now=_T0).success is True
+        assert artifact.soul_shards == 440
+        assert services.spirit.start_furnace(artifact, now=_T0).success is False
+        assert services.spirit.draw_furnace_candidates(artifact, now=_T0).success is False
+        assert artifact.spirit_ops == 0
+
+        # 收取后（30 分）产生单一待选，走纳灵/弃炼
+        collect = services.spirit.collect_result(artifact, now=_T0 + timedelta(minutes=30))
+        assert collect.success is True
+        assert services.spirit.get_pending_spirit(artifact) is not None
+
+        # 长时炉火燃烧中：单次淬炼点不了
+        services.spirit.discard_pending_spirit(artifact)
+        assert services.spirit.start_furnace(artifact, now=_T0).success is True
+        assert services.spirit.start_reforge(artifact, now=_T0).success is False

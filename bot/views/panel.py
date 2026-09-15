@@ -45,9 +45,11 @@ from bot.ui.sect import build_sect_directory_embed, build_sect_overview_embed, b
 from bot.ui.sect import build_sect_help_embed
 from bot.ui.spirit import build_spirit_panel_embed
 from bot.data.artifact_affixes import AFFIX_SPECIFY_GROUPS, ArtifactAffixEntry, get_artifact_affix_definition
+from bot.data.spirits import SPIRIT_POWER_DEFINITIONS
 from bot.services.artifact_service import AFFIX_SPECIFY_COST, AFFIX_SPECIFY_LINGSHI_COST
 from bot.services.faction_service import FactionTarget
 from bot.services.ladder_service import ChallengeTarget
+from bot.utils.formatters import format_big_number
 
 if TYPE_CHECKING:
     from bot.main import XianBot
@@ -726,6 +728,115 @@ async def start_spirit_reforge_message(bot: XianBot, owner_user_id: int, display
         color=discord.Color.green() if result.success else discord.Color.orange(),
         action_title="本次重炼",
         action_lines=action_lines,
+    )
+    return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
+
+
+async def start_spirit_furnace_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.spirit_service.start_furnace(character.artifact)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = build_spirit_panel_embed(
+        snapshot,
+        panel_state,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+    )
+    return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
+
+
+async def stop_spirit_furnace_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.spirit_service.stop_furnace(character.artifact)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = build_spirit_panel_embed(
+        snapshot,
+        panel_state,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+    )
+    return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
+
+
+async def draw_spirit_candidates_message(
+    bot: XianBot, owner_user_id: int, display_name: str, power_id: str | None = None,
+):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.spirit_service.draw_furnace_candidates(
+            character.artifact, power_id=power_id, character=character,
+        )
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines = [
+        f"本次引动：`{result.count}` 道 · 剩余机缘：`{result.ops_after}` 道",
+        f"器魂：`{format_big_number(result.soul_before)} -> {format_big_number(result.soul_after)}`",
+    ]
+    if power_id is not None:
+        action_lines.append(f"灵石：`{format_big_number(result.lingshi_before)} -> {format_big_number(result.lingshi_after)}`")
+        action_lines.append(f"气运：`{result.luck_before} -> {result.luck_after}`")
+    embed = build_spirit_panel_embed(
+        snapshot,
+        panel_state,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="本次开炉" if result.success else None,
+        action_lines=action_lines if result.success else None,
+    )
+    return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
+
+
+async def pick_spirit_choice_message(bot: XianBot, owner_user_id: int, display_name: str, index: int):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.spirit_service.pick_spirit_choice(character.artifact, index)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    action_lines: list[str] = []
+    if result.success and panel_state.pending_spirit is not None:
+        action_lines.append(f"品阶：`{panel_state.pending_spirit.tier_name}`")
+        action_lines.append(f"神通：`{panel_state.pending_spirit.power_name}`")
+    embed = build_spirit_panel_embed(
+        snapshot,
+        panel_state,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
+        action_title="择定灵相" if action_lines else None,
+        action_lines=action_lines or None,
+    )
+    return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
+
+
+async def discard_spirit_choices_message(bot: XianBot, owner_user_id: int, display_name: str):
+    async with bot.session_factory() as session:
+        creation = await bot.character_service.get_or_create_character(session, owner_user_id, display_name)
+        character = creation.character
+        result = bot.spirit_service.discard_spirit_choices(character.artifact)
+        snapshot = await _sync_snapshot(bot, session, character)
+        panel_state = bot.spirit_service.build_panel_state(character.artifact)
+        await session.commit()
+    broadcasts = [creation.broadcast_text] if creation.broadcast_text else []
+    embed = build_spirit_panel_embed(
+        snapshot,
+        panel_state,
+        message=result.message,
+        color=discord.Color.green() if result.success else discord.Color.orange(),
     )
     return embed, SpiritOverviewView(owner_user_id, panel_state), broadcasts
 
@@ -2684,6 +2795,17 @@ class SpiritOverviewView(OwnerLockedView):
             self._add_nurture_button()
         if panel_state.can_start_reforge:
             self._add_reforge_button()
+        if panel_state.can_start_furnace:
+            self._add_start_furnace_button()
+        if panel_state.can_stop_furnace:
+            self._add_stop_furnace_button()
+        if panel_state.can_draw:
+            self._add_draw_button()
+            self._add_specify_power_select()
+        if panel_state.can_pick_choice:
+            self._add_pick_choice_select(panel_state.spirit_choices)
+        if panel_state.can_discard_choices:
+            self._add_discard_choices_button()
         if panel_state.can_collect:
             self._add_collect_button()
         if panel_state.can_accept_pending:
@@ -2720,11 +2842,108 @@ class SpiritOverviewView(OwnerLockedView):
         self.add_item(button)
 
     def _add_reforge_button(self) -> None:
-        button = discord.ui.Button(label="开始重炼", row=0, style=discord.ButtonStyle.primary)
+        button = discord.ui.Button(label="单次淬炼", row=0, style=discord.ButtonStyle.primary)
 
         async def callback(interaction: discord.Interaction) -> None:
             bot: XianBot = interaction.client  # type: ignore[assignment]
             embed, view, broadcasts = await start_spirit_reforge_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_start_furnace_button(self) -> None:
+        button = discord.ui.Button(label="长时间淬炼", row=0, style=discord.ButtonStyle.primary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await start_spirit_furnace_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_stop_furnace_button(self) -> None:
+        button = discord.ui.Button(label="停炉", row=0, style=discord.ButtonStyle.secondary)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await stop_spirit_furnace_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_draw_button(self) -> None:
+        button = discord.ui.Button(label="开炉抽取", row=0, style=discord.ButtonStyle.success)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await draw_spirit_candidates_message(bot, interaction.user.id, interaction.user.display_name)
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        button.callback = callback
+        self.add_item(button)
+
+    def _add_specify_power_select(self) -> None:
+        select = discord.ui.Select(
+            placeholder="指定神通开炉（另付 1万器魂+1万灵石+100气运，一批一次）…",
+            min_values=1,
+            max_values=1,
+            row=2,
+            options=[
+                discord.SelectOption(label=definition.name, value=definition.power_id)
+                for definition in SPIRIT_POWER_DEFINITIONS
+            ],
+        )
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await draw_spirit_candidates_message(
+                bot, interaction.user.id, interaction.user.display_name, power_id=select.values[0]
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        select.callback = callback
+        self.add_item(select)
+
+    def _add_pick_choice_select(self, choices) -> None:
+        select = discord.ui.Select(
+            placeholder="择定一道候选灵相（进入待选，可再纳灵 / 弃炼）…",
+            min_values=1,
+            max_values=1,
+            row=2,
+            options=[
+                discord.SelectOption(
+                    label=f"候选{index + 1} · {choice.tier_name} · {choice.power_name}",
+                    value=str(index),
+                )
+                for index, choice in enumerate(choices)
+            ],
+        )
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await pick_spirit_choice_message(
+                bot, interaction.user.id, interaction.user.display_name, int(select.values[0])
+            )
+            await interaction.response.edit_message(embed=embed, view=view)
+            await _send_broadcasts(bot, broadcasts)
+
+        select.callback = callback
+        self.add_item(select)
+
+    def _add_discard_choices_button(self) -> None:
+        button = discord.ui.Button(label="弃选", row=0, style=discord.ButtonStyle.danger)
+
+        async def callback(interaction: discord.Interaction) -> None:
+            bot: XianBot = interaction.client  # type: ignore[assignment]
+            embed, view, broadcasts = await discard_spirit_choices_message(bot, interaction.user.id, interaction.user.display_name)
             await interaction.response.edit_message(embed=embed, view=view)
             await _send_broadcasts(bot, broadcasts)
 

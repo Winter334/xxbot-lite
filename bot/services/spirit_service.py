@@ -8,6 +8,7 @@ import re
 
 from bot.data.spirits import (
     SPIRIT_NAMES,
+    SPIRIT_POWER_BY_ID,
     SPIRIT_POWER_DEFINITIONS,
     SPIRIT_TIER_DEFINITIONS,
     SPIRIT_TIER_BY_KEY,
@@ -27,6 +28,16 @@ SPIRIT_REFORGE_COST = 60
 SPIRIT_NURTURE_MINUTES = 60
 SPIRIT_REFORGE_MINUTES = 30
 SPIRIT_STATS = ("atk", "def", "agi")
+
+# 长时炉火：每满 30 分钟自凝 1 道机缘，蓄积上限 100 道（蓄满自熄，开炉花掉后可再点）
+SPIRIT_FURNACE_MINUTES = 30
+SPIRIT_FURNACE_OPS_CAP = 100
+# 开炉抽取：1 道机缘 = 1 道候选，单次至多引动 5 道，每道耗器魂 60；指定神通另付一批一次的定神费
+SPIRIT_DRAW_MAX_CHOICES = 5
+SPIRIT_DRAW_SOUL_COST = 60
+SPIRIT_SPECIFY_SOUL_COST = 10_000
+SPIRIT_SPECIFY_LINGSHI_COST = 10_000
+SPIRIT_SPECIFY_LUCK_COST = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +78,15 @@ class SpiritPanelState:
     next_tier_cost: int | None = None
     can_upgrade_tier: bool = False
     tier_upgrade_blocked_reason: str | None = None
+    furnace_burning: bool = False
+    spirit_ops: int = 0
+    next_op_remaining_seconds: int = 0
+    can_start_furnace: bool = False
+    can_stop_furnace: bool = False
+    can_draw: bool = False
+    spirit_choices: tuple[SpiritView, ...] = ()
+    can_pick_choice: bool = False
+    can_discard_choices: bool = False
 
 
 @dataclass(slots=True)
@@ -112,6 +132,30 @@ class SpiritTierUpgradeResult:
     tier_after: str | None = None
     spirit_before: SpiritInstance | None = None
     spirit_after: SpiritInstance | None = None
+
+
+@dataclass(slots=True)
+class SpiritFurnaceResult:
+    success: bool
+    message: str
+    ops_before: int = 0
+    ops_after: int = 0
+
+
+@dataclass(slots=True)
+class SpiritDrawResult:
+    success: bool
+    message: str
+    count: int = 0
+    ops_before: int = 0
+    ops_after: int = 0
+    soul_before: int = 0
+    soul_after: int = 0
+    lingshi_before: int = 0
+    lingshi_after: int = 0
+    luck_before: int = 0
+    luck_after: int = 0
+    choices: tuple[SpiritInstance, ...] = ()
 
 
 # ── 旧数据 clamp：2026-05-21 涤世/蚀焰平衡调整 ──────────────────────────
@@ -214,16 +258,29 @@ class SpiritService:
     def has_pending(self, artifact: Artifact) -> bool:
         return self.get_pending_spirit(artifact) is not None
 
+    def get_spirit_choices(self, artifact: Artifact) -> list[SpiritInstance]:
+        return self._load_spirit_choices(artifact.spirit_choices_json)
+
+    def has_choices(self, artifact: Artifact) -> bool:
+        return bool(self.get_spirit_choices(artifact))
+
     def build_panel_state(self, artifact: Artifact, *, now: datetime | None = None) -> SpiritPanelState:
         self.ensure_compatibility(artifact)
         current = self.get_current_spirit(artifact)
         pending = self.get_pending_spirit(artifact)
         unlocked = self.is_unlocked(artifact)
         current_time = ensure_shanghai(now or now_shanghai())
+        self.settle_furnace(artifact, now=current_time)
+        choices = self.get_spirit_choices(artifact)
+        furnace_burning = artifact.spirit_furnace_started_at is not None
+        spirit_ops = artifact.spirit_ops or 0
         remaining_seconds = self.remaining_seconds(artifact, now=current_time)
         can_collect = artifact.spirit_refining_until is not None and remaining_seconds <= 0
-        can_start_nurture = unlocked and current is None and artifact.spirit_refining_until is None and pending is None
-        can_start_reforge = unlocked and current is not None and artifact.spirit_refining_until is None and pending is None
+        can_start_nurture = unlocked and current is None and artifact.spirit_refining_until is None and pending is None and not choices and not furnace_burning
+        can_start_reforge = unlocked and current is not None and artifact.spirit_refining_until is None and pending is None and not choices and not furnace_burning
+        can_start_furnace = unlocked and current is not None and artifact.spirit_refining_until is None and pending is None and not choices and not furnace_burning
+        can_stop_furnace = furnace_burning
+        can_draw = unlocked and current is not None and spirit_ops > 0 and artifact.spirit_refining_until is None and pending is None and not choices
         can_accept_pending = pending is not None
         can_discard_pending = pending is not None
         can_rename = current is not None
@@ -235,12 +292,18 @@ class SpiritService:
         elif artifact.spirit_refining_until is not None and can_collect:
             action_text = "炉火已定，可收取本次器灵结果。"
         elif artifact.spirit_refining_until is not None:
-            label = "器灵孕育中" if artifact.spirit_refining_mode == "nurture" else "器灵重炼中"
+            label = "器灵孕育中" if artifact.spirit_refining_mode == "nurture" else "单次淬炼中"
             action_text = f"{label}，尚余 {self._format_remaining(remaining_seconds)}。"
+        elif choices:
+            action_text = f"共 `{len(choices)}` 道候选灵相已凝于炉前，可择其一，或全部弃选。"
         elif pending is not None:
             action_text = "新器灵结果已出，请决定是否纳灵。"
+        elif furnace_burning:
+            action_text = f"长时炉火正燃，已蓄机缘 `{spirit_ops}` 道，下一道尚余 {self._format_remaining(self.furnace_next_op_remaining_seconds(artifact, now=current_time))}。"
+        elif spirit_ops > 0:
+            action_text = f"炉火已熄，尚有机缘 `{spirit_ops}` 道在手，可开炉抽取，或再点长时炉火继续蓄炼。"
         else:
-            action_text = "器灵已安于本命法宝之中，可继续重炼追寻更高资质。"
+            action_text = "器灵已安于本命法宝之中，可单次淬炼，或点长时炉火蓄炼机缘。"
 
         next_tier_key: str | None = None
         next_tier_name: str | None = None
@@ -255,11 +318,13 @@ class SpiritService:
             else:
                 next_tier_name = SPIRIT_TIER_BY_KEY[next_tier_key].name
                 next_tier_cost = get_spirit_tier_upgrade_cost(next_tier_key)
-                # 必须无进行中的孕育 / 重炼 / 待选灵相
+                # 必须无进行中的孕育 / 单次淬炼 / 待选灵相 / 候选灵相
                 if artifact.spirit_refining_until is not None:
                     tier_upgrade_blocked_reason = "炉中尚有未竟之事，暂不可淬炼品阶。"
                 elif pending is not None:
                     tier_upgrade_blocked_reason = "新灵相未决，暂不可淬炼品阶。"
+                elif choices:
+                    tier_upgrade_blocked_reason = "灵相候选未决，暂不可淬炼品阶。"
                 elif next_tier_cost is None:
                     tier_upgrade_blocked_reason = "暂无可用的淬炼路径。"
                 elif soul_shards < next_tier_cost:
@@ -286,6 +351,15 @@ class SpiritService:
             next_tier_cost=next_tier_cost,
             can_upgrade_tier=can_upgrade_tier,
             tier_upgrade_blocked_reason=tier_upgrade_blocked_reason,
+            furnace_burning=furnace_burning,
+            spirit_ops=spirit_ops,
+            next_op_remaining_seconds=self.furnace_next_op_remaining_seconds(artifact, now=current_time),
+            can_start_furnace=can_start_furnace,
+            can_stop_furnace=can_stop_furnace,
+            can_draw=can_draw,
+            spirit_choices=tuple(self._build_spirit_view(artifact, choice) for choice in choices),
+            can_pick_choice=bool(choices) and pending is None,
+            can_discard_choices=bool(choices),
         )
 
     def spirit_summary(self, artifact: Artifact) -> tuple[str, str, str]:
@@ -331,6 +405,8 @@ class SpiritService:
             return SpiritProcessResult(False, "器灵已在身侧，无需再次初孕。", artifact.soul_shards, artifact.soul_shards)
         if artifact.spirit_refining_until is not None or self.has_pending(artifact):
             return SpiritProcessResult(False, "当前已有器灵流程未完，不可再启新炉。", artifact.soul_shards, artifact.soul_shards)
+        if artifact.spirit_furnace_started_at is not None or self.has_choices(artifact):
+            return SpiritProcessResult(False, "长时炉火尚在蓄炼，不可同时单次淬炼。", artifact.soul_shards, artifact.soul_shards)
         soul_before = artifact.soul_shards
         if soul_before < SPIRIT_NURTURE_COST:
             return SpiritProcessResult(False, "器魂不足，尚不能孕育器灵。", soul_before, soul_before)
@@ -347,6 +423,8 @@ class SpiritService:
             return SpiritProcessResult(False, "当前尚无器灵，需先完成初次孕育。", artifact.soul_shards, artifact.soul_shards)
         if artifact.spirit_refining_until is not None or self.has_pending(artifact):
             return SpiritProcessResult(False, "当前已有器灵流程未完，不可再启重炼。", artifact.soul_shards, artifact.soul_shards)
+        if artifact.spirit_furnace_started_at is not None or self.has_choices(artifact):
+            return SpiritProcessResult(False, "长时炉火尚在蓄炼，不可同时单次淬炼。", artifact.soul_shards, artifact.soul_shards)
         soul_before = artifact.soul_shards
         if soul_before < SPIRIT_REFORGE_COST:
             return SpiritProcessResult(False, "器魂不足，尚不能重炼器灵。", soul_before, soul_before)
@@ -355,6 +433,164 @@ class SpiritService:
         artifact.spirit_refining_until = finish_at
         artifact.spirit_refining_mode = "reroll"
         return SpiritProcessResult(True, "你催动器火重炼器灵，新的灵相正在酝酿。", soul_before, artifact.soul_shards, finish_at)
+
+    # ── 长时炉火：机缘蓄炼 / 开炉抽取 ────────────────────────────────────────
+
+    def start_furnace(self, artifact: Artifact, *, now: datetime | None = None) -> SpiritFurnaceResult:
+        """点燃长时炉火：燃烧不耗器魂，每满 30 分钟自凝 1 道机缘，蓄积上限 100 道。"""
+        ops_before = artifact.spirit_ops or 0
+        if not self.is_unlocked(artifact):
+            return SpiritFurnaceResult(False, f"本命法宝达到 +{SPIRIT_UNLOCK_LEVEL} 后，方可点燃长时炉火。", ops_before, ops_before)
+        if self.get_current_spirit(artifact) is None:
+            return SpiritFurnaceResult(False, "当前尚无器灵，需先完成初次孕育。", ops_before, ops_before)
+        if artifact.spirit_refining_until is not None or self.has_pending(artifact) or self.has_choices(artifact):
+            return SpiritFurnaceResult(False, "当前已有器灵流程未完，不可再点炉火。", ops_before, ops_before)
+        if artifact.spirit_furnace_started_at is not None:
+            return SpiritFurnaceResult(False, "长时炉火正燃，无需重复点火。", ops_before, ops_before)
+        artifact.spirit_furnace_started_at = ensure_shanghai(now or now_shanghai())
+        return SpiritFurnaceResult(
+            True,
+            f"长时炉火已燃：每满 {SPIRIT_FURNACE_MINUTES} 分钟自凝一道机缘，蓄满 {SPIRIT_FURNACE_OPS_CAP} 道自熄；开炉抽取时每道候选耗器魂 {SPIRIT_DRAW_SOUL_COST}。",
+            ops_before, ops_before,
+        )
+
+    def settle_furnace(self, artifact: Artifact, *, now: datetime | None = None) -> int:
+        """结算炉火蓄炼：返回本次新凝出的机缘数（含蓄满自熄）。"""
+        anchor = artifact.spirit_furnace_started_at
+        if anchor is None:
+            return 0
+        current_time = ensure_shanghai(now or now_shanghai())
+        cycle = timedelta(minutes=SPIRIT_FURNACE_MINUTES)
+        completed = int((current_time - ensure_shanghai(anchor)) // cycle)
+        if completed <= 0:
+            return 0
+        artifact.spirit_furnace_started_at = anchor + completed * cycle
+        ops = artifact.spirit_ops or 0
+        gained = min(completed, SPIRIT_FURNACE_OPS_CAP - ops)
+        artifact.spirit_ops = ops + gained
+        if artifact.spirit_ops >= SPIRIT_FURNACE_OPS_CAP:
+            artifact.spirit_furnace_started_at = None  # 蓄满自熄
+        return gained
+
+    def stop_furnace(self, artifact: Artifact, *, now: datetime | None = None) -> SpiritFurnaceResult:
+        """主动停炉：先结算已完成的轮次，未满一轮的零头舍弃。"""
+        if artifact.spirit_furnace_started_at is None:
+            return SpiritFurnaceResult(False, "长时炉火并未点燃。", artifact.spirit_ops or 0, artifact.spirit_ops or 0)
+        ops_before = artifact.spirit_ops or 0
+        gained = self.settle_furnace(artifact, now=now)
+        artifact.spirit_furnace_started_at = None
+        return SpiritFurnaceResult(True, f"你敛去炉火，共蓄机缘 `{artifact.spirit_ops}` 道（本次新凝 {gained} 道），未满一轮的零头已舍。", ops_before, artifact.spirit_ops)
+
+    def furnace_next_op_remaining_seconds(self, artifact: Artifact, *, now: datetime | None = None) -> int:
+        if artifact.spirit_furnace_started_at is None:
+            return 0
+        current_time = ensure_shanghai(now or now_shanghai())
+        cycle = timedelta(minutes=SPIRIT_FURNACE_MINUTES)
+        elapsed = current_time - ensure_shanghai(artifact.spirit_furnace_started_at)
+        return int((cycle - elapsed % cycle).total_seconds())
+
+    def draw_furnace_candidates(
+        self,
+        artifact: Artifact,
+        *,
+        now: datetime | None = None,
+        power_id: str | None = None,
+        character=None,
+    ) -> SpiritDrawResult:
+        """开炉抽取：每道机缘凝一道候选灵相，单次至多 5 道，每道耗器魂 60；指定神通另付一批一次的定神费。"""
+        self.ensure_compatibility(artifact)
+        self.settle_furnace(artifact, now=now)
+        ops_before = artifact.spirit_ops or 0
+        soul_before = artifact.soul_shards or 0
+        lingshi_before = getattr(character, "lingshi", 0) or 0
+        luck_before = getattr(character, "luck", 0) or 0
+        specified = power_id is not None
+
+        def _fail(message: str) -> SpiritDrawResult:
+            return SpiritDrawResult(
+                False, message, ops_before=ops_before, ops_after=ops_before,
+                soul_before=soul_before, soul_after=soul_before,
+                lingshi_before=lingshi_before, lingshi_after=lingshi_before,
+                luck_before=luck_before, luck_after=luck_before,
+            )
+
+        if self.get_current_spirit(artifact) is None:
+            return _fail("当前尚无器灵，需先完成初次孕育。")
+        if artifact.spirit_refining_until is not None:
+            return _fail("单次淬炼进行中，不可开炉抽取。")
+        if self.has_pending(artifact) or self.has_choices(artifact):
+            return _fail("灵相未决，请先择取、纳灵或弃选。")
+        if ops_before <= 0:
+            return _fail("尚无器灵机缘，需先点燃长时炉火蓄炼。")
+
+        power_definition = None
+        fee_soul = 0
+        if specified:
+            if power_id not in SPIRIT_POWER_BY_ID:
+                return _fail("并无此等神通可指定。")
+            if character is None:
+                return _fail("指定神通需同时核验灵石与气运。")
+            if lingshi_before < SPIRIT_SPECIFY_LINGSHI_COST:
+                return _fail(f"灵石不足 `{SPIRIT_SPECIFY_LINGSHI_COST}`，无法指定神通。")
+            if luck_before < SPIRIT_SPECIFY_LUCK_COST:
+                return _fail(f"气运不足 `{SPIRIT_SPECIFY_LUCK_COST}`，无法指定神通。")
+            power_definition = get_spirit_power_definition(power_id)
+            fee_soul = SPIRIT_SPECIFY_SOUL_COST
+
+        # 器魂闸门：每道候选 60，指定另扣一批一次的 1 万；器魂不够就少引几道，绝不让玩家破产
+        count = min(ops_before, SPIRIT_DRAW_MAX_CHOICES, (soul_before - fee_soul) // SPIRIT_DRAW_SOUL_COST)
+        if count < 1:
+            need = SPIRIT_DRAW_SOUL_COST + fee_soul
+            return _fail(f"器魂不足 `{need}`，开炉至少需引动一道候选。")
+
+        artifact.spirit_ops = ops_before - count
+        artifact.soul_shards = soul_before - fee_soul - count * SPIRIT_DRAW_SOUL_COST
+        if specified:
+            character.lingshi = lingshi_before - SPIRIT_SPECIFY_LINGSHI_COST
+            character.luck = luck_before - SPIRIT_SPECIFY_LUCK_COST
+
+        rolled = tuple(self._roll_spirit(artifact, power_definition=power_definition) for _ in range(count))
+        self._store_spirit_choices(artifact, rolled)
+
+        if specified:
+            message = (
+                f"你以重宝定住「{power_definition.name}」之相，开炉引动 `{count}` 道机缘，"
+                f"`{count}` 道候选已凝于炉前（耗器魂 {fee_soul + count * SPIRIT_DRAW_SOUL_COST}），可择其一。"
+            )
+        else:
+            message = (
+                f"你开炉引动 `{count}` 道机缘，`{count}` 道候选灵相已凝于炉前"
+                f"（耗器魂 {count * SPIRIT_DRAW_SOUL_COST}），可择其一。"
+            )
+        return SpiritDrawResult(
+            True, message, count=count,
+            ops_before=ops_before, ops_after=artifact.spirit_ops,
+            soul_before=soul_before, soul_after=artifact.soul_shards,
+            lingshi_before=lingshi_before, lingshi_after=character.lingshi if specified else lingshi_before,
+            luck_before=luck_before, luck_after=character.luck if specified else luck_before,
+            choices=rolled,
+        )
+
+    def pick_spirit_choice(self, artifact: Artifact, index: int) -> SpiritPendingResult:
+        """从候选灵相中择一，进入待选新灵相（后续仍可纳灵 / 弃炼）。"""
+        choices = self.get_spirit_choices(artifact)
+        if not choices:
+            return SpiritPendingResult(False, "当前没有可选的候选灵相。")
+        if self.has_pending(artifact):
+            return SpiritPendingResult(False, "新灵相已定，不可再改选。")
+        if not 0 <= index < len(choices):
+            return SpiritPendingResult(False, "所择候选不在炉前。")
+        chosen = choices[index]
+        self._store_spirit(artifact, "spirit_pending_json", chosen)
+        self._store_spirit_choices(artifact, None)
+        power_name = get_spirit_power_definition(chosen.power.power_id).name
+        return SpiritPendingResult(True, f"你择定「{power_name}」之相，可再决定是否纳灵。", chosen)
+
+    def discard_spirit_choices(self, artifact: Artifact) -> SpiritPendingResult:
+        if not self.get_spirit_choices(artifact):
+            return SpiritPendingResult(False, "当前没有可弃选的候选灵相。")
+        self._store_spirit_choices(artifact, None)
+        return SpiritPendingResult(True, "你敛去诸相，候选灵相尽散（本批机缘与器魂不返还）。")
 
     def collect_result(self, artifact: Artifact, *, now: datetime | None = None) -> SpiritCollectResult:
         self.ensure_compatibility(artifact)
@@ -433,6 +669,11 @@ class SpiritService:
                 False, "新灵相未决，暂不可淬炼品阶。",
                 soul_before, soul_before, tier_before=spirit_before.tier, spirit_before=spirit_before,
             )
+        if self.has_choices(artifact):
+            return SpiritTierUpgradeResult(
+                False, "灵相候选未决，暂不可淬炼品阶。",
+                soul_before, soul_before, tier_before=spirit_before.tier, spirit_before=spirit_before,
+            )
         next_tier_key = get_next_spirit_tier(spirit_before.tier)
         if next_tier_key is None:
             tier_name = SPIRIT_TIER_BY_KEY[spirit_before.tier].name
@@ -496,9 +737,9 @@ class SpiritService:
             spirit_after=spirit_after,
         )
 
-    def _roll_spirit(self, artifact: Artifact) -> SpiritInstance:
+    def _roll_spirit(self, artifact: Artifact, *, power_definition=None) -> SpiritInstance:
         tier = self._roll_tier()
-        power_definition = self.rng.choice(SPIRIT_POWER_DEFINITIONS)
+        power_definition = power_definition or self.rng.choice(SPIRIT_POWER_DEFINITIONS)
         stats = tuple(self._roll_stat_entry(artifact, stat_key, tier.key) for stat_key in SPIRIT_STATS)
         power = power_definition.roll(tier.key, self.rng)
         return SpiritInstance(tier=tier.key, stats=stats, power=power)
@@ -607,6 +848,31 @@ class SpiritService:
     def _store_spirit(self, artifact: Artifact, field_name: str, spirit: SpiritInstance | None) -> None:
         serialized = "" if spirit is None else json.dumps(spirit.to_payload(), ensure_ascii=False, separators=(",", ":"))
         setattr(artifact, field_name, serialized)
+
+    def _load_spirit_choices(self, raw_json: str | None) -> list[SpiritInstance]:
+        if not raw_json:
+            return []
+        try:
+            payload = json.loads(raw_json)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+        choices: list[SpiritInstance] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            spirit = self._load_spirit(json.dumps(item, ensure_ascii=False, separators=(",", ":")))
+            if spirit is not None:
+                choices.append(spirit)
+        return choices[:SPIRIT_DRAW_MAX_CHOICES]
+
+    def _store_spirit_choices(self, artifact: Artifact, choices) -> None:
+        if not choices:
+            artifact.spirit_choices_json = "[]"
+            return
+        payload = [spirit.to_payload() for spirit in choices]
+        artifact.spirit_choices_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
     def _format_remaining(remaining_seconds: int) -> str:
