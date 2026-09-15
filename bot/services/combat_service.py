@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 import random
 
-from bot.data.artifact_affixes import ArtifactAffixEntry, get_artifact_affix_definition
+from bot.data.artifact_affixes import ArtifactAffixEntry, get_artifact_affix_definition, get_default_burn_atk_pct
 from bot.data.spirits import SpiritPowerEntry
 from bot.utils.formatters import clamp, format_big_number
 
@@ -114,8 +114,8 @@ class _DamageProfile:
 
 # 正常杀伐伤害：吃增伤、承伤、减伤、护盾、承尘与韧性。
 _NORMAL_DAMAGE_PROFILE = _DamageProfile()
-# 灼烧 DOT：吃增伤 + 承伤；不吃减伤、不被护盾抵挡（DOT 穿透守势/护盾）
-_BURN_DOT_PROFILE = _DamageProfile(can_be_buffed=True, can_be_vulned=True, can_be_reduced=False, can_be_shielded=False)
+# 灼烧 DOT：吃增伤 + 承伤；可被护盾抵挡；不吃减伤
+_BURN_DOT_PROFILE = _DamageProfile(can_be_buffed=True, can_be_vulned=True, can_be_reduced=False, can_be_shielded=True)
 # 蚀焰引爆：不吃增伤；吃承伤 + 减伤；不暴击；可被护盾抵挡
 _SHIYAN_PROFILE = _DamageProfile(can_be_buffed=False, can_be_vulned=True, can_be_reduced=True, can_be_shielded=True)
 # 春生固定追打：不吃增伤（已是固定值）；吃承伤 + 减伤 + 护盾
@@ -708,7 +708,7 @@ class CombatService:
                             target_for_debuff,
                             state,
                             stacks=stacks,
-                            per_stack_pct=25,
+                            per_stack_pct=self._zhuohun_burn_pct(state),
                             round_no=round_no,
                             logs=logs,
                         )
@@ -975,14 +975,7 @@ class CombatService:
                     followups = self._trigger_cleanse_followups(round_no, target, 1, actor)
                     followups.extend(self._trigger_on_effect_lost_to_enemy(round_no, actor, target, 1))
                     gain = _roll(entry.rolls, "burn_stacks_gain", 1)
-                    burn_pct = next(
-                        (
-                            _roll(e.rolls, "burn_atk_pct", 30)
-                            for e in actor.snapshot.affixes
-                            if e.affix_id == "zhuohun"
-                        ),
-                        30,
-                    )
+                    burn_pct = self._zhuohun_burn_pct(actor)
                     self._apply_burn_to_target(
                         target,
                         actor,
@@ -1532,6 +1525,9 @@ class CombatService:
                             kind = "xuanjia"
                         if kind is None or primary is None:
                             flush_avoid()
+                            # 护盾吸收了本次灼烧（造成 0 伤害）时仍保留战报，显示护盾吸收结果
+                            if primary is None and cause.damage == 0 and cause.shield_after is not None:
+                                logs.append(cause)
                             logs.extend(extra)
                             continue
                         if pending_avoid is not None and pending_avoid_kind != kind:
@@ -1718,14 +1714,7 @@ class CombatService:
             logs.extend(self._trigger_shiyan_explodes(round_no, actor, target, roller))
         if power.power_id == "fenmai" and source == _DamageSource.ATTACK and target.hp > 0:
             gain = max(1, _roll(power.rolls, "burn_stacks", 1))
-            burn_pct = next(
-                (
-                    _roll(e.rolls, "burn_atk_pct", 30)
-                    for e in actor.snapshot.affixes
-                    if e.affix_id == "zhuohun"
-                ),
-                30,
-            )
+            burn_pct = self._zhuohun_burn_pct(actor)
             self._apply_burn_to_target(
                 target,
                 actor,
@@ -2159,6 +2148,17 @@ class CombatService:
             if status.name == "灼烧" and status.burn_pct > 0
         )
 
+    def _zhuohun_burn_pct(self, actor: _CombatState) -> int:
+        """附加灼烧时的每层杀伐%：带灼魂词条时用其 roll 值，否则默认灼魂下限。"""
+        return next(
+            (
+                _roll(e.rolls, "burn_atk_pct", get_default_burn_atk_pct())
+                for e in actor.snapshot.affixes
+                if e.affix_id == "zhuohun"
+            ),
+            get_default_burn_atk_pct(),
+        )
+
     def _apply_burn_to_target(
         self,
         target: _CombatState,
@@ -2495,7 +2495,10 @@ class CombatService:
 
     def _add_pobu(self, state: _CombatState, source: _CombatState, count: int, *, agility_down_pct: int = 10) -> int:
         added = 0
+        cap = self._status_stack_cap("破步") or 4
         for _ in range(max(0, count)):
+            if self._status_count(state, "破步") >= cap:
+                break
             self._add_status(state, _StatusEffect("破步", agility_pct=-agility_down_pct, is_debuff=True, source=source))
             added += 1
         return added
@@ -2523,17 +2526,28 @@ class CombatService:
             counts[chosen] += 1
         logs: list[ActionLog] = [self._effect_log(round_no, target, f"{actor.snapshot.name} 引爆 {consumed} 层咒印，万咒如雨倾落。", actor_name=actor.snapshot.name)]
         if counts["灼烧"]:
-            self._apply_burn_to_target(target, actor, stacks=counts["灼烧"], per_stack_pct=25, round_no=round_no, logs=logs)
+            self._apply_burn_to_target(target, actor, stacks=counts["灼烧"], per_stack_pct=self._zhuohun_burn_pct(actor), round_no=round_no, logs=logs)
+        # 蔓咒/破步/咒缚受 _STATUS_STACK_CAPS 上限约束，满层后不再附加
+        added_manzhou = 0
         for _ in range(counts["蔓咒"]):
-            self._add_status(target, _StatusEffect("蔓咒", atk_pct=-8, is_debuff=True, source=actor))
-        self._add_pobu(target, actor, counts["破步"])
-        self._add_wound(target, actor, counts["创伤"])
+            probe = _StatusEffect("蔓咒", atk_pct=-8, is_debuff=True, source=actor)
+            if not self._can_receive_status_stack(target, probe):
+                break
+            self._add_status(target, probe)
+            added_manzhou += 1
+        added_pobu = self._add_pobu(target, actor, counts["破步"])
+        added_wound = self._add_wound(target, actor, counts["创伤"])
+        added_zhoufu = 0
         for _ in range(counts["咒缚"]):
-            self._add_status(target, _StatusEffect("咒缚", damage_taken_pct=6, is_debuff=True, source=actor))
+            probe = _StatusEffect("咒缚", damage_taken_pct=6, is_debuff=True, source=actor)
+            if not self._can_receive_status_stack(target, probe):
+                break
+            self._add_status(target, probe)
+            added_zhoufu += 1
         added_leihen = 0
         for _ in range(counts["雷殛"]):
             added_leihen += self._add_target_leihen(target, actor)
-        logs.append(self._effect_log(round_no, target, f"万咒附加：灼烧 {counts['灼烧']}、蔓咒 {counts['蔓咒']}、破步 {counts['破步']}、创伤 {counts['创伤']}、咒缚 {counts['咒缚']}、雷殛 {added_leihen}。", actor_name=actor.snapshot.name))
+        logs.append(self._effect_log(round_no, target, f"万咒附加：灼烧 {counts['灼烧']}、蔓咒 {added_manzhou}、破步 {added_pobu}、创伤 {added_wound}、咒缚 {added_zhoufu}、雷殛 {added_leihen}。", actor_name=actor.snapshot.name))
         return logs
 
     def _spirit_ready(self, state: _CombatState, key: str, round_no: int) -> bool:
