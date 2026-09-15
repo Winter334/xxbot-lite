@@ -142,6 +142,7 @@ class _CombatState:
     huichun_triggered_thresholds: set[int] = field(default_factory=set)  # huichun 已触发的阈值（50/25）
     huyuan_heal_stacks: dict[int, int] = field(default_factory=dict)  # huyuan 单词条治疗叠加层数计数（key 为 affix 在 affixes 元组中的 index）
     is_first_mover: bool = False  # 追风：是否先手（首回合先行动者）
+    pending_overkill: int = 0  # 击杀瞬间的溢出余伤；复活检查点由涅槃补上
     dishi_last_round: int = 0  # 涤世上次触发回合（用于 1 回合冷却）
     jueming_mark_stacks: int = 0  # 绝命印记层数（被标记者更容易被绝命斩杀，不可净化）
     roller: random.Random | None = None  # 本场战斗 RNG；独立保存以避免服务实例并发串扰
@@ -1867,30 +1868,46 @@ class CombatService:
         power = state.snapshot.spirit_power
         if power is None or power.power_id != "niepan" or state.hp > 0:
             return []
-        cost = max(1, int(power.rolls.get("cost_stacks", 6)))
-        # 必须有足够生息才能复活
-        consumed = self._consume_shengxi(state, cost)
-        if consumed < cost:
-            # 生息不足，回滚（_consume_shengxi 已部分消耗时也回不来——但这里采用"先检查再消耗"逻辑）
-            return []
-        revive_pct = max(1, int(power.rolls.get("revive_hp_pct", 30)))
-        max_hp = state.get_max_hp()
-        heal_amount = max(1, int(max_hp * revive_pct / 100))
-        state.hp = min(max_hp, heal_amount)
-        state.niepan_revive_count += 1
-        # 累加 atk_pct + agility_pct 永久 buff（duration=None，hits=None）
-        atk_bonus = max(0, int(power.rolls.get("per_revive_atk_pct", 0)))
-        speed_bonus = max(0, int(power.rolls.get("per_revive_speed_pct", 0)))
-        if atk_bonus > 0 or speed_bonus > 0:
-            self._add_status(state, _StatusEffect("涅槃·余烬", atk_pct=atk_bonus, agility_pct=speed_bonus))
-        base_msg = f"{state.snapshot.name} 涅槃再起（第 {state.niepan_revive_count} 次），消耗 {cost} 层生息回复 {format_big_number(heal_amount)} 点生命，余血 {format_big_number(state.hp)}；杀伐 +{atk_bonus}%、身法 +{speed_bonus}%（持续生效）。"
-        return [
-            self._hp_change_log(
-                round_no,
-                state,
-                base_msg,
+        logs: list[ActionLog] = []
+        while state.hp <= 0:
+            cost = max(1, int(power.rolls.get("cost_stacks", 6)))
+            # 必须有足够生息才能复活
+            consumed = self._consume_shengxi(state, cost)
+            if consumed < cost:
+                # 生息不足，彻底倒地；残留余伤一并作废
+                state.pending_overkill = 0
+                return logs
+            revive_pct = max(1, int(power.rolls.get("revive_hp_pct", 30)))
+            max_hp = state.get_max_hp()
+            heal_amount = max(1, int(max_hp * revive_pct / 100))
+            state.hp = min(max_hp, heal_amount)
+            state.niepan_revive_count += 1
+            # 累加 atk_pct + agility_pct 永久 buff（duration=None，hits=None）
+            atk_bonus = max(0, int(power.rolls.get("per_revive_atk_pct", 0)))
+            speed_bonus = max(0, int(power.rolls.get("per_revive_speed_pct", 0)))
+            if atk_bonus > 0 or speed_bonus > 0:
+                self._add_status(state, _StatusEffect("涅槃·余烬", atk_pct=atk_bonus, agility_pct=speed_bonus))
+            logs.append(
+                self._hp_change_log(
+                    round_no,
+                    state,
+                    f"{state.snapshot.name} 涅槃再起（第 {state.niepan_revive_count} 次），消耗 {cost} 层生息回复 {format_big_number(heal_amount)} 点生命，余血 {format_big_number(state.hp)}；杀伐 +{atk_bonus}%、身法 +{speed_bonus}%（持续生效）。",
+                )
             )
-        ]
+            # 余伤追身：击杀当下的溢出伤害在复活后继续结算，可能连环再杀、直至生息耗尽或余伤打完
+            if state.pending_overkill > 0:
+                leftover = state.pending_overkill
+                applied = min(state.hp, leftover)
+                state.hp -= applied
+                state.pending_overkill = leftover - applied
+                logs.append(
+                    self._hp_change_log(
+                        round_no,
+                        state,
+                        f"{state.snapshot.name} 涅槃余烬未稳，余劲追身补上 {format_big_number(applied)} 点余伤，余血 {format_big_number(state.hp)}。",
+                    )
+                )
+        return logs
 
     def _revive_checkpoint(self, round_no: int, *states: _CombatState) -> list[ActionLog]:
         """Resolve both combatants' revives after a complete effect chain."""
@@ -2751,13 +2768,14 @@ class CombatService:
                     remaining = self._consume_shield_and_settle_liekai(state, actor, remaining, round_no, logs)
                 else:
                     remaining = self._consume_shield(state, remaining)
-        final_segment = min(
-            state.hp,
-            resilient_damage(raw_reaching_hp + remaining) - resilient_damage(raw_reaching_hp),
-        )
+        total_resilient = resilient_damage(raw_reaching_hp + remaining) - resilient_damage(raw_reaching_hp)
+        final_segment = min(state.hp, total_resilient)
         state.hp -= final_segment
         actual_damage += final_segment
         pending_hp_log += final_segment
+        if total_resilient > final_segment:
+            # 击杀瞬间的溢出余伤暂存：涅槃复活时补上，避免超额伤害被复活无成本吞掉
+            state.pending_overkill += total_resilient - final_segment
         self._attach_or_log_damage(
             round_no, state, pending_hp_log, logs, actor=actor, cause=cause, replace_cause=not cause_written
         )
