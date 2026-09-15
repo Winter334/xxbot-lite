@@ -213,6 +213,7 @@ SPIRIT_POWER_DEFINITIONS = (
             f"濒死时若生息层数 ≥ {rolls.get('cost_stacks', 12)}，消耗 {rolls.get('cost_stacks', 12)} 层生息复活，"
             f"回复 {rolls.get('revive_hp_pct', rolls.get('heal_pct', 20))}% 最大生命；每次复活后永久提高 "
             f"{rolls.get('per_revive_atk_pct', 5)}% 杀伐与 {rolls.get('per_revive_speed_pct', 4)}% 身法（可叠加）；"
+            f"击杀当场的溢出余伤会在复活后继续追身结算，直至余伤打完或生息耗尽；"
             f"每次受到治疗时额外叠加 {rolls.get('heal_shengxi_bonus', 1)} 层生息（不计入护元上限）。"
         ),
     ),

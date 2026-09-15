@@ -452,7 +452,9 @@ def test_niepan_revives_after_chunsheng_followup_before_battle_result(services, 
         if state.snapshot.name == "追打者":
             combat._add_status(state, _StatusEffect("春生·追击", bonus_damage=200, remaining_hits=1))
         elif state.snapshot.name == "涅槃者":
-            combat._add_status(state, _StatusEffect("生息"))
+            # 余伤会追身连环结算，给足生息才能在 200 追伤下存活
+            for _ in range(4):
+                combat._add_status(state, _StatusEffect("生息"))
         return logs
 
     monkeypatch.setattr(combat, "_trigger_battle_start", battle_start)
@@ -475,6 +477,61 @@ def test_niepan_revives_after_chunsheng_followup_before_battle_result(services, 
     revive_index = next(i for i, log in enumerate(battle.logs) if log.text and "涅槃再起" in log.text)
     assert followup_index < revive_index
     assert battle.defender_hp_after > 0
+
+
+def test_niepan_overkill_carries_through_revives_and_kills(services) -> None:
+    """一拳十亿：溢出余伤追身，生息存量被一次性打穿。"""
+    combat = services.combat
+    victim = _spirit_state(
+        services,
+        "涅槃者",
+        spirit_power=SpiritPowerEntry(
+            "niepan",
+            {"cost_stacks": 6, "revive_hp_pct": 30, "per_revive_atk_pct": 0, "per_revive_speed_pct": 0},
+        ),
+    )
+    attacker = _spirit_state(services, "巨拳", atk=10**9)
+    for _ in range(12):  # 12 層生息 = 2 次復活
+        combat._add_status(victim, _StatusEffect("生息"))
+
+    combat._resolve_action(1, attacker, victim, CombatRoller([]), scene=set())
+
+    assert victim.hp <= 0
+    assert victim.pending_overkill > 0
+    logs = combat._revive_checkpoint(1, attacker, victim)
+
+    assert sum(1 for log in logs if log.text and "涅槃再起" in log.text) == 2
+    assert sum(1 for log in logs if log.text and "余劲追身" in log.text) == 2
+    assert victim.hp <= 0  # 生息耗尽，徹底倒地
+    assert victim.pending_overkill == 0
+
+
+def test_niepan_overkill_survives_when_leftover_runs_out(services) -> None:
+    """余伤小于复活血量时，追身一次后存活。"""
+    combat = services.combat
+    victim = _spirit_state(
+        services,
+        "涅槃者",
+        spirit_power=SpiritPowerEntry(
+            "niepan",
+            {"cost_stacks": 6, "revive_hp_pct": 30, "per_revive_atk_pct": 0, "per_revive_speed_pct": 0},
+        ),
+    )
+    attacker = _spirit_state(services, "中拳", atk=1200)
+    for _ in range(12):
+        combat._add_status(victim, _StatusEffect("生息"))
+
+    combat._resolve_action(1, attacker, victim, CombatRoller([]), scene=set())
+    assert victim.hp <= 0 and victim.pending_overkill > 0
+    revive_hp = victim.get_max_hp() * 30 // 100
+
+    logs = combat._revive_checkpoint(1, attacker, victim)
+
+    assert sum(1 for log in logs if log.text and "涅槃再起" in log.text) == 1
+    assert sum(1 for log in logs if log.text and "余劲追身" in log.text) == 1
+    assert victim.hp > 0
+    assert victim.hp < revive_hp  # 余伤确实扣了血
+    assert victim.pending_overkill == 0
 
 
 def test_spirit_power_pool_expands_to_twenty_entries() -> None:
