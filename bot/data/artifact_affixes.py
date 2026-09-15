@@ -581,3 +581,11 @@ AFFIX_SPECIFY_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 
 def get_artifact_affix_definition(affix_id: str) -> ArtifactAffixDefinition:
     return ARTIFACT_AFFIXES_BY_ID[affix_id]
+
+
+def get_default_burn_atk_pct() -> int:
+    """灼魂未装备时，其他来源（秽生/焚脉/万咒/烬火等）附加灼烧的默認每層殺伐%。取灼魂 burn_atk_pct 的下限，改灼魂 roll 範圍時自動跟隨。"""
+    for key, low, _high in ARTIFACT_AFFIXES_BY_ID["zhuohun"].roll_ranges:
+        if key == "burn_atk_pct":
+            return low
+    return 2
