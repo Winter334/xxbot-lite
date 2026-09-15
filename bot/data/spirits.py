@@ -150,9 +150,9 @@ SPIRIT_POWER_DEFINITIONS = (
         roll_ranges_by_tier=_tier_rolls(
             low=(("omen_cost", 9, 9), ("hp_pct", 1, 5), ("heal_down_pct", 1, 5)),
             mid=(("omen_cost", 8, 8), ("hp_pct", 5, 10), ("heal_down_pct", 5, 10)),
-            high=(("omen_cost", 7, 7), ("hp_pct", 10, 15), ("heal_down_pct", 10, 15)),
-            peak=(("omen_cost", 6, 6), ("hp_pct", 15, 20), ("heal_down_pct", 15, 20)),
-            supreme=(("omen_cost", 5, 5), ("hp_pct", 25, 35), ("heal_down_pct", 20, 25)),
+            high=(("omen_cost", 7, 7), ("hp_pct", 15, 25), ("heal_down_pct", 10, 15)),
+            peak=(("omen_cost", 6, 6), ("hp_pct", 25, 30), ("heal_down_pct", 15, 20)),
+            supreme=(("omen_cost", 5, 5), ("hp_pct", 33, 35), ("heal_down_pct", 20, 25)),
         ),
         description_builder=lambda rolls: (
             f"回合结束时，若目标咒印≥{rolls['omen_cost']}层，消耗{rolls['omen_cost']}层咒印凝成 1 层死兆；"
@@ -166,9 +166,9 @@ SPIRIT_POWER_DEFINITIONS = (
         roll_ranges_by_tier=_tier_rolls(
             low=(("def_pct", 10, 10), ("proc_pct", 1, 10), ("heal_down_pct", 10, 20)),
             mid=(("def_pct", 30, 30), ("proc_pct", 10, 20), ("heal_down_pct", 20, 30)),
-            high=(("def_pct", 50, 50), ("proc_pct", 20, 30), ("heal_down_pct", 30, 40)),
-            peak=(("def_pct", 80, 80), ("proc_pct", 30, 40), ("heal_down_pct", 40, 50)),
-            supreme=(("def_pct", 100, 100), ("proc_pct", 45, 55), ("heal_down_pct", 50, 60)),
+            high=(("def_pct", 50, 50), ("proc_pct", 25, 35), ("heal_down_pct", 50, 50)),
+            peak=(("def_pct", 80, 80), ("proc_pct", 40, 50), ("heal_down_pct", 40, 50)),
+            supreme=(("def_pct", 100, 100), ("proc_pct", 55, 65), ("heal_down_pct", 20, 30)),
         ),
         description_builder=lambda rolls: (
             f"战斗开始时最大生命提高 {rolls['def_pct']}%；每次受到伤害时，有 {rolls['proc_pct']}% 概率完全格挡；"
@@ -203,11 +203,11 @@ SPIRIT_POWER_DEFINITIONS = (
         "niepan",
         "涅槃",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("revive_hp_pct", 10, 15), ("cost_stacks", 12, 12), ("per_revive_atk_pct", 6, 10), ("per_revive_speed_pct", 5, 9), ("heal_shengxi_bonus", 1, 1)),
-            mid=(("revive_hp_pct", 15, 20), ("cost_stacks", 10, 10), ("per_revive_atk_pct", 8, 13), ("per_revive_speed_pct", 7, 11), ("heal_shengxi_bonus", 1, 1)),
-            high=(("revive_hp_pct", 20, 25), ("cost_stacks", 8, 8), ("per_revive_atk_pct", 12, 17), ("per_revive_speed_pct", 10, 15), ("heal_shengxi_bonus", 1, 2)),
-            peak=(("revive_hp_pct", 25, 30), ("cost_stacks", 7, 7), ("per_revive_atk_pct", 15, 21), ("per_revive_speed_pct", 12, 18), ("heal_shengxi_bonus", 2, 3)),
-            supreme=(("revive_hp_pct", 30, 35), ("cost_stacks", 6, 6), ("per_revive_atk_pct", 25, 30), ("per_revive_speed_pct", 16, 22), ("heal_shengxi_bonus", 2, 3)),
+            low=(("revive_hp_pct", 10, 15), ("cost_stacks", 28, 20), ("per_revive_atk_pct", 6, 10), ("per_revive_speed_pct", 5, 9), ("heal_shengxi_bonus", 1, 1)),
+            mid=(("revive_hp_pct", 15, 20), ("cost_stacks", 15, 18), ("per_revive_atk_pct", 8, 15), ("per_revive_speed_pct", 7, 11), ("heal_shengxi_bonus", 1, 1)),
+            high=(("revive_hp_pct", 20, 25), ("cost_stacks", 12, 15), ("per_revive_atk_pct", 20, 25), ("per_revive_speed_pct", 10, 15), ("heal_shengxi_bonus", 1, 2)),
+            peak=(("revive_hp_pct", 25, 30), ("cost_stacks", 10, 12), ("per_revive_atk_pct", 28, 33), ("per_revive_speed_pct", 12, 18), ("heal_shengxi_bonus", 2, 3)),
+            supreme=(("revive_hp_pct", 30, 35), ("cost_stacks", 7, 9), ("per_revive_atk_pct", 35, 40), ("per_revive_speed_pct", 20, 30), ("heal_shengxi_bonus", 2, 3)),
         ),
         description_builder=lambda rolls: (
             f"濒死时若生息层数 ≥ {rolls.get('cost_stacks', 12)}，消耗 {rolls.get('cost_stacks', 12)} 层生息复活，"
@@ -428,10 +428,10 @@ SPIRIT_POWER_DEFINITIONS = (
         "雷罚",
         roll_ranges_by_tier=_tier_rolls(
             low=(("cost_stacks", 8, 10), ("strikes_min", 1, 1), ("strikes_max", 2, 2), ("burst_pct", 20, 30)),
-            mid=(("cost_stacks", 6, 8), ("strikes_min", 1, 1), ("strikes_max", 2, 3), ("burst_pct", 25, 35)),
-            high=(("cost_stacks", 6, 7), ("strikes_min", 1, 2), ("strikes_max", 3, 4), ("burst_pct", 30, 45)),
-            peak=(("cost_stacks", 5, 6), ("strikes_min", 2, 3), ("strikes_max", 4, 5), ("burst_pct", 40, 55)),
-            supreme=(("cost_stacks", 3, 4), ("strikes_min", 3, 6), ("strikes_max", 6, 9), ("burst_pct", 60, 80)),
+            mid=(("cost_stacks", 6, 8), ("strikes_min", 1, 1), ("strikes_max", 2, 3), ("burst_pct", 40, 50)),
+            high=(("cost_stacks", 6, 7), ("strikes_min", 1, 2), ("strikes_max", 3, 4), ("burst_pct", 60, 70)),
+            peak=(("cost_stacks", 5, 6), ("strikes_min", 2, 3), ("strikes_max", 4, 5), ("burst_pct", 80, 90)),
+            supreme=(("cost_stacks", 3, 4), ("strikes_min", 3, 6), ("strikes_max", 6, 9), ("burst_pct", 90, 100)),
         ),
         description_builder=lambda rolls: (
             f"命中后若目标雷殛不少于 {rolls['cost_stacks']} 层，消耗 {rolls['cost_stacks']} 层，"
@@ -447,7 +447,7 @@ SPIRIT_POWER_DEFINITIONS = (
             mid=(("cost_stacks", 7, 11), ("per_burn_pct", 20, 40), ("wound_stacks", 2, 2)),
             high=(("cost_stacks", 6, 10), ("per_burn_pct", 40, 60), ("wound_stacks", 3, 3)),
             peak=(("cost_stacks", 5, 9), ("per_burn_pct", 60, 80), ("wound_stacks", 4, 4)),
-            supreme=(("cost_stacks", 4, 8), ("per_burn_pct", 80, 100), ("wound_stacks", 5, 5)),
+            supreme=(("cost_stacks", 4, 8), ("per_burn_pct", 90, 120), ("wound_stacks", 5, 5)),
         ),
         description_builder=lambda rolls: (
             f"命中后每消耗 {rolls['cost_stacks']} 层灼烧引爆一次，每层造成 {rolls['per_burn_pct']}% 杀伐神通伤害（可被护盾抵挡），"

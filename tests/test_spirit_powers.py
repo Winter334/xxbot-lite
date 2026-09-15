@@ -586,10 +586,10 @@ async def test_existing_spirit_json_remains_compatible_after_pool_expansion(sess
 @pytest.mark.parametrize(
     ("power_id", "rolls", "expected"),
     [
-        ("xuanjia", {"proc_pct": 60, "reduce_pct": 100}, {"def_pct": 100, "proc_pct": 55, "heal_down_pct": 50}),
+        ("xuanjia", {"proc_pct": 60, "reduce_pct": 100}, {"def_pct": 100, "proc_pct": 60, "heal_down_pct": 20}),
         ("jinmai", {"proc_pct": 85, "per_disrupt_pct": 10, "seal_stacks": 3}, {"proc_pct": 45, "per_disrupt_pct": 5}),
         ("zhuifeng", {"r1_crit_bonus": 100, "r1_agility_pct": 50, "r1_damage_pct": 480}, {"r1_crit_bonus": 50, "r1_agility_pct": 25}),
-        ("leifa", {"mark_crit_pct": 15, "mark_crit_damage_pct": 20, "thunder_pct": 450}, {"cost_stacks": 3, "strikes_min": 3, "strikes_max": 6, "burst_pct": 60}),
+        ("leifa", {"mark_crit_pct": 15, "mark_crit_damage_pct": 20, "thunder_pct": 450}, {"cost_stacks": 3, "strikes_min": 3, "strikes_max": 6, "burst_pct": 90}),
         (
             "wanzhou",
             {"curse_on_hit": 3, "extra_curse_pct": 0, "burst_threshold": 5, "debuff_rolls_per_curse": 6, "seal_weight": 12},
@@ -640,7 +640,7 @@ def test_legacy_proving_ground_spirits_use_current_rolls() -> None:
     )
 
     assert xuanjia.spirit_power is not None
-    assert xuanjia.spirit_power.rolls == {"def_pct": 100, "proc_pct": 55, "heal_down_pct": 50}
+    assert xuanjia.spirit_power.rolls == {"def_pct": 100, "proc_pct": 60, "heal_down_pct": 20}
     assert jinmai.spirit_power is not None
     assert jinmai.spirit_power.rolls == {"proc_pct": 45, "per_disrupt_pct": 5}
 
@@ -672,7 +672,7 @@ def test_proving_ground_spirit_tier_changes_normalize_immediately(services) -> N
     proving_ground._apply_lingshi("accept", xuanjia, run, None)
     assert xuanjia.spirit_tier == "peak"
     assert xuanjia.spirit_power is not None
-    assert xuanjia.spirit_power.rolls == {"def_pct": 80, "proc_pct": 40, "heal_down_pct": 50}
+    assert xuanjia.spirit_power.rolls == {"def_pct": 80, "proc_pct": 50, "heal_down_pct": 50}
 
 
 def test_spirit_power_description_accepts_legacy_rolls() -> None:
@@ -1190,9 +1190,9 @@ def test_wanzhou_bursts_curse_seals_into_debuffs(services) -> None:
     [
         ("low", 10, (1, 10), (10, 20)),
         ("mid", 30, (10, 20), (20, 30)),
-        ("high", 50, (20, 30), (30, 40)),
-        ("peak", 80, (30, 40), (40, 50)),
-        ("supreme", 100, (45, 55), (50, 60)),
+        ("high", 50, (25, 35), (50, 50)),
+        ("peak", 80, (40, 50), (40, 50)),
+        ("supreme", 100, (55, 65), (20, 30)),
     ],
 )
 def test_xuanjia_tier_values_and_battle_start_hp(services, tier, def_pct, proc_range, heal_down_range) -> None:

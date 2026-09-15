@@ -159,7 +159,7 @@ class _CombatState:
 
 
 class CombatService:
-    max_rounds = 20
+    max_rounds = 35
 
     _RANDOM_DEBUFF_NAMES = ("蔓咒", "破步", "创伤", "灼烧")
     _RANDOM_BUFF_NAMES = ("增伤", "减伤", "身法", "杀伐")
