@@ -624,7 +624,7 @@ class CombatService:
             if entry.affix_id == "yangyuan" and state.hp > 0:
                 heal_pct = _roll(entry.rolls, "heal_pct", 0)
                 if heal_pct > 0:
-                    healed = self._heal(state, heal_pct)
+                    healed = self._heal(state, heal_pct, logs=logs)
                     if healed > 0:
                         logs.append(self._hp_change_log(round_no, state, f"{state.snapshot.name} 养元运转，回复 {format_big_number(healed)} 点生命，余血 {format_big_number(state.hp)}。"))
             elif entry.affix_id == "xuming" and state.hp > 0:
@@ -634,7 +634,7 @@ class CombatService:
                     heal_per_stack = _roll(entry.rolls, "heal_per_stack", 0)
                     heal_pct = consumed * heal_per_stack
                     if heal_pct > 0:
-                        healed = self._heal(state, heal_pct)
+                        healed = self._heal(state, heal_pct, logs=logs)
                         logs.append(self._hp_change_log(round_no, state, f"{state.snapshot.name} 续命发动，消耗 {consumed} 层生息回复 {format_big_number(healed)} 点生命，余血 {format_big_number(state.hp)}。"))
         for entry in state.snapshot.affixes:
             if not self._scene_matches(entry, scene):
@@ -688,7 +688,7 @@ class CombatService:
                     if removed_count > 0:
                         followups = self._trigger_cleanse_followups(round_no, state, removed_count, opponent)
                         heal_pct = _roll(entry.rolls, "heal_pct", 0)
-                        healed = self._heal(state, heal_pct)
+                        healed = self._heal(state, heal_pct, logs=logs)
                         logs.append(
                             self._hp_change_log(
                                 round_no,
@@ -1004,7 +1004,7 @@ class CombatService:
                     if curse_count > 0:
                         drain_per_mark = _roll(entry.rolls, "drain_per_mark_pct", 2)
                         drain_pct = curse_count * drain_per_mark
-                        healed = self._heal(actor, drain_pct)
+                        healed = self._heal(actor, drain_pct, logs=logs)
                         if healed > 0:
                             logs.append(self._hp_change_log(round_no, actor, f"{actor.snapshot.name} 噬取咒印之力，吸取 {format_big_number(healed)} 点生命（{curse_count} 层咒印），余血 {format_big_number(actor.hp)}。"))
                         else:
@@ -1410,7 +1410,7 @@ class CombatService:
             for entry in target.snapshot.affixes:
                 if entry.affix_id != "huichun" or not self._scene_matches(entry, scene):
                     continue
-                healed = self._heal(target, _roll(entry.rolls, "heal_pct", 0))
+                healed = self._heal(target, _roll(entry.rolls, "heal_pct", 0), logs=logs)
                 stacks = _roll(entry.rolls, "shengxi_stacks", 2)
                 for _ in range(stacks):
                     self._add_status(target, _StatusEffect("生息"))
@@ -1857,7 +1857,7 @@ class CombatService:
                 logs.extend(nested)
 
         if power.power_id == "huajing" and source == _DamageSource.ATTACK and target.hp > 0 and had_damage_reduction:
-            healed = self._heal_by_damage(target, actual_damage, power.rolls["convert_pct"])
+            healed = self._heal_by_damage(target, actual_damage, power.rolls["convert_pct"], logs=logs)
             if healed > 0:
                 logs.append(self._hp_change_log(round_no, target, f"{target.snapshot.name} 运转化劲，借承伤回转了 {format_big_number(healed)} 点生命，余血 {format_big_number(target.hp)}。"))
 
@@ -2766,7 +2766,7 @@ class CombatService:
         if actual_damage > 0 and actor is not None and actor is not state:
             power = actor.snapshot.spirit_power
             if power is not None and power.power_id == "shisheng":
-                healed = self._heal_by_damage(actor, actual_damage, _roll(power.rolls, "heal_pct", 0))
+                healed = self._heal_by_damage(actor, actual_damage, _roll(power.rolls, "heal_pct", 0), logs=logs)
                 if healed > 0 and logs is not None:
                     logs.append(
                         self._hp_change_log(
@@ -2879,7 +2879,7 @@ class CombatService:
             state.hp = min(state.hp, new_max)
         return new_max - before_max
 
-    def _heal(self, state: _CombatState, heal_pct: int) -> int:
+    def _heal(self, state: _CombatState, heal_pct: int, *, logs: list[ActionLog] | None = None) -> int:
         if state.hp <= 0:
             return 0
         heal_pct = max(1, int(heal_pct * max(0.1, 1 + self._heal_received_pct(state) / 100)))
@@ -2888,10 +2888,10 @@ class CombatService:
         before = state.hp
         state.hp = min(max_hp, state.hp + amount)
         healed = state.hp - before
-        self._trigger_heal_followups(state, healed)
+        self._trigger_heal_followups(state, healed, logs=logs)
         return healed
 
-    def _heal_by_damage(self, state: _CombatState, damage: int, heal_pct: int) -> int:
+    def _heal_by_damage(self, state: _CombatState, damage: int, heal_pct: int, *, logs: list[ActionLog] | None = None) -> int:
         if state.hp <= 0 or damage <= 0 or heal_pct <= 0:
             return 0
         amount = max(1, damage * heal_pct // 100)
@@ -2900,10 +2900,10 @@ class CombatService:
         before = state.hp
         state.hp = min(max_hp, state.hp + amount)
         healed = state.hp - before
-        self._trigger_heal_followups(state, healed)
+        self._trigger_heal_followups(state, healed, logs=logs)
         return healed
 
-    def _trigger_heal_followups(self, state: _CombatState, healed: int) -> None:
+    def _trigger_heal_followups(self, state: _CombatState, healed: int, *, logs: list[ActionLog] | None = None) -> None:
         if healed <= 0:
             return
         power = state.snapshot.spirit_power
@@ -2919,6 +2919,14 @@ class CombatService:
             shengxi_bonus = power.rolls.get("heal_shengxi_bonus", 0)
             for _ in range(shengxi_bonus):
                 self._add_status(state, _StatusEffect("生息"))
+            if shengxi_bonus > 0 and logs is not None:
+                logs.append(
+                    self._effect_log(
+                        state.current_round,
+                        state,
+                        f"{state.snapshot.name} 涅槃蕴息，叠加 {shengxi_bonus} 层生息（现有 {self._status_count(state, '生息')} 层）。",
+                    )
+                )
         # 护元（huyuan）：自身受到治疗时按 affix index 独立叠层（不超过 per_battle_cap）
         for index, entry in enumerate(state.snapshot.affixes):
             if entry.affix_id != "huyuan":
@@ -2928,6 +2936,14 @@ class CombatService:
             if current < cap:
                 state.huyuan_heal_stacks[index] = current + 1
                 self._add_status(state, _StatusEffect("生息"))
+                if logs is not None:
+                    logs.append(
+                        self._effect_log(
+                            state.current_round,
+                            state,
+                            f"{state.snapshot.name} 护元纳息，叠加 1 层生息（现有 {self._status_count(state, '生息')} 层）。",
+                        )
+                    )
 
     def _trigger_cleanse_followups(self, round_no: int, state: _CombatState, cleansed_layers: int, opponent: _CombatState) -> list[ActionLog]:
         """Called when effects are cleansed. Handles 转机 affix."""
@@ -2989,7 +3005,7 @@ class CombatService:
             heal_pct = _roll(entry.rolls, "heal_pct", 0)
             if heal_pct > 0:
                 total_heal = heal_pct * stacks
-                healed = self._heal(actor, total_heal)
+                healed = self._heal(actor, total_heal, logs=logs)
                 logs.append(
                     self._hp_change_log(
                         round_no,
