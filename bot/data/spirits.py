@@ -203,11 +203,11 @@ SPIRIT_POWER_DEFINITIONS = (
         "niepan",
         "涅槃",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("revive_hp_pct", 25, 30), ("cost_stacks", 12, 12), ("per_revive_atk_pct", 6, 10), ("per_revive_speed_pct", 5, 9), ("heal_shengxi_bonus", 1, 1)),
-            mid=(("revive_hp_pct", 30, 35), ("cost_stacks", 10, 10), ("per_revive_atk_pct", 8, 13), ("per_revive_speed_pct", 7, 11), ("heal_shengxi_bonus", 1, 1)),
-            high=(("revive_hp_pct", 35, 40), ("cost_stacks", 8, 8), ("per_revive_atk_pct", 12, 17), ("per_revive_speed_pct", 10, 15), ("heal_shengxi_bonus", 1, 2)),
-            peak=(("revive_hp_pct", 40, 45), ("cost_stacks", 7, 7), ("per_revive_atk_pct", 15, 21), ("per_revive_speed_pct", 12, 18), ("heal_shengxi_bonus", 2, 3)),
-            supreme=(("revive_hp_pct", 45, 50), ("cost_stacks", 6, 6), ("per_revive_atk_pct", 19, 26), ("per_revive_speed_pct", 16, 22), ("heal_shengxi_bonus", 2, 3)),
+            low=(("revive_hp_pct", 10, 15), ("cost_stacks", 12, 12), ("per_revive_atk_pct", 6, 10), ("per_revive_speed_pct", 5, 9), ("heal_shengxi_bonus", 1, 1)),
+            mid=(("revive_hp_pct", 15, 20), ("cost_stacks", 10, 10), ("per_revive_atk_pct", 8, 13), ("per_revive_speed_pct", 7, 11), ("heal_shengxi_bonus", 1, 1)),
+            high=(("revive_hp_pct", 20, 25), ("cost_stacks", 8, 8), ("per_revive_atk_pct", 12, 17), ("per_revive_speed_pct", 10, 15), ("heal_shengxi_bonus", 1, 2)),
+            peak=(("revive_hp_pct", 25, 30), ("cost_stacks", 7, 7), ("per_revive_atk_pct", 15, 21), ("per_revive_speed_pct", 12, 18), ("heal_shengxi_bonus", 2, 3)),
+            supreme=(("revive_hp_pct", 30, 35), ("cost_stacks", 6, 6), ("per_revive_atk_pct", 25, 30), ("per_revive_speed_pct", 16, 22), ("heal_shengxi_bonus", 2, 3)),
         ),
         description_builder=lambda rolls: (
             f"濒死时若生息层数 ≥ {rolls.get('cost_stacks', 12)}，消耗 {rolls.get('cost_stacks', 12)} 层生息复活，"
