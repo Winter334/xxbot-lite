@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.data.realms import RealmStage, get_next_stage, get_stage
+from bot.data.travel import TRAVEL_AGI_PCT_CAP, TRAVEL_ATK_PCT_CAP, TRAVEL_DEF_PCT_CAP
 from bot.models.artifact import Artifact
 from bot.models.character import Character
 from bot.models.ladder_record import LadderRecord
@@ -163,6 +164,9 @@ class CharacterService:
             character.sect_task_state_json = ""
         if not getattr(character, "retreat_mode", ""):
             character.retreat_mode = "cultivation"
+        character.travel_atk_pct = min(character.travel_atk_pct or 0, TRAVEL_ATK_PCT_CAP)
+        character.travel_def_pct = min(character.travel_def_pct or 0, TRAVEL_DEF_PCT_CAP)
+        character.travel_agi_pct = min(character.travel_agi_pct or 0, TRAVEL_AGI_PCT_CAP)
         if character.artifact is not None:
             self.spirit_service.ensure_compatibility(character.artifact)
 
@@ -352,9 +356,9 @@ class CharacterService:
         atk = stage.base_atk + artifact_atk_bonus
         defense = stage.base_def + artifact_def_bonus
         agility = stage.base_agi + artifact_agi_bonus
-        atk = int(atk * (1 + (character.travel_atk_pct or 0) / 100))
-        defense = int(defense * (1 + (character.travel_def_pct or 0) / 100))
-        agility = int(agility * (1 + (character.travel_agi_pct or 0) / 100))
+        atk = int(atk * (1 + min(character.travel_atk_pct or 0, TRAVEL_ATK_PCT_CAP) / 100))
+        defense = int(defense * (1 + min(character.travel_def_pct or 0, TRAVEL_DEF_PCT_CAP) / 100))
+        agility = int(agility * (1 + min(character.travel_agi_pct or 0, TRAVEL_AGI_PCT_CAP) / 100))
         atk = int(atk * self.fate_service.stat_multiplier(character.fate_key, "atk"))
         defense = int(defense * self.fate_service.stat_multiplier(character.fate_key, "def"))
         agility = int(agility * self.fate_service.stat_multiplier(character.fate_key, "agi"))

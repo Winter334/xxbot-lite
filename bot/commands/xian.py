@@ -23,6 +23,7 @@ from bot.views.panel import (
     send_public_battle_animation,
 )
 from bot.views.proving_ground import build_pg_entry_message
+from bot.views.realm_roles import claim_realm_role
 
 if TYPE_CHECKING:
     from bot.main import XianBot
@@ -120,6 +121,11 @@ class XianCommands(commands.Cog):
             ),
             delete_after=PUBLIC_PANEL_DELETE_AFTER,
         )
+
+    @app_commands.command(name="领取身份组", description="领取当前大境界对应的服务器身份组。")
+    @app_commands.guild_only()
+    async def claim_realm_role(self, interaction: discord.Interaction) -> None:
+        await claim_realm_role(self.bot, interaction)
 
     @app_commands.command(name="登塔", description="消耗 1 点气机，尝试冲击通天塔新高。")
     async def tower(self, interaction: discord.Interaction) -> None:

@@ -82,6 +82,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         ("atk_pct", 4, 9),
         description_builder=lambda rolls: (
             f"命中后必定凝成 1 层灵势；每层灵势提高 {rolls['atk_pct']}% 杀伐，最多 10 层"
+            f"（灵涌可容纳 20 层，杀伐收益仍计前 10 层）"
         ),
     ),
     _define(
@@ -114,6 +115,7 @@ ARTIFACT_AFFIX_DEFINITIONS = (
         description_builder=lambda rolls: (
             f"每回合开始获得 1 层灵势，最多 10 层；每层杀伐提高 {rolls['atk_pct']}%，"
             f"并额外提高 {rolls['late_damage_pct']}% 造成伤害"
+            f"（灵涌可容纳 20 层，超过 10 层不再增加杀伐与聚灵增伤）"
         ),
     ),
     _define(

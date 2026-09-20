@@ -4,7 +4,14 @@ from dataclasses import dataclass, field, replace
 import random
 
 from bot.data.artifact_affixes import ArtifactAffixEntry, get_artifact_affix_definition, get_default_burn_atk_pct
-from bot.data.spirits import SpiritPowerEntry
+from bot.data.spirits import (
+    LINGYONG_CLEANSE_STACKS_PER_DEBUFF,
+    LINGYONG_NORMAL_STACK_CAP,
+    LINGYONG_STACK_CAP,
+    LINGYONG_TRUE_DAMAGE_ATK_CAP_PCT,
+    LINGYONG_TRUE_DAMAGE_PER_STACK_PCT,
+    SpiritPowerEntry,
+)
 from bot.utils.formatters import clamp, format_big_number
 
 
@@ -28,7 +35,7 @@ class CombatantSnapshot:
     damage_taken_basis_points: int = 0
     damage_reduction_basis_points: int = 0
     versus_higher_realm_damage_basis_points: int = 0
-    base_resilience: int = 0  # 境界基础韧性 %（0-36），所有伤害均扣，仅"机制性必杀真伤"豁免
+    base_resilience: int = 0  # 境界基础韧性 %（0-36），机制性必杀与灵涌真伤豁免
 
 
 @dataclass(slots=True)
@@ -439,6 +446,7 @@ class CombatService:
                 scene=scene,
             )
         )
+        logs.extend(self._trigger_lingyong_strike(round_no, actor, target, scene))
         logs.extend(
             self._trigger_spirit_on_be_hit(
                 round_no,
@@ -604,7 +612,7 @@ class CombatService:
                         juling_atk_pct = _roll(entry.rolls, "atk_pct", 0)
                         break
                 for _ in range(start_stacks):
-                    if self._status_count(state, "灵势") >= 10:
+                    if self._status_count(state, "灵势") >= self._status_stack_cap("灵势", state):
                         break
                     self._add_status(state, _StatusEffect("灵势", atk_pct=juling_atk_pct))
                 logs.append(
@@ -642,17 +650,17 @@ class CombatService:
                 continue
             match entry.affix_id:
                 case "juling":
-                    if self._status_count(state, "灵势") >= 10:
+                    if self._status_count(state, "灵势") >= self._status_stack_cap("灵势", state):
                         continue
                     self._add_status(state, _StatusEffect("灵势", atk_pct=_roll(entry.rolls, "atk_pct", 0)))
                     current_layers = self._status_count(state, "灵势")
-                    # 每层灵势都叠 1 层聚灵通明，强化后期爆发
-                    self._add_status(state, _StatusEffect("聚灵通明", damage_dealt_pct=_roll(entry.rolls, "late_damage_pct", 8)))
+                    if current_layers <= LINGYONG_NORMAL_STACK_CAP:
+                        self._add_status(state, _StatusEffect("聚灵通明", damage_dealt_pct=_roll(entry.rolls, "late_damage_pct", 8)))
                     logs.append(
                         self._effect_log(
                             round_no,
                             state,
-                            f"{state.snapshot.name} 的聚灵凝成第 {current_layers} 层灵势，杀伐继续攀升。",
+                            f"{state.snapshot.name} 的聚灵凝成第 {current_layers} 层灵势。",
                         )
                     )
                 case "jinghua":
@@ -778,7 +786,7 @@ class CombatService:
             proc_pct = entry.rolls.get("proc_pct")
             match entry.affix_id:
                 case "ningshen":
-                    if self._status_count(actor, "灵势") >= 10:
+                    if self._status_count(actor, "灵势") >= self._status_stack_cap("灵势", actor):
                         continue
                     self._add_status(actor, _StatusEffect("灵势", atk_pct=_roll(entry.rolls, "atk_pct", 0)))
                     logs.append(self._effect_log(round_no, actor, f"{actor.snapshot.name} 凝神聚意，获得 1 层灵势。"))
@@ -2012,8 +2020,7 @@ class CombatService:
                     return 0
                 return power.rolls["base_pct"] + (affix_count - 2) * power.rolls["per_type_pct"]
             case "lingyong":
-                # 重做：灵涌仅按"自身灵势层数 × per_stack_pct%"计算增伤，不再叠正面层数权重。
-                lingshi_layers = self._status_count(actor, "灵势")
+                lingshi_layers = min(LINGYONG_NORMAL_STACK_CAP, self._status_count(actor, "灵势"))
                 return lingshi_layers * power.rolls.get("per_stack_pct", 0)
             case "zhuying":
                 actor_agi = self._current_agility(actor)
@@ -2134,7 +2141,16 @@ class CombatService:
         return max(1, int(state.snapshot.agility * (1 + (self._stat_bonus_pct(state, "agility_pct") + self._xuekuang_stat_pct(state)) / 100)))
 
     def _stat_bonus_pct(self, state: _CombatState, field_name: str) -> int:
-        return sum(getattr(status, field_name) * status.stacks for status in self._active_statuses(state))
+        total = 0
+        lingshi_remaining = LINGYONG_NORMAL_STACK_CAP
+        for status in self._active_statuses(state):
+            stacks = status.stacks
+            if status.name == "灵势":
+                # 超出十层仍可被驱散，但只参与灵涌真伤与净化，不放大三维。
+                stacks = min(stacks, lingshi_remaining)
+                lingshi_remaining -= stacks
+            total += getattr(status, field_name) * stacks
+        return total
 
     def _has_debuff(self, state: _CombatState) -> bool:
         return any(status.is_debuff for status in self._active_statuses(state))
@@ -2577,6 +2593,11 @@ class CombatService:
         return [status for status in state.statuses if status.is_active()]
 
     def _add_status(self, state: _CombatState, status: _StatusEffect) -> None:
+        if status.name == "灵势":
+            room = self._status_stack_cap("灵势", state) - self._status_count(state, "灵势")
+            if room <= 0:
+                return
+            status = replace(status, stacks=min(status.stacks, room))
         if self._can_merge_status(status):
             for existing in state.statuses:
                 if self._same_stackable_status(existing, status):
@@ -2679,13 +2700,15 @@ class CombatService:
         settle_liekai: bool = True,
         cause: ActionLog | None = None,
         can_fengdun_dodge: bool = True,
+        can_xuanjia_block: bool = True,
     ) -> int:
         """最底层扣血。
         - respects_resilience=True（默认）：扣减 state.snapshot.base_resilience % 后再扣血。
           普攻、反棘、归锋、追击、灼烧 DOT、春生、蚀焰等所有伤害管线最终都汇聚到这里。
-        - respects_resilience=False：豁免境界韧性。仅“机制性必杀真伤”使用。
+        - respects_resilience=False：豁免境界韧性。机制性必杀与灵涌真伤使用。
         - 绝命死兆伤害走普通伤害管线，由本函数处理。
         - can_fengdun_dodge：风遁持有者对此笔伤害独立闪避。普攻已在 _resolve_action 判过，传 False 避免重复判定。
+        - can_xuanjia_block：灵涌命中后的附加真伤不再判定格挡。
         """
         if damage <= 0 or state.hp <= 0:
             return 0
@@ -2694,7 +2717,7 @@ class CombatService:
                 round_no, state, 0, logs, actor=actor, cause=cause, replace_cause=True, allow_zero=True
             )
             return 0
-        if self._xuanjia_blocks(state, round_no, logs):
+        if can_xuanjia_block and self._xuanjia_blocks(state, round_no, logs):
             self._attach_or_log_damage(
                 round_no, state, 0, logs, actor=actor, cause=cause, replace_cause=True, allow_zero=True
             )
@@ -3155,11 +3178,15 @@ class CombatService:
     def _is_pending_strike_status(self, status: _StatusEffect) -> bool:
         return status.bonus_damage > 0 or status.name in self._PENDING_STRIKE_STATUS_NAMES
 
-    def _status_stack_cap(self, name: str) -> int | None:
+    def _status_stack_cap(self, name: str, state: _CombatState | None = None) -> int | None:
+        if name == "灵势" and state is not None:
+            power = state.snapshot.spirit_power
+            if power is not None and power.power_id == "lingyong":
+                return LINGYONG_STACK_CAP
         return self._STATUS_STACK_CAPS.get(name)
 
     def _can_receive_status_stack(self, state: _CombatState, status: _StatusEffect) -> bool:
-        cap = self._status_stack_cap(status.name)
+        cap = self._status_stack_cap(status.name, state)
         if cap is None:
             return True
         return self._status_count(state, status.name) < cap
@@ -3204,12 +3231,14 @@ class CombatService:
         return logs
 
     def _trigger_spirit_round_start(self, round_no: int, state: _CombatState, opponent: _CombatState, roller: random.Random, scene: set[str] | None = None) -> list[ActionLog]:
-        """Handle spirit powers that trigger at round start (血狂 / 窃道)."""
+        """Handle spirit powers that trigger at round start."""
         power = state.snapshot.spirit_power
         if power is None:
             return []
         if power.power_id == "xuekuang":
             return self._trigger_xuekuang_round_start(round_no, state, scene)
+        if power.power_id == "lingyong":
+            return self._trigger_lingyong_cleanse(round_no, state, opponent, roller)
         if power.power_id != "qiedao":
             return []
         chain_pct = power.rolls.get("chain_pct", 5)
@@ -3277,6 +3306,83 @@ class CombatService:
                     break
                 continue
             break
+        return logs
+
+    def _trigger_lingyong_cleanse(
+        self,
+        round_no: int,
+        state: _CombatState,
+        opponent: _CombatState,
+        roller: random.Random,
+    ) -> list[ActionLog]:
+        if state.hp <= 0 or not self._spirit_ready(state, "lingyong_cleanse", round_no):
+            return []
+        self._mark_spirit_triggered(state, "lingyong_cleanse", round_no)
+        layers = min(LINGYONG_STACK_CAP, self._status_count(state, "灵势"))
+        had_burn = self._has_burn(state)
+        burn_source = self._burn_source(state)
+        removed = 0
+        for _ in range(layers // LINGYONG_CLEANSE_STACKS_PER_DEBUFF):
+            if self._remove_one_debuff(state) is None:
+                break
+            removed += 1
+        if removed == 0:
+            return []
+        logs = [
+            self._effect_log(
+                round_no,
+                state,
+                f"{state.snapshot.name} 灵涌涤身，以 {layers} 层灵势净化 {removed} 层负面效果。",
+            )
+        ]
+        logs.extend(self._trigger_cleanse_followups(round_no, state, removed, opponent))
+        logs.extend(
+            self._maybe_trigger_burn_exhausted(
+                burn_source or opponent, state, had_burn=had_burn, round_no=round_no, roller=roller
+            )
+        )
+        return logs
+
+    def _trigger_lingyong_strike(
+        self,
+        round_no: int,
+        actor: _CombatState,
+        target: _CombatState,
+        scene: set[str],
+    ) -> list[ActionLog]:
+        power = actor.snapshot.spirit_power
+        if power is None or power.power_id != "lingyong" or actor.hp <= 0 or target.hp <= 0:
+            return []
+        layers = min(LINGYONG_STACK_CAP, self._status_count(actor, "灵势"))
+        excess = layers - LINGYONG_NORMAL_STACK_CAP
+        if excess <= 0:
+            return []
+        hp_pct = excess * LINGYONG_TRUE_DAMAGE_PER_STACK_PCT
+        damage = min(
+            target.get_max_hp() * hp_pct // 100,
+            actor.snapshot.atk * LINGYONG_TRUE_DAMAGE_ATK_CAP_PCT // 100,
+        )
+        cause = self._effect_log(
+            round_no,
+            target,
+            f"{actor.snapshot.name} 灵涌贯体，{layers} 层灵势迸发 {hp_pct}% 最大生命真伤。",
+            actor_name=actor.snapshot.name,
+        )
+        logs = [cause]
+        # 只由主动普攻命中调用：不重复闪避、不计入反棘基数，护盾和低血线效果仍正常结算。
+        self._apply_damage(
+            target,
+            max(1, damage),
+            respects_resilience=False,
+            actor=actor,
+            round_no=round_no,
+            logs=logs,
+            scene=scene,
+            can_be_shielded=True,
+            cause=cause,
+            can_fengdun_dodge=False,
+            can_xuanjia_block=False,
+        )
         return logs
 
     def _trigger_spirit_round_end(self, round_no: int, state: _CombatState, opponent: _CombatState, roller: random.Random) -> list[ActionLog]:

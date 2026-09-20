@@ -50,6 +50,7 @@ from bot.services.artifact_service import AFFIX_SPECIFY_COST, AFFIX_SPECIFY_LING
 from bot.services.faction_service import FactionTarget
 from bot.services.ladder_service import ChallengeTarget
 from bot.utils.formatters import format_big_number
+from bot.views.realm_roles import claim_realm_role
 
 if TYPE_CHECKING:
     from bot.main import XianBot
@@ -1935,6 +1936,11 @@ class PanelView(OwnerLockedView):
         bot: XianBot = interaction.client  # type: ignore[assignment]
         embed, view = await build_pg_entry_message(bot, interaction.user.id, interaction.user.display_name)
         await _send_interaction_message(interaction, embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="领取身份组", style=discord.ButtonStyle.secondary, row=2)
+    async def realm_role_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        bot: XianBot = interaction.client  # type: ignore[assignment]
+        await claim_realm_role(bot, interaction)
 
     @discord.ui.button(label="立尊号", style=discord.ButtonStyle.secondary, emoji="👑", row=2)
     async def custom_title_button(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:

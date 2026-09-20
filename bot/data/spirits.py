@@ -7,6 +7,12 @@ from typing import Callable, Mapping
 RollValue = int | float
 RollMap = Mapping[str, RollValue]
 
+LINGYONG_STACK_CAP = 20
+LINGYONG_NORMAL_STACK_CAP = 10
+LINGYONG_CLEANSE_STACKS_PER_DEBUFF = 2
+LINGYONG_TRUE_DAMAGE_PER_STACK_PCT = 2
+LINGYONG_TRUE_DAMAGE_ATK_CAP_PCT = 300
+
 
 @dataclass(frozen=True, slots=True)
 class SpiritStatEntry:
@@ -148,11 +154,11 @@ SPIRIT_POWER_DEFINITIONS = (
         "jueming",
         "绝命",
         roll_ranges_by_tier=_tier_rolls(
-            low=(("omen_cost", 9, 9), ("hp_pct", 1, 5), ("heal_down_pct", 1, 5)),
-            mid=(("omen_cost", 8, 8), ("hp_pct", 5, 10), ("heal_down_pct", 5, 10)),
-            high=(("omen_cost", 7, 7), ("hp_pct", 15, 25), ("heal_down_pct", 10, 15)),
-            peak=(("omen_cost", 6, 6), ("hp_pct", 25, 30), ("heal_down_pct", 15, 20)),
-            supreme=(("omen_cost", 5, 5), ("hp_pct", 33, 35), ("heal_down_pct", 20, 25)),
+            low=(("omen_cost", 8, 8), ("hp_pct", 1, 5), ("heal_down_pct", 1, 5)),
+            mid=(("omen_cost", 7, 7), ("hp_pct", 5, 10), ("heal_down_pct", 5, 10)),
+            high=(("omen_cost", 6, 6), ("hp_pct", 15, 25), ("heal_down_pct", 10, 15)),
+            peak=(("omen_cost", 5, 5), ("hp_pct", 25, 30), ("heal_down_pct", 15, 20)),
+            supreme=(("omen_cost", 4, 4), ("hp_pct", 33, 35), ("heal_down_pct", 20, 25)),
         ),
         description_builder=lambda rolls: (
             f"回合结束时，若目标咒印≥{rolls['omen_cost']}层，消耗{rolls['omen_cost']}层咒印凝成 1 层死兆；"
@@ -300,7 +306,12 @@ SPIRIT_POWER_DEFINITIONS = (
         ),
         description_builder=lambda rolls: (
             f"战斗开始时获得 {rolls['start_stacks']} 层灵势；"
-            f"自身每层灵势额外提高造成伤害 {rolls['per_stack_pct']}%（与聚灵词条联动加速爆发）。"
+            f"自身灵势可净化，上限 {LINGYONG_STACK_CAP} 层，属性加成与每层 {rolls['per_stack_pct']}% 器灵增伤仅计前 {LINGYONG_NORMAL_STACK_CAP} 层。"
+            f"回合开始词条结算后，按当前灵势每满 {LINGYONG_CLEANSE_STACKS_PER_DEBUFF} 层净化自身 1 层负面（灼烧优先），不消耗灵势。"
+            f"主攻命中时，超过 {LINGYONG_NORMAL_STACK_CAP} 层的每层追加目标最大生命 {LINGYONG_TRUE_DAMAGE_PER_STACK_PCT}% 真伤"
+            f"（最高 {(LINGYONG_STACK_CAP - LINGYONG_NORMAL_STACK_CAP) * LINGYONG_TRUE_DAMAGE_PER_STACK_PCT}%，"
+            f"且不超过自身入场杀伐的 {LINGYONG_TRUE_DAMAGE_ATK_CAP_PCT // 100} 倍）；"
+            f"不暴击，不受增减伤、易伤、韧性或格挡影响，可被护盾吸收。主攻闪避及追击、反击、持续伤害均不触发。"
         ),
     ),
     _define_power(

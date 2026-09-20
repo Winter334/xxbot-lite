@@ -5,6 +5,7 @@ from datetime import timedelta
 import random
 
 from bot.data.realms import get_stage
+from bot.data.travel import TRAVEL_AGI_PCT_CAP, TRAVEL_ATK_PCT_CAP, TRAVEL_DEF_PCT_CAP
 from bot.models.character import Character
 from bot.services.fate_service import FateService
 from bot.utils.time_utils import ensure_shanghai, now_shanghai
@@ -170,7 +171,11 @@ class TravelService:
                 pieces.append("得荣誉「" + "」「".join(gained_honor_tags) + "」")
             if gained_fate_names:
                 pieces.append("得命格「" + "」「".join(gained_fate_names) + "」")
-            character.last_highlight_text = f"方才游历归来，{'，'.join(pieces)}。"
+            character.last_highlight_text = (
+                f"方才游历归来，{'，'.join(pieces)}。"
+                if pieces
+                else "方才游历归来，此行虽无所得，却也算见过山海。"
+            )
         elif completed:
             character.last_highlight_text = "方才游历归来，此行虽无所得，却也算见过山海。"
         else:
@@ -243,9 +248,15 @@ class TravelService:
             character.artifact.soul_shards = max(0, (character.artifact.soul_shards or 0) + soul_delta)
         if cultivation_delta:
             character.cultivation = max(0, character.cultivation + cultivation_delta)
-        character.travel_atk_pct += atk_pct_delta
-        character.travel_def_pct += def_pct_delta
-        character.travel_agi_pct += agi_pct_delta
+        character.travel_atk_pct, atk_pct_delta = self._apply_stat_bonus(
+            character.travel_atk_pct, atk_pct_delta, TRAVEL_ATK_PCT_CAP
+        )
+        character.travel_def_pct, def_pct_delta = self._apply_stat_bonus(
+            character.travel_def_pct, def_pct_delta, TRAVEL_DEF_PCT_CAP
+        )
+        character.travel_agi_pct, agi_pct_delta = self._apply_stat_bonus(
+            character.travel_agi_pct, agi_pct_delta, TRAVEL_AGI_PCT_CAP
+        )
         result_text = self._format_result_text(
             soul_delta,
             cultivation_delta,
@@ -272,6 +283,13 @@ class TravelService:
             gained_fate_name=gained_fate_name,
             broadcast_text=broadcast_text,
         )
+
+    @staticmethod
+    def _apply_stat_bonus(current_pct: int | None, rolled_delta: int, cap: int) -> tuple[int, int]:
+        # Legacy excess is normalization, not a loss from this event.
+        previous_pct = min(current_pct or 0, cap)
+        updated_pct = min(previous_pct + rolled_delta, cap)
+        return updated_pct, updated_pct - previous_pct
 
     def _roll_event(self) -> TravelEventDefinition:
         # 游历遗痕仍然保留，但涉及三维永久变化的奇遇改为低概率触发。
