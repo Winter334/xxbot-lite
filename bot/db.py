@@ -7,6 +7,7 @@ from pathlib import Path
 from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
+from bot.data.travel import TRAVEL_AGI_PCT_CAP, TRAVEL_ATK_PCT_CAP, TRAVEL_DEF_PCT_CAP
 from bot.models.base import Base
 
 
@@ -241,6 +242,16 @@ async def ensure_schema_compatibility(engine: AsyncEngine) -> None:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN travel_def_pct INTEGER NOT NULL DEFAULT 0"))
         if needs_travel_agi_pct:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN travel_agi_pct INTEGER NOT NULL DEFAULT 0"))
+        await connection.execute(
+            text(
+                "UPDATE characters SET "
+                "travel_atk_pct = MIN(travel_atk_pct, :atk_cap), "
+                "travel_def_pct = MIN(travel_def_pct, :def_cap), "
+                "travel_agi_pct = MIN(travel_agi_pct, :agi_cap) "
+                "WHERE travel_atk_pct > :atk_cap OR travel_def_pct > :def_cap OR travel_agi_pct > :agi_cap"
+            ),
+            {"atk_cap": TRAVEL_ATK_PCT_CAP, "def_cap": TRAVEL_DEF_PCT_CAP, "agi_cap": TRAVEL_AGI_PCT_CAP},
+        )
         if needs_faction:
             await connection.execute(text("ALTER TABLE characters ADD COLUMN faction VARCHAR(16) NOT NULL DEFAULT 'neutral'"))
         if needs_virtue:

@@ -170,12 +170,6 @@ _DISHI_MAX = {
 }
 
 
-# 绝命 omen_cost 按品阶固定值（越高品阶越小）
-_JUEMING_OMEN_COST: dict[str, int] = {
-    "low": 9, "mid": 8, "high": 7, "peak": 6, "supreme": 5,
-}
-
-
 def _tier_low_rolls(power_id: str, tier: str) -> dict[str, int | float]:
     try:
         definition = get_spirit_power_definition(power_id)
@@ -207,15 +201,14 @@ def _clamp_legacy_rolls(power_id: str, tier: str, rolls: dict[str, int | float])
         clamped.pop("execute_pct", None)
         clamped.pop("max_stacks", None)
         clamped.pop("damage_pct", None)
-        fixed = _JUEMING_OMEN_COST.get(tier)
-        if fixed is not None:
-            clamped["omen_cost"] = fixed
         definition = get_spirit_power_definition(power_id)
         ranges = definition.roll_ranges_by_tier.get(tier)
         if ranges is not None:
             for key, low, high in ranges:
-                if key in {"hp_pct", "heal_down_pct"} and key in clamped:
-                    clamped[key] = max(low, min(clamped[key], high))
+                if key == "omen_cost":
+                    clamped[key] = low
+                elif key in {"hp_pct", "heal_down_pct"}:
+                    clamped[key] = max(low, min(clamped.get(key, low), high))
     elif power_id in {"xuanjia", "jinmai", "zhuifeng", "leifa", "wanzhou", "qiedao", "shisheng", "xuekuang", "niepan", "chunsheng"}:
         # 涅槃/春生效果调整后加入：按当前区间重建，缺失 key 补下限、废弃 key（revive_shield_pct / heal_shengxi_bonus）自动移除
         definition = get_spirit_power_definition(power_id)
@@ -717,7 +710,7 @@ class SpiritService:
         for key, low, _high in new_ranges:
             if adjusted_rolls.get(key, 0) < low:
                 adjusted_rolls[key] = low
-        # 绝命 max_stacks 是「越小越好」的字段，强制覆盖为新品阶固定值
+        # 绝命 omen_cost 是「越小越好」的字段，强制覆盖为新品阶固定值
         adjusted_rolls = _clamp_legacy_rolls(spirit_before.power.power_id, next_tier_key, adjusted_rolls)
         new_power = SpiritPowerEntry(power_id=spirit_before.power.power_id, rolls=adjusted_rolls)
 
