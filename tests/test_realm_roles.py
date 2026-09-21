@@ -134,7 +134,7 @@ class DiscordHarness:
         self.session.__aenter__.return_value = self.session
         self.session.commit.side_effect = AssertionError("Claims must not commit game state")
         self.bot = SimpleNamespace(
-            settings=SimpleNamespace(realm_role_ids={}),
+            settings=SimpleNamespace(realm_role_ids={}, realm_role_cleanup_ids=frozenset()),
             session_factory=Mock(return_value=self.session),
             character_service=SimpleNamespace(
                 get_character_by_discord_id=AsyncMock(side_effect=self._lookup),
@@ -357,6 +357,8 @@ async def test_unopened_realm_or_stage_is_rejected_even_with_configured_id(
     harness.character.realm_key = realm_key
     harness.character.stage_key = stage_key
     harness.bot.settings.realm_role_ids = {realm_key: harness.immortals[0].id}
+    harness.bot.settings.realm_role_cleanup_ids = frozenset(role.id for role in harness.immortals)
+    harness.member.roles.extend(harness.immortals)
 
     await claim_realm_role(harness.bot, harness.interaction)
 
@@ -396,6 +398,74 @@ async def test_replaces_all_old_realms_after_add_and_preserves_unrelated_and_imm
     assert set(harness.member.roles) == {
         harness.everyone, harness.unrelated, target, *harness.immortals
     }
+
+
+@pytest.mark.parametrize("has_target", [False, True], ids=["new-target", "existing-target"])
+async def test_cleanup_removes_only_selected_legacy_roles_once_and_preserves_target(
+    harness, has_target
+) -> None:
+    target = harness.roles["zhuji"]
+    old_roles = [harness.roles["lianqi"], harness.roles["jiedan"]]
+    decorated = FakeRole(5000, f"[legacy] {REALM_NAMES['jiedan']}")
+    unconfigured = FakeRole(5001, decorated.name)
+    harness.guild_roles.extend([decorated, unconfigured])
+    harness.member.roles.extend([*old_roles, decorated, unconfigured, *harness.immortals])
+    if has_target:
+        harness.member.roles.append(target)
+    harness.bot.settings.realm_role_ids = {"lianqi": old_roles[0].id}
+    legacy_roles = [decorated, harness.immortals[0], harness.immortals[-1]]
+    harness.bot.settings.realm_role_cleanup_ids = frozenset(
+        [target.id, old_roles[0].id, *(role.id for role in legacy_roles)]
+    )
+
+    await claim_realm_role(harness.bot, harness.interaction)
+
+    _assert_private_followup(harness)
+    removed = harness.member.remove_roles.await_args.args
+    assert set(removed) == {*old_roles, *legacy_roles}
+    assert len(removed) == len(set(removed))
+    assert harness.member.remove_roles.await_count == 1
+    if has_target:
+        harness.member.add_roles.assert_not_called()
+    else:
+        assert harness.member.add_roles.await_count == 1
+        assert harness.member.add_roles.await_args.args == (target,)
+        assert harness.events.index("add_roles") < harness.events.index("remove_roles")
+    expected = {
+        harness.everyone, harness.unrelated, target, unconfigured, *harness.immortals[1:-1]
+    }
+    assert set(harness.member.roles) == expected
+
+    harness.member.add_roles.reset_mock()
+    harness.member.remove_roles.reset_mock()
+    harness.new_interaction()
+    await claim_realm_role(harness.bot, harness.interaction)
+
+    _assert_private_followup(harness)
+    _assert_no_role_writes(harness)
+    assert set(harness.member.roles) == expected
+
+
+async def test_cleanup_ignores_missing_other_guild_and_unheld_ids(harness) -> None:
+    deleted = FakeRole(7000, "deleted legacy", permissions=discord.Permissions(administrator=True))
+    other_guild = FakeRole(7001, "other guild legacy", managed=True)
+    harness.guild.roles = [*harness.guild_roles, other_guild]
+    harness.member.roles.append(deleted)
+    unheld = harness.immortals[0]
+    unheld.permissions = discord.Permissions(administrator=True)
+    harness.bot.settings.realm_role_cleanup_ids = frozenset(
+        {deleted.id, other_guild.id, unheld.id, 999999}
+    )
+    original_roles = set(harness.member.roles)
+    target = harness.roles["zhuji"]
+
+    await claim_realm_role(harness.bot, harness.interaction)
+
+    _assert_private_followup(harness)
+    assert harness.member.add_roles.await_count == 1
+    assert harness.member.add_roles.await_args.args == (target,)
+    harness.member.remove_roles.assert_not_called()
+    assert set(harness.member.roles) == original_roles | {target}
 
 
 async def test_unrelated_role_added_concurrently_is_not_overwritten(harness) -> None:
@@ -467,9 +537,14 @@ async def test_target_requires_exact_name_and_missing_target_never_removes_old(h
         "stage": REALM_BY_KEYS[("zhuji", "early")].display_name,
         "whitespace": f" {target.name} ",
     }
+    legacy = harness.immortals[0]
+    cleanup_ids = {legacy.id}
     if variant != "missing":
-        harness.guild_roles.append(FakeRole(5000, variants[variant]))
-    harness.member.roles.append(harness.roles["lianqi"])
+        decoy = FakeRole(5000, variants[variant])
+        harness.guild_roles.append(decoy)
+        cleanup_ids.add(decoy.id)
+    harness.bot.settings.realm_role_cleanup_ids = frozenset(cleanup_ids)
+    harness.member.roles.extend([harness.roles["lianqi"], legacy])
 
     await claim_realm_role(harness.bot, harness.interaction)
 
@@ -607,20 +682,27 @@ async def test_bot_must_have_manage_roles_permission(harness, missing_bot_member
     _assert_no_role_writes(harness)
 
 
-@pytest.mark.parametrize("role_kind", ["target", "old"])
+@pytest.mark.parametrize("role_kind", ["target", "old", "cleanup"])
 @pytest.mark.parametrize(
     "problem",
     ["everyone", "managed", "unassignable", "equal-position", "higher-position", *UNSAFE_PERMISSIONS],
 )
 async def test_all_roles_are_preflighted_before_any_write(harness, role_kind, problem) -> None:
     key = "zhuji" if role_kind == "target" else "jiedan"
-    role = harness.roles[key]
-    harness.member.roles.append(harness.roles["lianqi"])
-    if role_kind == "old":
+    role = harness.immortals[0] if role_kind == "cleanup" else harness.roles[key]
+    safe_cleanup = harness.immortals[-1]
+    harness.member.roles.extend([harness.roles["lianqi"], safe_cleanup])
+    harness.bot.settings.realm_role_cleanup_ids = frozenset({safe_cleanup.id})
+    if role_kind != "target":
         harness.member.roles.append(role)
+    if role_kind == "cleanup":
+        harness.bot.settings.realm_role_cleanup_ids |= {role.id}
 
     if problem == "everyone":
-        harness.bot.settings.realm_role_ids = {key: harness.everyone.id}
+        if role_kind == "cleanup":
+            harness.bot.settings.realm_role_cleanup_ids |= {harness.everyone.id}
+        else:
+            harness.bot.settings.realm_role_ids = {key: harness.everyone.id}
     elif problem == "managed":
         role.managed = True
     elif problem == "unassignable":
@@ -636,9 +718,13 @@ async def test_all_roles_are_preflighted_before_any_write(harness, role_kind, pr
     _assert_no_role_writes(harness)
 
 
-@pytest.mark.parametrize("role_kind", ["target", "old"])
+@pytest.mark.parametrize("role_kind", ["target", "old", "cleanup"])
 async def test_fetched_role_permissions_override_stale_member_role_objects(harness, role_kind) -> None:
-    role = harness.roles["zhuji" if role_kind == "target" else "lianqi"]
+    if role_kind == "cleanup":
+        role = harness.immortals[0]
+        harness.bot.settings.realm_role_cleanup_ids = frozenset({role.id})
+    else:
+        role = harness.roles["zhuji" if role_kind == "target" else "lianqi"]
     harness.member.roles.append(FakeRole(role.id, "stale cached name"))
     role.permissions = discord.Permissions(administrator=True)
 
@@ -646,6 +732,23 @@ async def test_fetched_role_permissions_override_stale_member_role_objects(harne
 
     _assert_incomplete(_assert_private_followup(harness))
     _assert_no_role_writes(harness)
+
+
+async def test_cleanup_uses_fetched_safe_role_instead_of_stale_unsafe_member_role(harness) -> None:
+    role = harness.immortals[0]
+    stale = FakeRole(role.id, "stale legacy", permissions=discord.Permissions(administrator=True))
+    harness.member.roles.append(stale)
+    harness.bot.settings.realm_role_cleanup_ids = frozenset({role.id})
+
+    await claim_realm_role(harness.bot, harness.interaction)
+
+    _assert_private_followup(harness)
+    assert harness.member.add_roles.await_args.args == (harness.roles["zhuji"],)
+    harness.member.remove_roles.assert_awaited_once()
+    assert harness.member.remove_roles.await_args.args[0] is role
+    assert set(harness.member.roles) == {
+        harness.everyone, harness.unrelated, harness.roles["zhuji"]
+    }
 
 
 async def test_unsafe_unheld_realms_do_not_block_safe_claim(harness) -> None:
@@ -670,7 +773,9 @@ async def test_discord_failures_are_private_friendly_and_do_not_remove_old_roles
     harness, operation, error_type
 ) -> None:
     old = harness.roles["lianqi"]
-    harness.member.roles.append(old)
+    legacy = harness.immortals[0]
+    harness.member.roles.extend([old, legacy])
+    harness.bot.settings.realm_role_cleanup_ids = frozenset({legacy.id})
     original_roles = list(harness.member.roles)
     harness.failures[operation] = _http_error(error_type)
 
@@ -696,15 +801,18 @@ async def test_old_role_removal_failure_reports_partial_success_and_retry_finish
     harness, error_type, partial_removal
 ) -> None:
     target = harness.roles["zhuji"]
-    old_roles = [harness.roles["lianqi"], harness.roles["jiedan"]]
-    harness.member.roles.extend([*old_roles, *harness.immortals])
+    legacy = harness.immortals[0]
+    old_roles = [harness.roles["lianqi"], harness.roles["jiedan"], legacy]
+    harness.member.roles.extend([*old_roles, *harness.immortals[1:]])
+    harness.bot.settings.realm_role_cleanup_ids = frozenset({legacy.id})
 
     async def fail_removal(*roles, reason, atomic):
         harness._network("remove_roles")
         assert reason
         assert atomic is True
+        assert set(roles) == set(old_roles)
         if partial_removal:
-            harness.member.roles.remove(roles[0])
+            harness.member.roles.remove(legacy)
         raise _http_error(error_type)
 
     harness.member.remove_roles.side_effect = fail_removal
@@ -718,7 +826,7 @@ async def test_old_role_removal_failure_reports_partial_success_and_retry_finish
     assert "\u672a" in content or "\u5931\u8d25" in content
     assert harness.events.index("add_roles") < harness.events.index("remove_roles")
     assert target in harness.member.roles
-    expected_remaining = set(old_roles[1:] if partial_removal else old_roles)
+    expected_remaining = set(old_roles) - ({legacy} if partial_removal else set())
     assert expected_remaining.issubset(harness.member.roles)
 
     harness.member.remove_roles.side_effect = harness._remove_roles
@@ -730,7 +838,7 @@ async def test_old_role_removal_failure_reports_partial_success_and_retry_finish
     assert harness.member.remove_roles.await_count == 2
     assert set(harness.member.remove_roles.await_args.args) == expected_remaining
     assert set(harness.member.roles) == {
-        harness.everyone, harness.unrelated, target, *harness.immortals
+        harness.everyone, harness.unrelated, target, *harness.immortals[1:]
     }
 
 
