@@ -95,9 +95,10 @@ async def _claim_realm_role(bot: XianBot, guild: discord.Guild, user_id: int) ->
     target = resolved[stage.realm_key]
     member = await guild.fetch_member(user_id)
     member_role_ids = {role.id for role in member.roles}
+    cleanup_role_ids = {role.id for role in resolved.values()} | bot.settings.realm_role_cleanup_ids
     old_roles = [
-        role for role in resolved.values()
-        if role.id in member_role_ids and role.id != target.id
+        role for role in roles
+        if role.id in cleanup_role_ids and role.id in member_role_ids and role.id != target.id
     ]
     has_target = target.id in member_role_ids
     for role in [target, *old_roles]:
