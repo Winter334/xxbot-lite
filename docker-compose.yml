@@ -1,6 +1,7 @@
 services:
   xxbot:
     build: .
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
